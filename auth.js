@@ -85,9 +85,21 @@ async function logoutCurrentUser() {
   return signOut(auth);
 }
 
+function shouldPreferGoogleRedirect() {
+  if (typeof window === "undefined") return false;
+  const host = String(window.location?.hostname || "").trim().toLowerCase();
+  const protocol = String(window.location?.protocol || "").trim().toLowerCase();
+  if (!host) return protocol !== "file:";
+  return host !== "localhost" && host !== "127.0.0.1" && host !== "::1" && !host.endsWith(".local");
+}
+
 async function loginWithGoogle() {
   const provider = new GoogleAuthProvider();
   provider.setCustomParameters({ prompt: "select_account" });
+  if (shouldPreferGoogleRedirect()) {
+    await signInWithRedirect(auth, provider);
+    return { mode: "redirect", result: null };
+  }
   try {
     const res = await signInWithPopup(auth, provider);
     return { mode: "popup", result: res };
@@ -96,7 +108,7 @@ async function loginWithGoogle() {
     // Only force redirect when the popup cannot open at all.
     // `popup-closed-by-user` is also emitted by some browsers when COOP blocks popup polling,
     // even though auth may have succeeded in the popup.
-    if (code === "auth/popup-blocked") {
+    if (code === "auth/popup-blocked" || code === "auth/cancelled-popup-request") {
       await signInWithRedirect(auth, provider);
       return { mode: "redirect", result: null };
     }
