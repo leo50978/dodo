@@ -1,0 +1,155 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function signedIn() {
+      return request.auth != null;
+    }
+
+    function isOwner(uid) {
+      return signedIn() && request.auth.uid == uid;
+    }
+
+    function isFinanceAdmin() {
+      return signedIn()
+        && request.auth.token.email != null
+        && request.auth.token.email == "leovitch2004@gmail.com";
+    }
+
+    function roomDoc(roomId) {
+      return get(/databases/$(database)/documents/rooms/$(roomId));
+    }
+
+    function isRoomParticipant(roomId) {
+      return signedIn()
+        && roomDoc(roomId).data != null
+        && roomDoc(roomId).data.playerUids is list
+        && request.auth.uid in roomDoc(roomId).data.playerUids;
+    }
+
+    function isSafeClientPresenceCreate(uid) {
+      return isOwner(uid)
+        && request.resource.data.keys().hasOnly([
+          "uid",
+          "email",
+          "lastSeenAt",
+          "lastSeenAtMs",
+          "updatedAt",
+        ])
+        && request.resource.data.uid == uid;
+    }
+
+    function isSafeClientPresenceUpdate(uid) {
+      return isOwner(uid)
+        && request.resource.data.diff(resource.data).changedKeys().hasOnly([
+          "email",
+          "lastSeenAt",
+          "lastSeenAtMs",
+          "updatedAt",
+        ])
+        && request.resource.data.uid == resource.data.uid;
+    }
+
+    function canCreateDpaymentBootstrap() {
+      return !exists(/databases/$(database)/documents/settings/dpayment_admin_bootstrap)
+        && request.resource.data.email == "leovitch2004@gmail.com";
+    }
+
+    match /clients/{uid} {
+      allow read: if isOwner(uid) || isFinanceAdmin();
+      allow create: if isFinanceAdmin() || isSafeClientPresenceCreate(uid);
+      allow update: if isFinanceAdmin() || isSafeClientPresenceUpdate(uid);
+      allow delete: if isFinanceAdmin();
+    }
+
+    match /clients/{uid}/orders/{orderId} {
+      allow read: if isOwner(uid) || isFinanceAdmin();
+      allow write: if isFinanceAdmin();
+    }
+
+    match /clients/{uid}/withdrawals/{withdrawalId} {
+      allow read: if isOwner(uid) || isFinanceAdmin();
+      allow write: if isFinanceAdmin();
+    }
+
+    match /clients/{uid}/xchanges/{entryId} {
+      allow read: if isOwner(uid) || isFinanceAdmin();
+      allow write: if isFinanceAdmin();
+    }
+
+    match /clients/{uid}/referrals/{referralId} {
+      allow read: if isOwner(uid) || isFinanceAdmin();
+      allow write: if isFinanceAdmin();
+    }
+
+    match /clients/{uid}/referralRewards/{rewardId} {
+      allow read: if isOwner(uid) || isFinanceAdmin();
+      allow write: if isFinanceAdmin();
+    }
+
+    match /rooms/{roomId} {
+      allow read: if isFinanceAdmin()
+        || (signedIn()
+          && resource.data.playerUids is list
+          && request.auth.uid in resource.data.playerUids);
+      allow write: if false;
+
+      match /actions/{actionId} {
+        allow read: if isFinanceAdmin() || isRoomParticipant(roomId);
+        allow write: if false;
+      }
+
+      match /settlements/{uid} {
+        allow read: if isFinanceAdmin() || isOwner(uid);
+        allow write: if false;
+      }
+    }
+
+    match /gameStates/{roomId} {
+      allow read, write: if false;
+    }
+
+    match /paymentMethods/{docId} {
+      allow read, write: if isFinanceAdmin();
+    }
+
+    match /settings/dpayment_admin_bootstrap {
+      allow read: if true;
+      allow create: if canCreateDpaymentBootstrap();
+      allow update, delete: if isFinanceAdmin();
+    }
+
+    match /settings/{docId} {
+      allow read, write: if isFinanceAdmin();
+    }
+
+    match /pdfConfig/{docId} {
+      allow read, write: if isFinanceAdmin();
+    }
+
+    match /ambassadors/{ambassadorId} {
+      allow read: if true;
+      allow write: if isFinanceAdmin();
+
+      match /referrals/{referralId} {
+        allow read: if true;
+        allow write: if isFinanceAdmin();
+      }
+    }
+
+    match /ambassadorGameEvents/{eventId} {
+      allow read, write: if isFinanceAdmin();
+    }
+
+    match /globalChannelMessages/{messageId} {
+      allow read, write: if true;
+    }
+
+    match /supportThreads/{threadId} {
+      allow read, write: if true;
+
+      match /messages/{messageId} {
+        allow read, write: if true;
+      }
+    }
+  }
+}

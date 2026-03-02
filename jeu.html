@@ -1,0 +1,587 @@
+<!-- 
+    Domino ThreeJS creado por Josep Antoni Bover Comas el 16/01/2019
+
+        Indice
+
+        Vista por defecto en el Laboratorio de pruebas  
+		devildrey33_Lab->Opciones->Vista = Filas;
+
+        Ultima modificación el 28/02/2019
+-->
+<!DOCTYPE html>
+<html lang='fr'>
+    <head>
+        <meta http-equiv='Content-Type' content='text/html; charset=utf-8' />
+        <meta name="firebase-app-check-site-key" content="REPLACE_WITH_RECAPTCHA_V3_SITE_KEY" />
+        <meta
+          http-equiv="Content-Security-Policy"
+          content="default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval' 'wasm-unsafe-eval' https://www.gstatic.com https://apis.google.com https://cdn.tailwindcss.com https://cdnjs.cloudflare.com https://cdn.jsdelivr.net https://unpkg.com https://www.google.com https://www.recaptcha.net; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com https://cdnjs.cloudflare.com https://www.gstatic.com; font-src 'self' https://fonts.gstatic.com https://cdnjs.cloudflare.com data:; img-src 'self' data: https: blob:; connect-src 'self' data: blob: https://*.googleapis.com https://apis.google.com https://firestore.googleapis.com https://identitytoolkit.googleapis.com https://securetoken.googleapis.com https://firebaseinstallations.googleapis.com https://content-firebaseappcheck.googleapis.com https://www.gstatic.com https://www.google.com https://accounts.google.com https://does-2c234.firebaseapp.com https://does-2c234.web.app https://www.recaptcha.net https://us-central1-does-2c234.cloudfunctions.net https://*.cloudfunctions.net https://cdn.jsdelivr.net https://unpkg.com; frame-src https://www.google.com https://accounts.google.com https://apis.google.com https://www.gstatic.com https://does-2c234.firebaseapp.com https://does-2c234.web.app https://www.recaptcha.net; worker-src 'self' blob: https://cdn.jsdelivr.net https://unpkg.com; object-src 'none'; base-uri 'self';"
+        />
+        <title>Domino-lakay</title>
+        <script src="https://cdn.tailwindcss.com"></script>
+        <!-- Estilos CSS para el objeto canvas -->
+        <link rel='stylesheet' href='./ObjetoCanvas.css' />       
+        <link rel='stylesheet' href='./Domino.css' />        
+                
+        <!-- Three.JS -->
+        <script src="./three.min.js"></script>
+        <!-- ObjetoCanvas similar al ObjetoBanner para testear Banners -->
+        <script src="./ObjetoCanvas.js"></script>
+        <!-- Objeto para crear animaciones de tiempo -->
+        <script src="./ObjetoAnimacion.js"></script>
+
+        <script src="./Domino_Texturas.js"></script>        
+        <script src="./Domino_Ficha.js"></script>        
+        <script src="./Domino_UI.js"></script>        
+        <script src="./Domino_Opciones.js"></script>        
+        <script src="./Domino_Partida.js"></script>        
+        <script src="./Domino.js"></script>        
+
+        <script type="module" src="./logiquejeu.js"></script>
+    </head>
+    <body>
+        <div id="MatchLoadingOverlay" class="fixed inset-0 z-[2500] hidden items-center justify-center bg-black/45 p-4 backdrop-blur-md">
+            <div id="MatchLoadingPanel" class="w-[min(92vw,30rem)] rounded-3xl border border-white/20 bg-[#3F4766]/60 p-5 text-center text-white shadow-[14px_14px_34px_rgba(16,23,40,0.5),-10px_-10px_24px_rgba(112,126,165,0.2)] backdrop-blur-xl">
+                <div id="MatchLoadingTitle" class="text-lg font-bold tracking-wide">Recherche de partie...</div>
+                <div id="MatchLoadingText" class="mt-1 text-sm text-white/80">Connexion des joueurs en cours.</div>
+                <div class="mt-4 h-2 w-full overflow-hidden rounded-full border border-white/20 bg-white/10 shadow-[inset_6px_6px_12px_rgba(19,26,43,0.42),inset_-6px_-6px_12px_rgba(120,134,172,0.22)]">
+                    <span class="block h-full w-2/5 animate-pulse rounded-full bg-gradient-to-r from-orange-500 to-amber-300"></span>
+                </div>
+            </div>
+        </div>
+
+        <div id="ResumeRoomOverlay" class="fixed inset-0 z-[2520] hidden items-center justify-center bg-black/55 p-4 backdrop-blur-md">
+            <div class="w-[min(92vw,28rem)] rounded-3xl border border-white/20 bg-[#3F4766]/70 p-6 text-white shadow-[14px_14px_34px_rgba(16,23,40,0.5),-10px_-10px_24px_rgba(112,126,165,0.2)] backdrop-blur-xl">
+                <h3 class="text-xl font-bold tracking-wide">Partie trouvée</h3>
+                <p class="mt-2 text-sm text-white/80">Une partie est déjà en cours avec ce compte.</p>
+                <p class="mt-1 text-xs text-white/65">Tu veux rentrer dans la salle ou la quitter ?</p>
+                <div class="mt-5 grid grid-cols-1 gap-3 sm:grid-cols-2">
+                    <button id="ResumeRoomJoinBtn" type="button" class="h-11 rounded-2xl border border-[#ffb26e] bg-[#F57C00] text-sm font-semibold text-white shadow-[8px_8px_18px_rgba(163,82,27,0.45),-6px_-6px_14px_rgba(255,175,102,0.22)] transition hover:-translate-y-0.5">
+                        Rentrer
+                    </button>
+                    <button id="ResumeRoomLeaveBtn" type="button" class="h-11 rounded-2xl border border-white/20 bg-white/10 text-sm font-semibold text-white shadow-[8px_8px_18px_rgba(19,25,40,0.34),-6px_-6px_14px_rgba(111,126,164,0.2)] transition hover:bg-white/15">
+                        Quitter
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <div id="OrientationGuardOverlay" class="fixed inset-0 z-[2900] hidden items-center justify-center bg-black/70 p-4 backdrop-blur-md">
+            <div class="w-[min(94vw,34rem)] rounded-3xl border border-white/20 bg-[#3F4766]/80 p-5 text-white shadow-[14px_14px_34px_rgba(16,23,40,0.5),-10px_-10px_24px_rgba(112,126,165,0.2)] backdrop-blur-xl sm:p-6">
+                <h3 id="OrientationGuardTitle" class="text-xl font-bold">Tourne ton telephone pour jouer</h3>
+                <p class="mt-2 text-sm text-white/90">
+                    Mets ton telephone en mode horizontal pour jouer correctement.
+                </p>
+                <div class="mt-4 rounded-2xl border border-white/20 bg-white/10 p-4 text-sm text-white/90">
+                    <p class="font-semibold">Comment faire:</p>
+                    <p class="mt-1">Tiens le telephone couche, avec le cote le plus long a l'horizontale.</p>
+                    <p class="mt-1">Si l'ecran reste vertical, active la rotation auto dans les reglages rapides du telephone.</p>
+                </div>
+                <p id="OrientationGuardRisk" class="mt-4 text-xs font-semibold text-amber-200 hidden">
+                    Attention: la partie continue. Remets vite le telephone en mode horizontal, sinon tu risques de perdre la partie et ton argent.
+                </p>
+                <p class="mt-3 text-xs text-white/75">Le jeu continuera automatiquement quand ton ecran sera horizontal.</p>
+            </div>
+        </div>
+
+        <button id="LeaveRoomTopBtn" type="button" class="fixed left-3 top-3 z-[2455] hidden h-10 items-center gap-2 rounded-2xl border border-white/20 bg-[#3F4766]/70 px-3 text-xs font-semibold tracking-wide text-white shadow-[10px_10px_24px_rgba(16,23,40,0.45),-8px_-8px_18px_rgba(112,126,165,0.18)] backdrop-blur-xl transition hover:bg-[#4a5376]/80">
+            Quitter salle
+        </button>
+
+        <button id="FullscreenToggleBtn" type="button" class="fixed left-3 top-14 z-[2465] grid h-10 w-10 place-items-center rounded-2xl border border-white/20 bg-[#3F4766]/70 text-white shadow-[10px_10px_24px_rgba(16,23,40,0.45),-8px_-8px_18px_rgba(112,126,165,0.18)] backdrop-blur-xl transition hover:bg-[#4a5376]/80" aria-label="Passer en plein ecran" title="Passer en plein ecran">
+            <svg id="FullscreenToggleIcon" xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+                <path d="M8 3H5a2 2 0 0 0-2 2v3"></path>
+                <path d="M16 3h3a2 2 0 0 1 2 2v3"></path>
+                <path d="M8 21H5a2 2 0 0 1-2-2v-3"></path>
+                <path d="M16 21h3a2 2 0 0 0 2-2v-3"></path>
+            </svg>
+        </button>
+
+        <div id="FullscreenHint" class="pointer-events-none fixed left-3 top-[6.5rem] z-[2466] hidden rounded-xl border border-amber-300/35 bg-black/45 px-3 py-2 text-xs font-semibold text-amber-100 shadow-[8px_8px_18px_rgba(16,23,40,0.5),-6px_-6px_14px_rgba(112,126,165,0.18)] backdrop-blur-xl">
+            Plein ecran non supporte sur cet appareil.
+        </div>
+
+        <div id="OnlineUsersHud" class="pointer-events-none fixed left-1/2 top-3 z-[2468] -translate-x-1/2 rounded-2xl border border-emerald-300/35 bg-emerald-500/15 px-4 py-2 text-xs font-bold tracking-wide text-emerald-200 shadow-[10px_10px_24px_rgba(16,23,40,0.45),-8px_-8px_18px_rgba(112,126,165,0.18)] backdrop-blur-xl sm:text-sm">
+            Utilisateurs en ligne: 30 000
+        </div>
+
+        <div id="LocalTurnHud" class="fixed right-3 top-3 z-[2700] rounded-2xl border border-white/20 bg-[#3F4766]/65 px-3 py-2 text-white shadow-[10px_10px_24px_rgba(16,23,40,0.45),-8px_-8px_18px_rgba(112,126,165,0.18)] backdrop-blur-xl">
+            <div id="LocalTurnLabel" class="text-[11px] font-semibold uppercase tracking-wide text-white/80">En attente</div>
+            <div id="LocalTurnValue" class="mt-0.5 text-lg font-bold leading-none">--</div>
+            <div class="mt-2 h-1.5 w-28 overflow-hidden rounded-full border border-white/20 bg-white/10">
+                <span id="LocalTurnBar" class="block h-full w-full rounded-full bg-gradient-to-r from-orange-500 to-amber-300 transition-all duration-300"></span>
+            </div>
+            <div class="mt-2 inline-flex items-center gap-1.5 rounded-xl border border-white/20 bg-white/10 px-2 py-1 shadow-[inset_4px_4px_8px_rgba(18,24,38,0.35),inset_-4px_-4px_8px_rgba(110,124,163,0.18)]">
+                <img src="./does.png" alt="Does" class="h-4 w-4 rounded-full object-cover" onerror="this.style.display='none'" />
+                <span class="text-[10px] font-semibold uppercase tracking-wide text-white/75">Does</span>
+                <span id="LocalDoesValue" class="text-xs font-bold text-white">0</span>
+            </div>
+        </div>
+
+        <div id="PassVisual" class="pointer-events-none fixed left-1/2 top-16 z-[2460] hidden -translate-x-1/2 rounded-xl border border-red-300/35 bg-red-500/25 px-4 py-2 text-sm font-bold tracking-wide text-white shadow-[8px_8px_16px_rgba(90,20,20,0.35),-6px_-6px_14px_rgba(150,60,60,0.18)] backdrop-blur-xl">
+            PASS
+        </div>
+
+        <div id="GameEndOverlay" class="fixed inset-0 z-[2550] hidden items-center justify-center bg-black/55 p-4 backdrop-blur-md">
+            <div class="w-[min(92vw,32rem)] rounded-3xl border border-white/20 bg-[#3F4766]/70 p-6 text-center text-white shadow-[14px_14px_34px_rgba(16,23,40,0.5),-10px_-10px_24px_rgba(112,126,165,0.2)] backdrop-blur-xl">
+                <h2 class="text-2xl font-bold">Partie terminée</h2>
+                <p id="GameEndWinnerText" class="mt-2 text-sm text-white/85">Joueur id-00000 a gagné</p>
+                <p id="GameEndInfoText" class="mt-1 text-xs text-white/70">Observe la table puis continue.</p>
+                <div class="mt-4 flex justify-center">
+                    <img id="GameEndTrophy" src="./tropher.jpg" alt="Trophée" onerror="this.onerror=null;this.src='./troper.jpg';" class="hidden h-24 w-24 object-contain" />
+                </div>
+                <div id="GameEndViewWrap" class="mt-5">
+                    <button id="GameEndViewTableBtn" type="button" class="h-12 w-full rounded-2xl border border-[#ffb26e] bg-[#F57C00] text-sm font-semibold text-white shadow-[8px_8px_18px_rgba(163,82,27,0.45),-6px_-6px_14px_rgba(255,175,102,0.22)] transition hover:-translate-y-0.5">
+                        Voir la table
+                    </button>
+                </div>
+                <div id="GameEndActionsWrap" class="mt-5 hidden grid-cols-1 gap-3 sm:grid-cols-2">
+                    <button id="GameEndReplayBtn" type="button" class="h-12 rounded-2xl border border-[#ffb26e] bg-[#F57C00] text-sm font-semibold text-white shadow-[8px_8px_18px_rgba(163,82,27,0.45),-6px_-6px_14px_rgba(255,175,102,0.22)] transition hover:-translate-y-0.5">
+                        Rejouer
+                    </button>
+                    <button id="GameEndBackBtn" type="button" class="h-12 rounded-2xl border border-white/20 bg-white/10 text-sm font-semibold text-white shadow-[8px_8px_18px_rgba(19,25,40,0.34),-6px_-6px_14px_rgba(111,126,164,0.2)] transition hover:bg-white/15">
+                        Retour
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <button id="GameEndGoBtn" type="button" class="fixed bottom-4 left-1/2 z-[2540] hidden h-12 -translate-x-1/2 rounded-2xl border border-[#ffb26e] bg-[#F57C00] px-8 text-sm font-semibold text-white shadow-[8px_8px_18px_rgba(163,82,27,0.45),-6px_-6px_14px_rgba(255,175,102,0.22)] transition hover:-translate-y-0.5">
+            Aller
+        </button>
+        
+        <!-- Marco para empezar partida -->
+        <div id='MarcoEmpezar' class='MarcoCanvas hidden' style="display:none !important;">
+            <h1>
+                <span data-idioma-en='Welcome to Domino ' 
+                      data-idioma-cat="Benvingut a Dominó " 
+                      data-idioma-es='Bienvenido a Dominó '></span> 
+                <span id="VersionDomino">0.00</span>
+            </h1>
+            <hr />            
+            
+            <button id="BotonEquipos" 
+                    data-idioma-en='Team names' 
+                    data-idioma-cat="Noms d'equips" 
+                    data-idioma-es='Nombres de equipos'></button>
+            <br />
+            <button id="BotonOpciones"
+                    data-idioma-en='Options' 
+                    data-idioma-cat="Opcions" 
+                    data-idioma-es='Opciones'></button>
+            <hr />
+            
+            <div id="BloquePuntosPartida">
+                <h3>
+                    <span data-idioma-en='Points to finish the game' 
+                          data-idioma-cat="Punts per acabar el joc" 
+                          data-idioma-es='Puntos para terminar la partida'></span>
+                </h3>
+                
+                <div class="Centrado">
+                    <button id="Puntos100">100</button>
+                    <button id="Puntos200">200</button>
+                    <button id="Puntos300">300</button>
+                    <button id="Puntos400">400</button>
+                    <button id="Puntos500">500</button>
+                    <button id="Puntos600">600</button>
+                </div>
+            </div>
+            <br />
+            
+            <button id="BotonEmpezar"
+                    data-idioma-en='Start!' 
+                    data-idioma-cat="Començar!" 
+                    data-idioma-es='Empezar!'></button>
+
+        </div>
+        <!-- Opciones de los Equipos -->
+        <div id="MarcoEquipos" class='MarcoCanvas'>
+
+            <h3>
+                <span
+                    data-idioma-en='Team names' 
+                    data-idioma-cat="Noms dels equips" 
+                    data-idioma-es='Nombres de los equipos'></span>
+            </h3>
+            <div class="TablaPuntos"> 
+                <table>
+                    <tr>
+                        <td>
+                            <!-- maxlength="16" -->
+                            <input type="text" id="NEquipo1" placeholder="Equipo 1" spellcheck="false">
+                        </td>
+                    </tr>
+                    <tr>
+                        <td>
+                            <input type="text" id="NNombre1" placeholder="Jugador 1" spellcheck="false">
+                        </td>
+                    </tr>
+                    <tr>
+                        <td>
+                            <input type="text" id="NNombre3" placeholder="Jugador 3" spellcheck="false">
+                        </td>
+                    </tr>
+                </table>
+
+                <table>
+                    <tr>
+                        <td>
+                            <input type="text" id="NEquipo2" placeholder="Equipo 2" spellcheck="false"> 
+                        </td>
+                    </tr>
+                    <tr>
+                        <td>
+                            <input type="text" id="NNombre2" placeholder="Jugador 2" spellcheck="false">
+                        </td>
+                    </tr>
+                    <tr>
+                        <td>
+                            <input type="text" id="NNombre4" placeholder="Jugador 4" spellcheck="false">
+                        </td>
+                    </tr>
+                </table>
+            </div>
+            <br />
+            <button id="BotonCerrarEquipos"
+                    data-idioma-en='Close' 
+                    data-idioma-cat="Tancar" 
+                    data-idioma-es='Cerrar'></button>            
+        </div>
+        
+        <!-- Opciones generales -->
+        <div id="MarcoOpciones" class='MarcoCanvas'>
+
+            <h3>
+                <span
+                    data-idioma-en='Language' 
+                    data-idioma-cat="Idioma" 
+                    data-idioma-es='Idioma'></span>
+            </h3>
+            <table class="Centrado">
+                <tr>
+                    <td><button id="Idioma_en">English</button></td>
+                    <td><button id="Idioma_cat">Català</button></td>
+                    <td><button id="Idioma_es">Castellano</button></td>
+                </tr>
+            </table>
+            
+            <hr />
+            
+            <table class="Centrado">
+                <tr>
+                    <td>
+                        <span 
+                            data-idioma-en='Play uncovered' 
+                            data-idioma-cat='Jugar al descobert' 
+                            data-idioma-es='Jugar al descubierto'></span>
+                        </td>
+                    <td><input type="checkbox" id="Opciones_Descubierto"></td>
+                </tr>
+                <tr>
+                    <td>    
+                        <span 
+                            data-idioma-en='Animate light for actual player' 
+                            data-idioma-cat='Animar llum pel jugador actual' 
+                            data-idioma-es='Animar luz para el jugador actual'></span>
+                        </td>
+                    <td><input type="checkbox" id="Opciones_AnimarTurno"></td>
+                </tr>
+                <tr>
+                    <td>
+                        <span 
+                            data-idioma-en='Help for player' 
+                            data-idioma-cat='Ajuda pel jugador' 
+                            data-idioma-es='Ayuda para el jugador'></span>
+                        </td>
+                    <td><input type="checkbox" id="Opciones_Ayuda"></td>
+                </tr>
+            </table>  
+            <br />
+            <button id="BotonCerrarOpciones"
+                    data-idioma-en='Close' 
+                    data-idioma-cat="Tancar" 
+                    data-idioma-es='Cerrar'></button>            
+        </div>
+        
+        
+        <!-- Victoria de un equipo (un jugador se ha quedado sin fichas) -->
+        <div id="MarcoContinuar"  class='MarcoCanvas'>
+            <h1>
+                <span data-idioma-en='Hand is over' 
+                      data-idioma-cat="Mà finalitzada" 
+                      data-idioma-es='Mano terminada'></span>
+            </h1>
+            <div class="TablaPuntos2">
+                <table>
+                    <tr>
+                        <td id="MV_E1">Equipo 1</td>
+                        <td></td>
+                        <td></td>
+                    </tr>
+                    <tr>
+                        <td id="MVN_P1">Jugador 1</td>
+                        <td>=</td>
+                        <td id="MV_P1">x</td>
+                    </tr>
+                    <tr>
+                        <td id="MVN_P3">Jugador 3</td>
+                        <td>=</td>
+                        <td id="MV_P3">x</td>
+                    </tr>
+                    <tr>
+                        <td></td>
+                        <td></td>
+                        <td id="MV_P13">x</td>
+                    </tr>
+                </table>
+
+                <table>
+                    <tr>
+                        <td id="MV_E2">Equipo 2</td>
+                        <td></td>
+                        <td></td>
+                    </tr>
+                    <tr>
+                        <td id="MVN_P2">Jugador 2</td>
+                        <td>=</td>
+                        <td id="MV_P2">x</td>
+                    </tr>
+                    <tr>
+                        <td id="MVN_P4">Jugador 4</td>
+                        <td>=</td>
+                        <td id="MV_P4">x</td>
+                    </tr>
+                    <tr>
+                        <td></td>
+                        <td></td>
+                        <td id="MV_P24">x</td>
+                    </tr>
+                </table>
+            </div>            
+            
+            <h3>
+                <span class="AniResaltar" id="PG_Equipo">x</span>
+                <span
+                    data-idioma-en=' has won! and gets ' 
+                    data-idioma-cat=" ha guanyat! i suma " 
+                    data-idioma-es=' ha ganado! y suma '></span>
+                
+                <span class="AniResaltar" id="PG_Puntos">x</span>
+                <span
+                    data-idioma-en=' points.' 
+                    data-idioma-cat=" punts." 
+                    data-idioma-es=' puntos.'></span>
+            </h3>
+            <button id="BotonContinuar"
+                    data-idioma-en='Next hand' 
+                    data-idioma-cat="Continuar" 
+                    data-idioma-es='Continuar'></button>
+        </div>
+        
+        <!-- Marco para mostrar los datos del Empate -->
+        <div id="MarcoEmpate" class='MarcoCanvas'>
+            <h1><span 
+                    data-idioma-en='TIE!' 
+                    data-idioma-cat="EMPAT!" 
+                    data-idioma-es='EMPATE!'>                
+                </span>
+            </h1>
+            <p><span
+                    data-idioma-en='Team who sums less points, won.' 
+                    data-idioma-cat="L'equip que suma menys punts, guanya." 
+                    data-idioma-es='El equipo que suma menos puntos, gana.'>                                
+                </span></p>
+            <!--<p>Si los dos equipos tienen la misma cantidad de puntos, nadie gana.</p> -->
+            <br />
+            <div class="TablaPuntos">
+                <table>
+                    <tr>
+                        <td id="ME_E1">Equipo 1</td>
+                        <td></td>
+                        <td></td>
+                    </tr>
+                    <tr>
+                        <td id="MEN_P1">Jugador 1</td>
+                        <td>=</td>
+                        <td id="ME_P1">x</td>
+                    </tr>
+                    <tr>
+                        <td id="MEN_P3">Jugador 3</td>
+                        <td>=</td>
+                        <td id="ME_P3">x</td>
+                    </tr>
+                    <tr>
+                        <td></td>
+                        <td></td>
+                        <td id="ME_P13">x</td>
+                    </tr>
+                </table>
+
+                <table>
+                    <tr>
+                        <td id="ME_E2">Equipo 2</td>
+                        <td></td>
+                        <td></td>
+                    </tr>
+                    <tr>
+                        <td id="MEN_P2">Jugador 2</td>
+                        <td>=</td>
+                        <td id="ME_P2">x</td>
+                    </tr>
+                    <tr>
+                        <td id="MEN_P4">Jugador 4</td>
+                        <td>=</td>
+                        <td id="ME_P4">x</td>
+                    </tr>
+                    <tr>
+                        <td></td>
+                        <td></td>
+                        <td id="ME_P24">x</td>
+                    </tr>
+                </table>
+            </div>
+            <br />
+            
+            <!-- Texto para la victoria por puntos despues de un bloqueo (al quedarse todos los jugadores sin posibilidad de tirar, antes de quedarse sin fichas) -->
+            <p id="TxtVictoria">
+                <span class="AniResaltar" id="TxtVictoriaEquipo">x</span>                 
+                <span 
+                    data-idioma-en=' has won! and gets ' 
+                    data-idioma-cat=" ha guanyat! i suma " 
+                    data-idioma-es=' ha ganado! y suma '></span> 
+                <span class="AniResaltar" id="TxtVictoriaPuntos">x</span>
+                <span
+                    data-idioma-en=' points.' 
+                    data-idioma-cat=" punts." 
+                    data-idioma-es=' puntos.'></span>
+            </p>
+            
+            <!-- Texto para el empate, al quedarse todos los jugadores sin poder tirar, y que los dos equipos sumen los mismos puntos -->
+            <p id="TxtEmpate"><span 
+               data-idioma-en='TIE, no one get points' 
+               data-idioma-cat="EMPAT, no es reparteixen punts" 
+               data-idioma-es='EMPATE, no se reparten puntos'
+               ></span>
+            </p>
+            <br />
+            <button id="BotonContinuar2"
+                    data-idioma-en='Continue' 
+                    data-idioma-cat="Continuar" 
+                    data-idioma-es='Continuar'></button>
+        </div>
+        
+        <!-- Marco para cuando se termina la parida -->
+        <div id="MarcoTerminado" class='MarcoCanvas hidden' style="display:none !important;">
+            <h1>
+                <span
+                    data-idioma-en='Game finished' 
+                    data-idioma-cat="Partida Finalitzada" 
+                    data-idioma-es='Partida TERMINADA'></span>
+            </h1>
+            <p>
+                <span id="EquipoGanador">x</span>
+                <span
+                    data-idioma-en=' has won the game.' 
+                    data-idioma-cat=" ha guanyat la partida." 
+                    data-idioma-es=' ha ganado la partida.'></span>
+            </p>
+            <button id="BotonTerminar"
+                    data-idioma-en='End game' 
+                    data-idioma-cat="Finalitzar" 
+                    data-idioma-es='Terminar'></button>
+        </div>
+        
+        <div class='MarcoCanvas hidden' id="Historial" style="display:none !important;">
+            
+        </div>
+        
+        <div class='MarcoCanvas hidden' id="DatosJuego" style="display:none !important;">
+            <table>
+                <tr>
+                    <td>
+                        <span
+                            data-idioma-en='Hand' 
+                            data-idioma-cat="Mà" 
+                            data-idioma-es='Mano'></span>
+                    </td>
+                    <td>:</td>
+                    <td id="Mano">0</td>
+                </tr>
+                <tr>
+                    <td>
+                        <span
+                            data-idioma-en='Turn' 
+                            data-idioma-cat="Torn" 
+                            data-idioma-es='Turno'></span>
+                    </td>
+                    <td>:</td>
+                    <td id="Turno">0</td>
+                </tr>
+                <tr>
+                    <td>
+                        <span
+                            data-idioma-en='Player' 
+                            data-idioma-cat="Jugador" 
+                            data-idioma-es='Jugador'></span>
+                    </td>
+                    <td>:</td>
+                    <td id="Jugador">0</td>
+                </tr>
+                <tr>
+                    <td>
+                        <span
+                            data-idioma-en='Time left'
+                            data-idioma-cat="Temps"
+                            data-idioma-es='Tiempo'></span>
+                    </td>
+                    <td>:</td>
+                    <td id="TurnTimer">--</td>
+                </tr>
+            </table>
+            <hr />
+            <table>
+                    
+<!--                <tr>
+                    <td style="border-bottom:2px solid #FFF"></td>
+                    <td></td>
+                    <td style="border-bottom:2px solid #FFF"></td>
+                </tr>-->
+                
+                <tr>
+                    <td id="NombreEquipo1"></td>
+                    <td>:</td>
+                    <td id="Equipo1">0</td>
+                </tr>
+                <tr>
+                    <td id="NombreEquipo2"></td>
+                    <td>:</td>
+                    <td id="Equipo2">0</td>
+                </tr>
+            </table>
+        </div>
+        
+<!--        <div id ="MarcoPartida" class='MarcoCanvas'> 
+            <table id="TablaDatos">
+                <tr>
+                    <td id="Partida">Partida 1</td>
+                    <td id="Turno">Turno 1</td>
+                    <td id="Jugador">Jugador 1</td>
+                </tr>                
+            </table>
+            
+        </div> -->
+        
+        <div id='Msg1' class='MarcoCanvas hidden' style="display:none !important;"></div>   <!-- Mensaje Jugador 1 -->
+        <div id='Msg2' class='MarcoCanvas hidden' style="display:none !important;"></div>   <!-- Mensaje Jugador 2 -->
+        <div id='Msg3' class='MarcoCanvas hidden' style="display:none !important;"></div>   <!-- Mensaje Jugador 3 -->
+        <div id='Msg4' class='MarcoCanvas hidden' style="display:none !important;"></div>   <!-- Mensaje Jugador 4 -->
+        
+        <!-- animaciones para la victoria / derrota --> 
+        <div id="VictoriaDerrota">
+    <!--    <div id="Victoria"><img src="./Partida.svg#Ganada" /></div>
+            <div id="Derrota"><img src="./Partida.svg#Perdida" /></div> 
+            <div id='ParitdaGanada'><img src='./PartidaGanada.svg' /></div> -->
+        </div>
+    </body>
+</html>

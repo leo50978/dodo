@@ -1,0 +1,902 @@
+/* 
+    Domino ThreeJS creado por Josep Antoni Bover Comas el 19/01/2019
+
+        Objeto para la partida en curso
+*/
+
+var Domino_Partida = function() {
+    this.JugadorActual      = 0;
+    this.TurnoActual        = 0;
+    this.Mano               = 0;
+    this.FichaIzquierda     = { };
+    this.FichaDerecha       = { };
+
+    this.Pasado             = 0;
+    this.Ficha              = [];
+    this.TiempoTurno        = 1250;
+    this.TimerMsg           = [ 0, 0, 0, 0 ];
+    this.ManoTerminada      = false;
+    this.ContinuandoPartida = false;
+
+    this.Multijugador       = false;
+    this.LocalSeat          = 0;
+    this.EsHost             = false;
+    this.SeatsHumanos       = [0];
+    this.EsperandoPublicar  = false;
+    this.SiguienteAccionSeq = 0;
+    this.AccionesPendientes = {};
+    this.ReintentosAccion   = {};
+    this.ReintentosTurno    = {};
+    this.ModoRehidratacion  = false;
+
+    this.Opciones = new Domino_Opciones;
+
+    this.CrearFichas = function() {
+        if (this.Ficha.length !== 0) {
+            for (var i = 0; i < 28; i++) {
+                Domino.Escena.remove(this.Ficha[i].Ficha);
+            }
+        }
+        this.Ficha = [];
+
+        var Pos = [ -4.5, -5.0 ];
+        for (var j = 0; j < 28; j++) {
+            this.Ficha[j] = new Domino_Ficha();
+            this.Ficha[j].Crear(j);
+            Domino.Escena.add(this.Ficha[j].Ficha);
+            this.Ficha[j].Ficha.position.set(Pos[0], 0.0, Pos[1]);
+            this.Ficha[j].RotarV();
+            Pos[0] += 1.5;
+            if (Pos[0] > 5.0) {
+                Pos[0] = -4.5;
+                Pos[1] += 2.5;
+            }
+        }
+    };
+
+    this.JugadorInicio = function() {
+        for (var seat = 0; seat < 4; seat++) {
+            var ini = this.SeatInicio(seat);
+            for (var j = 0; j < 7; j++) {
+                if (this.Ficha[ini + j].Valores[0] === 6 && this.Ficha[ini + j].Valores[1] === 6) {
+                    return seat;
+                }
+            }
+        }
+        return 0;
+    };
+
+    this.SeatInicio = function(seat) {
+        return seat * 7;
+    };
+
+    this.VisualSeat = function(seat) {
+        if (this.Multijugador === false) return seat;
+        return (seat - this.LocalSeat + 4) % 4;
+    };
+
+    this.EsSeatHumano = function(seat) {
+        if (this.Multijugador === false) return (seat === 0);
+        return this.SeatsHumanos.indexOf(seat) !== -1;
+    };
+
+    this.EsTurnoHumanoLocal = function() {
+        return this.EsSeatHumano(this.JugadorActual) && this.JugadorActual === this.LocalSeat;
+    };
+
+    this.EsTurnoHumanoRemoto = function() {
+        return this.EsSeatHumano(this.JugadorActual) && this.JugadorActual !== this.LocalSeat;
+    };
+
+    this.TableroListo = function() {
+        if (this.TurnoActual === 0) return true;
+        return (
+            this.FichaIzquierda &&
+            typeof(this.FichaIzquierda.ValorLibre) === "function" &&
+            this.FichaDerecha &&
+            typeof(this.FichaDerecha.ValorLibre) === "function"
+        );
+    };
+
+    this.PrepararSesion = function() {
+        var S = (typeof(window.GameSession) !== "undefined") ? window.GameSession : null;
+        this.Multijugador = (S && S.roomId) ? true : false;
+        this.LocalSeat = (S && typeof(S.seatIndex) === "number") ? S.seatIndex : 0;
+        this.EsHost = (S && S.isHost === true) ? true : false;
+        this.SeatsHumanos = (S && S.humanSeats && S.humanSeats.length > 0) ? S.humanSeats : [0];
+
+        var NombresSesion = (S && S.playerNames && S.playerNames.length) ? S.playerNames : ((S && S.playerEmails && S.playerEmails.length) ? S.playerEmails : []);
+        if (NombresSesion.length) {
+            for (var i = 0; i < 4; i++) {
+                this.Opciones.NombreJugador[i] = NombresSesion[i] ? NombresSesion[i] : ("Robot " + (i + 1));
+            }
+        }
+    };
+
+    this.AplicarOrdenFichas = function() {
+        var S = (typeof(window.GameSession) !== "undefined") ? window.GameSession : null;
+        if (this.Multijugador === false || !S || !Array.isArray(S.deckOrder) || S.deckOrder.length !== 28) {
+            for (var i = this.Ficha.length - 1; i > 0; i--) {
+                this.Ficha[i].Colocada = false;
+                var j = Math.floor(Math.random() * (i + 1));
+                var x = this.Ficha[i];
+                this.Ficha[i] = this.Ficha[j];
+                this.Ficha[j] = x;
+            }
+            return;
+        }
+
+        for (var f = 0; f < this.Ficha.length; f++) {
+            this.Ficha[f].Colocada = false;
+        }
+
+        var OrdenValido = true;
+        var Vistos = { };
+        for (var v = 0; v < 28; v++) {
+            var idxOrden = Number(S.deckOrder[v]);
+            if (Number.isFinite(idxOrden) === false || idxOrden < 0 || idxOrden >= this.Ficha.length || typeof(this.Ficha[idxOrden]) === "undefined" || Vistos[idxOrden] === true) {
+                OrdenValido = false;
+                break;
+            }
+            Vistos[idxOrden] = true;
+        }
+
+        if (OrdenValido === false) {
+            if (typeof(console) !== "undefined" && typeof(console.warn) === "function") {
+                console.warn("[DOMINO] deckOrder invalide, conservation de l'ordre canonique.", S.deckOrder);
+            }
+            return;
+        }
+
+        var Nuevo = [];
+        for (var k = 0; k < 28; k++) {
+            Nuevo.push(this.Ficha[Number(S.deckOrder[k])]);
+        }
+        this.Ficha = Nuevo;
+    };
+
+    this.PosibilidadesJugador = function(seat) {
+        var Posibilidades = [];
+        if (this.TableroListo() === false) return Posibilidades;
+        var Ini = this.SeatInicio(seat);
+        for (var i = 0; i < 7; i++) {
+            var idx = Ini + i;
+            if (this.Ficha[idx].Colocada === false) {
+                if (this.Ficha[idx].Valores[0] === this.FichaIzquierda.ValorLibre() || this.Ficha[idx].Valores[1] === this.FichaIzquierda.ValorLibre()) {
+                    Posibilidades.push({ Pos : idx, Rama : "izquierda" });
+                }
+                if (this.Ficha[idx].Valores[0] === this.FichaDerecha.ValorLibre() || this.Ficha[idx].Valores[1] === this.FichaDerecha.ValorLibre()) {
+                    Posibilidades.push({ Pos : idx, Rama : "derecha" });
+                }
+            }
+        }
+        Posibilidades.sort(function(a, b) {
+            var va = this.Ficha[a.Pos].Valores[0] + this.Ficha[a.Pos].Valores[1];
+            var vb = this.Ficha[b.Pos].Valores[0] + this.Ficha[b.Pos].Valores[1];
+            return vb - va;
+        }.bind(this));
+        return Posibilidades;
+    };
+
+    this.PuedeJugarEnRama = function(idx, rama) {
+        if (typeof(this.Ficha[idx]) === "undefined" || this.Ficha[idx].Colocada === true) return false;
+        if (rama !== "izquierda" && rama !== "derecha") return false;
+        var Libre = (rama === "izquierda") ? this.FichaIzquierda.ValorLibre() : this.FichaDerecha.ValorLibre();
+        return (this.Ficha[idx].Valores[0] === Libre || this.Ficha[idx].Valores[1] === Libre);
+    };
+
+    this.RamasDisponiblesFicha = function(idx) {
+        var Ret = [];
+        if (this.PuedeJugarEnRama(idx, "izquierda")) Ret.push("izquierda");
+        if (this.PuedeJugarEnRama(idx, "derecha"))   Ret.push("derecha");
+        return Ret;
+    };
+
+    this.SeatDeFicha = function(tilePos) {
+        return Math.floor(tilePos / 7);
+    };
+
+    this.ValidarAccionPlay = function(Accion) {
+        var idx = Accion.tilePos;
+        if (typeof(idx) !== "number" || idx < 0 || idx >= this.Ficha.length) return false;
+        if (this.Ficha[idx].Colocada === true) return false;
+        if (this.SeatDeFicha(idx) !== Accion.player) return false;
+
+        // Le réseau transporte explicitement les deux côtés pour éviter toute ambiguïté.
+        if (typeof(Accion.tileLeft) !== "number" || typeof(Accion.tileRight) !== "number") return false;
+        if (this.Ficha[idx].Valores[0] !== Accion.tileLeft || this.Ficha[idx].Valores[1] !== Accion.tileRight) return false;
+
+        if (this.TurnoActual === 0) {
+            return (this.Ficha[idx].Valores[0] === 6 && this.Ficha[idx].Valores[1] === 6);
+        }
+
+        if (this.TableroListo() === false) return false;
+
+        if (Accion.branch !== "izquierda" && Accion.branch !== "derecha") return false;
+        var libre = (Accion.branch === "izquierda") ? this.FichaIzquierda.ValorLibre() : this.FichaDerecha.ValorLibre();
+        return (this.Ficha[idx].Valores[0] === libre || this.Ficha[idx].Valores[1] === libre);
+    };
+
+    this.ResolverIndiceAccionPlay = function(Accion) {
+        if (this.ValidarAccionPlay(Accion) === true) return Accion.tilePos;
+
+        // Fallback robuste : retrouve la tuile par ses 2 côtés dans la main du joueur.
+        var ini = this.SeatInicio(Accion.player);
+        for (var i = 0; i < 7; i++) {
+            var idx = ini + i;
+            if (this.Ficha[idx].Colocada === true) continue;
+            if (this.Ficha[idx].Valores[0] !== Accion.tileLeft || this.Ficha[idx].Valores[1] !== Accion.tileRight) continue;
+
+            var Candidato = {
+                player: Accion.player,
+                tilePos: idx,
+                tileLeft: Accion.tileLeft,
+                tileRight: Accion.tileRight,
+                branch: Accion.branch
+            };
+            if (this.ValidarAccionPlay(Candidato) === true) return idx;
+        }
+        return -1;
+    };
+
+    this.ValidarAccionPass = function(Accion) {
+        var Pos = this.PosibilidadesJugador(Accion.player);
+        return (Pos.length === 0);
+    };
+
+    this.CrearAccionPlay = function(player, idx, branch) {
+        return {
+            type: "play",
+            player: player,
+            tilePos: idx,
+            tileLeft: this.Ficha[idx].Valores[0],
+            tileRight: this.Ficha[idx].Valores[1],
+            branch: branch
+        };
+    };
+
+    this.ProcesarPendientes = function() {
+        if (this.HayAnimacionColocarActiva() === true) return false;
+        if (typeof(this.AccionesPendientes[this.SiguienteAccionSeq]) === "undefined") return false;
+        var Pendiente = this.AccionesPendientes[this.SiguienteAccionSeq];
+        delete this.AccionesPendientes[this.SiguienteAccionSeq];
+        this.AplicarAccionMultijugador(Pendiente);
+        return true;
+    };
+
+    this.HayAnimacionColocarActiva = function() {
+        for (var f = 0; f < this.Ficha.length; f++) {
+            if (typeof(this.Ficha[f].AniColocar) !== "undefined" && this.Ficha[f].AniColocar.Terminado() === false) {
+                return true;
+            }
+        }
+        return false;
+    };
+
+    this.PublicarAccion = async function(accion) {
+        if (!window.LogiqueJeu || typeof(window.LogiqueJeu.pushAction) !== "function") return;
+        if (this.EsperandoPublicar === true) return;
+        if (this.Multijugador === true && accion && typeof(accion) === "object") {
+            if (accion.type === "play" && this.ValidarAccionPlay(accion) !== true) return;
+            if (accion.type === "pass" && this.ValidarAccionPass(accion) !== true) return;
+        }
+
+        this.EsperandoPublicar = true;
+        try {
+            await window.LogiqueJeu.pushAction(accion);
+        }
+        catch (e) {
+            console.error("Error publicando accion", e);
+            this.EsperandoPublicar = false;
+        }
+    };
+
+    this.JugarAutomaticoSeat = function(Seat, Aleatorio) {
+        if (this.Multijugador === false || this.ManoTerminada === true) return false;
+        if (this.ModoRehidratacion === true) return false;
+        if (typeof(Seat) !== "number" || Seat < 0 || Seat > 3) return false;
+
+        // Turno inicial: debe salir el 6-6 del jugador que lo tenga.
+        if (this.TurnoActual === 0) {
+            var Ini0 = this.SeatInicio(Seat);
+            for (var j = 0; j < 7; j++) {
+                var idx66 = Ini0 + j;
+                if (this.Ficha[idx66].Colocada === false && this.Ficha[idx66].Valores[0] === 6 && this.Ficha[idx66].Valores[1] === 6) {
+                    this.PublicarAccion(this.CrearAccionPlay(Seat, idx66, "centro"));
+                    return true;
+                }
+            }
+            return false;
+        }
+
+        if (this.TableroListo() === false) return false;
+
+        var Pos = this.PosibilidadesJugador(Seat);
+        if (Pos.length > 0) {
+            var Elegida = Pos[0];
+            if (Aleatorio === true) {
+                Elegida = Pos[Math.floor(Math.random() * Pos.length)];
+            }
+            this.PublicarAccion(this.CrearAccionPlay(Seat, Elegida.Pos, Elegida.Rama));
+            return true;
+        }
+
+        this.PublicarAccion({ type: "pass", player: Seat });
+        return true;
+    };
+
+    this.IniciarRehidratacion = function() {
+        this.ModoRehidratacion = true;
+        this.EsperandoPublicar = false;
+        this.AccionesPendientes = {};
+        this.ReintentosAccion = {};
+        this.ReintentosTurno = {};
+    };
+
+    this.FinalizarRehidratacion = function() {
+        this.ModoRehidratacion = false;
+        this.Turno();
+    };
+
+    this.Empezar = function() {
+        this.Mano = 0;
+        this.PrepararSesion();
+        this.Continuar();
+    };
+
+    this.Continuar = function() {
+        if (this.ContinuandoPartida === true) return;
+        this.ContinuandoPartida = true;
+
+        UI.OcultarEmpezar();
+        UI.OcultarContinuar();
+        UI.OcultarEmpate();
+        UI.MostrarDatosMano();
+
+        this.Mano ++;
+        this.ManoTerminada = false;
+        this.EsperandoPublicar = false;
+        this.SiguienteAccionSeq = 0;
+        this.AccionesPendientes = {};
+        this.ReintentosAccion = {};
+        this.ReintentosTurno = {};
+
+        document.getElementById("Historial").innerHTML = "";
+
+        this.CrearFichas();
+        this.Pasado = 0;
+
+        this.AplicarOrdenFichas();
+
+        // Place les mains selon la perspective locale en multijoueur :
+        // le joueur local voit toujours sa main en bas.
+        for (var seat = 0; seat < 4; seat++) {
+            var vSeat = this.VisualSeat(seat);
+            var faceUp = false;
+            if (this.Multijugador === true) {
+                faceUp = (seat === this.LocalSeat);
+            } else {
+                faceUp = (seat === 0) || (this.Opciones.Descubierto === "true");
+            }
+
+            for (var i = 0; i < 7; i++) {
+                var idx = this.SeatInicio(seat) + i;
+                if (vSeat === 0) { // bas
+                    this.Ficha[idx].RotarV();
+                    this.Ficha[idx].Ficha.position.set(-3.8 + (1.25 * i), 0, 5.5);
+                } else if (vSeat === 1) { // droite
+                    this.Ficha[idx].RotarH();
+                    this.Ficha[idx].Ficha.position.set(15, 0, -6.5 + (1.25 * i));
+                } else if (vSeat === 2) { // haut
+                    this.Ficha[idx].RotarV();
+                    this.Ficha[idx].Ficha.position.set(-3.8 + (1.25 * i), 0, -12);
+                } else { // gauche
+                    this.Ficha[idx].RotarH();
+                    this.Ficha[idx].Ficha.position.set(-15, 0, -6.5 + (1.25 * i));
+                }
+
+                if (faceUp) this.Ficha[idx].RotarBocaArriba();
+                else        this.Ficha[idx].RotarBocaAbajo();
+            }
+        }
+
+        this.JugadorActual = this.JugadorInicio();
+        this.TurnoActual = 0;
+        window.ContadorDerecha      = 0;
+        window.ContadorIzquierda    = 0;
+        window.FinContadorIzquierda = 5;
+        window.FinContadorDerecha   = 5;
+
+        this.Turno();
+    };
+
+    this.Turno = function() {
+        if (this.ModoRehidratacion === true) return;
+        if (this.ManoTerminada === true) return;
+        if (this.Multijugador === true) {
+            // Si hay una acción de red pendiente para el seq esperado, se aplica primero.
+            if (this.ProcesarPendientes() === true) return;
+        }
+
+        document.getElementById("Mano").innerHTML = this.Mano;
+        document.getElementById("Turno").innerHTML = this.TurnoActual;
+        document.getElementById("Jugador").innerHTML = (this.JugadorActual + 1);
+
+        if (this.Opciones.AniTurno === "true") Domino.AnimarLuz(this.VisualSeat(this.JugadorActual));
+
+        if (this.Multijugador === true && this.TurnoActual > 0 && this.TableroListo() === false) {
+            this.MostrarMensaje(this.LocalSeat, "<span data-idioma-en='Syncing board...' data-idioma-cat='Sincronitzant tauler...' data-idioma-es='Sincronizando tablero...'></span>", "negro");
+            return;
+        }
+
+        if (this.TurnoActual === 0) {
+            var Inicio = this.SeatInicio(this.JugadorActual);
+            var pos66 = -1;
+            for (var i = 0; i < 7; i++) {
+                var idx = Inicio + i;
+                if (this.Ficha[idx].Valores[0] === 6 && this.Ficha[idx].Valores[1] === 6) {
+                    pos66 = idx;
+                    break;
+                }
+            }
+
+            if (pos66 === -1) return;
+
+            if (this.Multijugador === false) {
+                this.Ficha[pos66].Colocar(false);
+                this.MostrarMensaje(this.JugadorActual,
+                    "<span>" + this.Opciones.NombreJugador[this.JugadorActual] + "</span>" +
+                    "<span data-idioma-en=' throws : ' data-idioma-cat=' tira : ' data-idioma-es=' tira : '></span>" +
+                    "<img src='./Domino.svg#Ficha_6-6' />");
+                setTimeout(function() { this.Turno(); }.bind(this), this.TiempoTurno);
+                return;
+            }
+
+            this.MostrarMensaje(this.LocalSeat, "<span data-idioma-en='Syncing board...' data-idioma-cat='Sincronitzant tauler...' data-idioma-es='Sincronizando tablero...'></span>", "negro");
+            return;
+        }
+
+        var Posibilidades = this.PosibilidadesJugador(this.JugadorActual);
+
+        if (this.Multijugador === false) {
+            if (Posibilidades.length > 0) {
+                this.Pasado = 0;
+                if (this.JugadorActual !== 0) {
+                    var seatBot = this.JugadorActual;
+                    var bot = Posibilidades[0];
+                    this.Ficha[bot.Pos].Colocar((bot.Rama === "izquierda") ? this.FichaIzquierda : this.FichaDerecha);
+                    this.MostrarMensaje(seatBot,
+                        "<span>" + this.Opciones.NombreJugador[seatBot] + "</span>" +
+                        "<span data-idioma-en=' throws : ' data-idioma-cat=' tira : ' data-idioma-es=' tira : '></span>" +
+                        "<img src='./Domino.svg#Ficha_" + this.Ficha[bot.Pos].Valores[1] + "-" + this.Ficha[bot.Pos].Valores[0] +"' />");
+                    if (this.ComprobarManoTerminada(seatBot) === true) return;
+                    setTimeout(function() { this.Turno(); }.bind(this), this.TiempoTurno);
+                }
+                else {
+                    this.MostrarMensaje(this.JugadorActual,
+                        "<span>" + this.Opciones.NombreJugador[0] + "</span>" +
+                        "<span data-idioma-en=' your turn ' data-idioma-cat=' el teu torn ' data-idioma-es=' tu turno '></span>");
+                    this.MostrarAyuda();
+                }
+                return;
+            }
+
+            this.MostrarMensaje(this.JugadorActual,
+                "<span>" + this.Opciones.NombreJugador[this.JugadorActual] + "</span>" +
+                "<span data-idioma-en='Pass...' data-idioma-cat='Pasa...' data-idioma-es='Pasa...'></span>", "rojo");
+            this.Pasado++;
+            this.TurnoActual++;
+            this.JugadorActual++;
+            if (this.JugadorActual > 3) this.JugadorActual = 0;
+            if (this.ComprobarManoTerminada() === true) return;
+            setTimeout(function() { this.Turno(); }.bind(this), this.TiempoTurno);
+            return;
+        }
+
+        if (this.EsTurnoHumanoLocal()) {
+            if (Posibilidades.length > 0) {
+                this.Pasado = 0;
+                this.MostrarMensaje(this.JugadorActual,
+                    "<span>" + this.Opciones.NombreJugador[this.JugadorActual] + "</span>" +
+                    "<span data-idioma-en=' your turn ' data-idioma-cat=' el teu torn ' data-idioma-es=' tu turno '></span>");
+                this.MostrarAyuda();
+            }
+            else {
+                this.PublicarAccion({ type: "pass", player: this.JugadorActual });
+            }
+            return;
+        }
+
+        if (this.EsTurnoHumanoRemoto()) {
+            this.MostrarMensaje(this.LocalSeat,
+                "<span data-idioma-en='Waiting other player...' data-idioma-cat='Esperant altre jugador...' data-idioma-es='Esperando otro jugador...'></span>");
+            return;
+        }
+
+        if (this.EsHost) {
+            if (Posibilidades.length > 0) {
+                var Ia = Posibilidades[0];
+                this.PublicarAccion(this.CrearAccionPlay(this.JugadorActual, Ia.Pos, Ia.Rama));
+            }
+            else {
+                this.PublicarAccion({ type: "pass", player: this.JugadorActual });
+            }
+        }
+        else {
+            this.MostrarMensaje(this.LocalSeat,
+                "<span data-idioma-en='Waiting bot move...' data-idioma-cat='Esperant moviment del robot...' data-idioma-es='Esperando jugada del robot...'></span>");
+        }
+    };
+
+    this.MostrarAyuda = function() {
+        if (this.Opciones.Ayuda === "false") return;
+        if (this.TableroListo() === false) return;
+
+        var Ini = this.SeatInicio(this.LocalSeat);
+        var Ayuda = [];
+        for (var i = 0; i < 7; i++) {
+            var idx = Ini + i;
+            if (this.Ficha[idx].Colocada === false) {
+                if ((this.Ficha[idx].Valores[0] === this.FichaIzquierda.ValorLibre() || this.Ficha[idx].Valores[1] === this.FichaIzquierda.ValorLibre()) ||
+                    (this.Ficha[idx].Valores[0] === this.FichaDerecha.ValorLibre()   || this.Ficha[idx].Valores[1] === this.FichaDerecha.ValorLibre())) {
+                    Ayuda.push(i);
+                }
+            }
+        }
+
+        var Pos = [ 5.5, 5.5, 5.5, 5.5, 5.5, 5.5, 5.5 ];
+        for (var j = 0; j < Ayuda.length; j++) {
+            var f = Ini + Ayuda[j];
+            Pos[Ayuda[j]] = (this.Ficha[f].Valores[0] === this.Ficha[f].Valores[1]) ? 4.75 : 5.0;
+        }
+
+        if (typeof(this.AniAyuda) !== "undefined") this.AniAyuda.Terminar();
+
+        this.AniAyuda = Animaciones.CrearAnimacion([
+            { Paso : {
+                P0 : this.Ficha[Ini + 0].Ficha.position.z,
+                P1 : this.Ficha[Ini + 1].Ficha.position.z,
+                P2 : this.Ficha[Ini + 2].Ficha.position.z,
+                P3 : this.Ficha[Ini + 3].Ficha.position.z,
+                P4 : this.Ficha[Ini + 4].Ficha.position.z,
+                P5 : this.Ficha[Ini + 5].Ficha.position.z,
+                P6 : this.Ficha[Ini + 6].Ficha.position.z
+            } },
+            { Paso : { P0 : Pos[0], P1 : Pos[1], P2 : Pos[2], P3 : Pos[3], P4 : Pos[4], P5 : Pos[5], P6 : Pos[6] }, Tiempo : 400, FuncionTiempo : FuncionesTiempo.SinInOut }
+        ], {
+            FuncionActualizar : function(V) {
+                for (var n = 0; n < 7; n++) {
+                    var idx = Ini + n;
+                    if (this.Ficha[idx].Colocada === false) {
+                        this.Ficha[idx].Ficha.position.set(this.Ficha[idx].Ficha.position.x, this.Ficha[idx].Ficha.position.y, V["P" + n]);
+                    }
+                }
+            }.bind(this)
+        });
+        this.AniAyuda.Iniciar();
+    };
+
+    this.OcultarAyuda = function() {
+        if (this.Opciones.Ayuda === "false") return;
+
+        var Ini = this.SeatInicio(this.LocalSeat);
+        if (typeof(this.AniAyuda) !== "undefined") this.AniAyuda.Terminar();
+
+        this.AniAyuda = Animaciones.CrearAnimacion([
+            { Paso : {
+                P0 : this.Ficha[Ini + 0].Ficha.position.z,
+                P1 : this.Ficha[Ini + 1].Ficha.position.z,
+                P2 : this.Ficha[Ini + 2].Ficha.position.z,
+                P3 : this.Ficha[Ini + 3].Ficha.position.z,
+                P4 : this.Ficha[Ini + 4].Ficha.position.z,
+                P5 : this.Ficha[Ini + 5].Ficha.position.z,
+                P6 : this.Ficha[Ini + 6].Ficha.position.z
+            } },
+            { Paso : { P0 : 5.5, P1 : 5.5, P2 : 5.5, P3 : 5.5, P4 : 5.5, P5 : 5.5, P6 : 5.5 }, Tiempo : 400, FuncionTiempo : FuncionesTiempo.SinInOut }
+        ], {
+            FuncionActualizar : function(V) {
+                for (var n = 0; n < 7; n++) {
+                    var idx = Ini + n;
+                    if (this.Ficha[idx].Colocada === false) {
+                        this.Ficha[idx].Ficha.position.set(this.Ficha[idx].Ficha.position.x, this.Ficha[idx].Ficha.position.y, V["P" + n]);
+                    }
+                }
+            }.bind(this)
+        });
+        this.AniAyuda.Iniciar();
+    };
+
+    this.AplicarAccionMultijugador = function(Accion) {
+        if (this.Multijugador === false || this.ManoTerminada === true) return;
+
+        this.EsperandoPublicar = false;
+        if (typeof(Accion.seq) === "number") {
+            if (Accion.seq < this.SiguienteAccionSeq) return;
+            if (Accion.seq > this.SiguienteAccionSeq) {
+                this.AccionesPendientes[Accion.seq] = Accion;
+                return;
+            }
+        }
+        if (Accion.player !== this.JugadorActual) {
+            // Puede llegar durante una animación: se re-encola hasta que el estado local avance.
+            if (typeof(Accion.seq) === "number") {
+                this.AccionesPendientes[Accion.seq] = Accion;
+                if (this.ModoRehidratacion === true) return;
+                var RT = this.ReintentosTurno[Accion.seq] || 0;
+                if (RT < 30) {
+                    this.ReintentosTurno[Accion.seq] = RT + 1;
+                    setTimeout(function() { this.Turno(); }.bind(this), 90);
+                    return;
+                }
+                console.error("[SYNC] Accion fuera de turno", Accion, "turno esperado:", this.JugadorActual);
+                delete this.ReintentosTurno[Accion.seq];
+            }
+            return;
+        }
+        if (typeof(Accion.seq) === "number") delete this.ReintentosTurno[Accion.seq];
+
+        if (Accion.type === "play") {
+            var idxResuelto = this.ResolverIndiceAccionPlay(Accion);
+            if (idxResuelto < 0) {
+                var SeqKey = (typeof(Accion.seq) === "number") ? Accion.seq : -1;
+                var retries = this.ReintentosAccion[SeqKey] || 0;
+
+                // Cas transitoire: on reessaie quelques fois avant de skipper.
+                if (retries < 20) {
+                    this.ReintentosAccion[SeqKey] = retries + 1;
+                    if (typeof(Accion.seq) === "number") {
+                        this.AccionesPendientes[Accion.seq] = Accion;
+                    }
+                    if (this.ModoRehidratacion === true) return;
+                    setTimeout(function() { this.Turno(); }.bind(this), 120);
+                    return;
+                }
+
+                if (this.HayAnimacionColocarActiva() === true && typeof(Accion.seq) === "number") {
+                    this.AccionesPendientes[Accion.seq] = Accion;
+                    return;
+                }
+                if (this.ModoRehidratacion === false) {
+                    console.error("[SYNC] Accion play invalida", Accion);
+                }
+                if (typeof(Accion.seq) === "number") {
+                    this.SiguienteAccionSeq++;
+                    delete this.ReintentosAccion[Accion.seq];
+                    delete this.ReintentosTurno[Accion.seq];
+                }
+                return;
+            }
+            var idx = idxResuelto;
+            if (typeof(Accion.seq) === "number") {
+                delete this.ReintentosAccion[Accion.seq];
+                delete this.ReintentosTurno[Accion.seq];
+            }
+
+            var origen = false;
+            if (this.TurnoActual > 0) {
+                origen = (Accion.branch === "izquierda") ? this.FichaIzquierda : this.FichaDerecha;
+            }
+
+            this.Ficha[idx].Colocar(origen, Accion.player === this.LocalSeat, this.ModoRehidratacion === true, Accion.branch);
+            if (this.ModoRehidratacion === false) {
+                this.MostrarMensaje(Accion.player,
+                    "<span>" + this.Opciones.NombreJugador[Accion.player] + "</span>" +
+                    "<span data-idioma-en=' throws : ' data-idioma-cat=' tira : ' data-idioma-es=' tira : '></span>" +
+                    "<img src='./Domino.svg#Ficha_" + this.Ficha[idx].Valores[1] + "-" + this.Ficha[idx].Valores[0] +"' />");
+            }
+
+            if (this.ComprobarManoTerminada(Accion.player) === true) return;
+            if (this.ModoRehidratacion === false) this.OcultarAyuda();
+            if (typeof(Accion.seq) === "number") {
+                this.SiguienteAccionSeq++;
+            }
+            if (this.ModoRehidratacion === false) {
+                setTimeout(function() { this.Turno(); }.bind(this), this.TiempoTurno);
+            }
+            return;
+        }
+
+        if (Accion.type === "pass") {
+            if (this.ValidarAccionPass(Accion) === false) {
+                if (this.HayAnimacionColocarActiva() === true && typeof(Accion.seq) === "number") {
+                    this.AccionesPendientes[Accion.seq] = Accion;
+                    return;
+                }
+                if (this.ModoRehidratacion === false) {
+                    console.error("[SYNC] Accion pass invalida", Accion);
+                }
+                if (typeof(Accion.seq) === "number") {
+                    this.SiguienteAccionSeq++;
+                    delete this.ReintentosTurno[Accion.seq];
+                }
+                return;
+            }
+            if (this.ModoRehidratacion === false) {
+                this.MostrarMensaje(Accion.player,
+                    "<span>" + this.Opciones.NombreJugador[Accion.player] + "</span>" +
+                    "<span data-idioma-en='Pass...' data-idioma-cat='Pasa...' data-idioma-es='Pasa...'></span>", "rojo");
+                if (window.UI && typeof(window.UI.MostrarPassVisual) === "function") {
+                    window.UI.MostrarPassVisual();
+                }
+            }
+            this.Pasado++;
+            this.TurnoActual++;
+            this.JugadorActual++;
+            if (this.JugadorActual > 3) this.JugadorActual = 0;
+
+            if (this.ComprobarManoTerminada() === true) return;
+            if (typeof(Accion.seq) === "number") {
+                this.SiguienteAccionSeq++;
+            }
+            if (this.ModoRehidratacion === false) {
+                setTimeout(function() { this.Turno(); }.bind(this), this.TiempoTurno);
+            }
+            return;
+        }
+
+        console.error("[SYNC] Tipo de accion desconocido", Accion);
+        if (typeof(Accion.seq) === "number") {
+            this.SiguienteAccionSeq++;
+            delete this.ReintentosTurno[Accion.seq];
+        }
+    };
+
+    this.ComprobarManoTerminada = function(SeatReferencia) {
+        if (this.ManoTerminada === true) return true;
+
+        var SeatComprobar = (typeof(SeatReferencia) === "number") ? SeatReferencia : this.JugadorActual;
+        var Colocadas = 0;
+        for (var i = 0; i < 7; i++) {
+            if (this.Ficha[(SeatComprobar * 7) + i].Colocada === true) Colocadas++;
+        }
+
+        if (Colocadas === 7) {
+            this.MostrarMensaje(SeatComprobar,
+                "<span>" + this.Opciones.NombreJugador[SeatComprobar] + "</span>" +
+                "<span data-idioma-en=' wins this hand!' data-idioma-cat=' guanya aquesta mà!' data-idioma-es=' gana esta mano!'></span>", "verde");
+            this.ManoTerminada = true;
+            UI.MostrarGanador(SeatComprobar, "out");
+        }
+
+        if (this.Pasado === 4) {
+            this.ManoTerminada = true;
+            var MejorJugador = 0;
+            var MenorPuntuacion = this.ContarPuntos(0);
+            for (var j = 1; j < 4; j++) {
+                var Puntos = this.ContarPuntos(j);
+                if (Puntos < MenorPuntuacion) {
+                    MenorPuntuacion = Puntos;
+                    MejorJugador = j;
+                }
+            }
+            this.MostrarMensaje(MejorJugador,
+                "<span>" + this.Opciones.NombreJugador[MejorJugador] + "</span>" +
+                "<span data-idioma-en=' wins by block' data-idioma-cat=' guanya per bloqueig' data-idioma-es=' gana por bloqueo'></span>", "verde");
+            UI.MostrarGanador(MejorJugador, "block");
+        }
+
+        if (this.ManoTerminada === true) {
+            this.ContinuandoPartida = false;
+            for (var f = 0; f < this.Ficha.length; f++) {
+                this.Ficha[f].RotarBocaArriba();
+            }
+            return true;
+        }
+        return false;
+    };
+
+    this.ContarPuntos = function(Jugador) {
+        var Total = 0;
+        for (var i = 0; i < 7; i++) {
+            if (this.Ficha[(Jugador * 7) + i].Colocada === false) {
+                Total += (this.Ficha[(Jugador * 7) + i].Valores[0] + this.Ficha[(Jugador * 7) + i].Valores[1]);
+            }
+        }
+        return Total;
+    };
+
+    this.MostrarMensaje = function(Jugador, Texto, ColFondo) {
+        if (this.ModoRehidratacion === true) return;
+        var ColorFondo = (typeof(ColFondo) === "undefined") ? "negro" : ColFondo;
+        var Slot = this.VisualSeat(Jugador);
+        var Msg = document.getElementById("Msg" + (Slot + 1));
+        Msg.setAttribute("MsgVisible", "true");
+        Msg.setAttribute("ColorFondo", ColorFondo);
+        if (this.TimerMsg[Jugador] !== 0) clearTimeout(this.TimerMsg[Jugador]);
+        this.TimerMsg[Jugador] = setTimeout(function(SlotJ, J) {
+            document.getElementById("Msg" + (SlotJ + 1)).setAttribute("MsgVisible", "false");
+            this.TimerMsg[J] = 0;
+        }.bind(this, Slot, Jugador), this.TiempoTurno * 2);
+        Msg.innerHTML = Texto;
+
+        var Historial = document.getElementById("Historial");
+        Historial.innerHTML = Historial.innerHTML + "<div class='Historial_" + ColorFondo + "'>" + Texto + "</div>";
+        Historial.scrollTo(0, Historial.scrollHeight);
+    };
+
+    this.JugadorColocar = function(FichaForzada, RamaForzada) {
+        if (this.ModoRehidratacion === true) return;
+        if (this.EsTurnoHumanoLocal() === false) return;
+
+        // En multijugador, no bloquear le clic sur les animations des autres joueurs.
+        if (this.Multijugador === false) {
+            for (var f = 0; f < this.Ficha.length; f++) {
+                if (typeof(this.Ficha[f].AniColocar) !== "undefined" && this.Ficha[f].AniColocar.Terminado() === false) {
+                    return;
+                }
+            }
+        }
+
+        var Ini = this.SeatInicio(this.LocalSeat);
+        for (var i = 0; i < 7; i++) {
+            var idx = Ini + i;
+            if (typeof(FichaForzada) === "number" && idx !== FichaForzada) continue;
+            if (typeof(this.Ficha[idx]) === "undefined") continue;
+            if (this.Ficha[idx].Hover > 0 && this.Ficha[idx].Colocada === false) {
+                if (this.TurnoActual === 0) {
+                    if (this.Ficha[idx].Valores[0] === 6 && this.Ficha[idx].Valores[1] === 6) {
+                        if (this.Multijugador === true) {
+                            this.OcultarAyuda();
+                            this.PublicarAccion(this.CrearAccionPlay(this.JugadorActual, idx, "centro"));
+                            return;
+                        }
+
+                        this.Ficha[idx].Colocar(false, true);
+                        if (this.ComprobarManoTerminada(this.JugadorActual) === true) return;
+                        this.OcultarAyuda();
+                        setTimeout(function() { this.Turno(); }.bind(this), this.TiempoTurno);
+                    }
+                    return;
+                }
+
+                if (this.TableroListo() === false) return;
+                var nPos = -1;
+                if ((typeof(RamaForzada) === "string") && (RamaForzada === "izquierda" || RamaForzada === "derecha")) {
+                    if (this.PuedeJugarEnRama(idx, RamaForzada)) {
+                        nPos = (RamaForzada === "izquierda") ? this.FichaIzquierda : this.FichaDerecha;
+                    }
+                }
+
+                if (nPos === -1) {
+                    if ((this.Ficha[idx].Valores[0] === this.FichaIzquierda.ValorLibre() || this.Ficha[idx].Valores[1] === this.FichaIzquierda.ValorLibre()) &&
+                        (this.Ficha[idx].Valores[0] === this.FichaDerecha.ValorLibre()   || this.Ficha[idx].Valores[1] === this.FichaDerecha.ValorLibre()) &&
+                        (this.FichaIzquierda.ValorLibre() !== this.FichaDerecha.ValorLibre())) {
+                        if (this.Ficha[idx].Hover === 1) {
+                            if (this.Ficha[idx].Valores[0] === this.FichaIzquierda.ValorLibre()) nPos = this.FichaIzquierda;
+                            else                                                                 nPos = this.FichaDerecha;
+                        }
+                        else if (this.Ficha[idx].Hover === 2) {
+                            if (this.Ficha[idx].Valores[1] === this.FichaIzquierda.ValorLibre()) nPos = this.FichaIzquierda;
+                            else                                                                 nPos = this.FichaDerecha;
+                        }
+                    }
+                    else {
+                        if (this.Ficha[idx].Valores[0] === this.FichaIzquierda.ValorLibre() || this.Ficha[idx].Valores[1] === this.FichaIzquierda.ValorLibre()) nPos = this.FichaIzquierda;
+                        if (this.Ficha[idx].Valores[0] === this.FichaDerecha.ValorLibre() || this.Ficha[idx].Valores[1] === this.FichaDerecha.ValorLibre()) nPos = this.FichaDerecha;
+                    }
+                }
+
+                if (nPos !== -1) {
+                    var rama = (nPos === this.FichaIzquierda) ? "izquierda" : "derecha";
+
+                    if (this.Multijugador === true) {
+                        this.OcultarAyuda();
+                        this.PublicarAccion(this.CrearAccionPlay(this.JugadorActual, idx, rama));
+                        return;
+                    }
+
+                    this.Ficha[idx].Colocar(nPos, true);
+                    this.MostrarMensaje(this.JugadorActual,
+                        "<span>" + this.Opciones.NombreJugador[this.JugadorActual] + "</span>" +
+                        "<span data-idioma-en=' throws : ' data-idioma-cat=' tira : ' data-idioma-es=' tira : '></span>" +
+                        "<img src='./Domino.svg#Ficha_" + this.Ficha[idx].Valores[1] + "-" + this.Ficha[idx].Valores[0] +"' />");
+
+                    if (this.ComprobarManoTerminada(this.JugadorActual) === true) return;
+                    this.OcultarAyuda();
+                    setTimeout(function() { this.Turno(); }.bind(this), this.TiempoTurno);
+                    return;
+                }
+            }
+        }
+    };
+};

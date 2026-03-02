@@ -1,0 +1,101 @@
+<!doctype html>
+<html lang="fr">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="firebase-app-check-site-key" content="REPLACE_WITH_RECAPTCHA_V3_SITE_KEY" />
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval' 'wasm-unsafe-eval' https://www.gstatic.com https://apis.google.com https://cdn.tailwindcss.com https://cdnjs.cloudflare.com https://cdn.jsdelivr.net https://unpkg.com https://www.google.com https://www.recaptcha.net; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com https://cdnjs.cloudflare.com https://www.gstatic.com; font-src 'self' https://fonts.gstatic.com https://cdnjs.cloudflare.com data:; img-src 'self' data: https: blob:; connect-src 'self' data: blob: https://*.googleapis.com https://apis.google.com https://firestore.googleapis.com https://identitytoolkit.googleapis.com https://securetoken.googleapis.com https://firebaseinstallations.googleapis.com https://content-firebaseappcheck.googleapis.com https://www.gstatic.com https://www.google.com https://accounts.google.com https://does-2c234.firebaseapp.com https://does-2c234.web.app https://www.recaptcha.net https://us-central1-does-2c234.cloudfunctions.net https://*.cloudfunctions.net https://cdn.jsdelivr.net https://unpkg.com; frame-src https://www.google.com https://accounts.google.com https://apis.google.com https://www.gstatic.com https://does-2c234.firebaseapp.com https://does-2c234.web.app https://www.recaptcha.net; worker-src 'self' blob: https://cdn.jsdelivr.net https://unpkg.com; object-src 'none'; base-uri 'self';"
+    />
+    <title>Dominoes - Lakay</title>
+
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700;800&display=swap"
+      rel="stylesheet"
+    />
+
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link
+      rel="stylesheet"
+      href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.2/css/all.min.css"
+    />
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/animejs/3.2.1/anime.min.js"></script>
+    <style>
+      @media print {
+        @page {
+          margin: 12mm;
+        }
+
+        html,
+        body {
+          overflow: visible !important;
+          background: #fff !important;
+        }
+
+        p,
+        li {
+          orphans: 3;
+          widows: 3;
+        }
+
+        section,
+        article,
+        table,
+        tbody,
+        tr,
+        .card,
+        .timeline-item,
+        .experience-item,
+        .print-avoid-break {
+          break-inside: avoid-page;
+          page-break-inside: avoid;
+        }
+
+        /* Extra guard for right-column CV/resume layouts */
+        .right-column,
+        .col-right,
+        .column-right,
+        [class*="right-column"],
+        [class*="col-right"] {
+          position: static !important;
+          float: none !important;
+          overflow: visible !important;
+        }
+
+        .right-column > *,
+        .col-right > *,
+        .column-right > *,
+        [class*="right-column"] > *,
+        [class*="col-right"] > * {
+          break-inside: avoid-page;
+          page-break-inside: avoid;
+        }
+
+        .page-break,
+        .page-separator,
+        .print-page-break,
+        [class*="page-break"] {
+          break-before: page;
+          page-break-before: always;
+          margin-top: 0 !important;
+          clear: both !important;
+        }
+
+        /* Hide interactive edit overlays in print/PDF (prevents overlap across pages) */
+        [data-edit-step],
+        [data-edit-step="experiences"] {
+          display: none !important;
+          visibility: hidden !important;
+          position: static !important;
+          pointer-events: none !important;
+        }
+      }
+    </style>
+  </head>
+  <body class="m-0 p-0">
+    <script type="module" src="./home.js"></script>
+  </body>
+</html>

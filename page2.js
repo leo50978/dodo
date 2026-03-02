@@ -1,0 +1,520 @@
+import { mountProfileModal } from "./profil.js";
+import { mountSoldeModal } from "./solde.js";
+import { ensureXchangeState, getXchangeState } from "./xchange.js";
+import { withButtonLoading } from "./loading-ui.js";
+import { db, collection, query, orderBy, limit, onSnapshot, doc, setDoc, serverTimestamp } from "./firebase-init.js";
+
+const CHAT_COLLECTION = "globalChannelMessages";
+const SUPPORT_THREADS_COLLECTION = "supportThreads";
+let page2ChatLatestUnsub = null;
+let page2ChatSeenUnsub = null;
+let page2SupportThreadUnsub = null;
+let page2PresenceVisibilityBound = false;
+let page2PresenceUser = null;
+
+function stopPage2ChatWatchers() {
+  if (page2ChatLatestUnsub) {
+    page2ChatLatestUnsub();
+    page2ChatLatestUnsub = null;
+  }
+  if (page2ChatSeenUnsub) {
+    page2ChatSeenUnsub();
+    page2ChatSeenUnsub = null;
+  }
+  if (page2SupportThreadUnsub) {
+    page2SupportThreadUnsub();
+    page2SupportThreadUnsub = null;
+  }
+}
+
+function tsToMs(value) {
+  if (!value) return 0;
+  if (typeof value.toMillis === "function") return value.toMillis();
+  if (typeof value.toDate === "function") return value.toDate().getTime();
+  if (typeof value.seconds === "number") return value.seconds * 1000;
+  const parsed = Date.parse(String(value));
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
+async function touchClientPresence(user) {
+  const uid = String(user?.uid || "");
+  if (!uid) return;
+  try {
+    await setDoc(doc(db, "clients", uid), {
+      uid,
+      email: String(user?.email || ""),
+      lastSeenAt: serverTimestamp(),
+      lastSeenAtMs: Date.now(),
+      updatedAt: serverTimestamp(),
+    }, { merge: true });
+  } catch (error) {
+    console.error("Erreur update presence client:", error);
+  }
+}
+
+function initDiscussionFab(user) {
+  const fabBtn = document.getElementById("discussionFabBtn");
+  const badge = document.getElementById("discussionFabBadge");
+  if (!fabBtn || !badge) return;
+
+  fabBtn.addEventListener("click", () => {
+    window.location.href = "./discussion.html";
+  });
+
+  const uid = String(user?.uid || "");
+  if (!uid) {
+    badge.classList.add("hidden");
+    return;
+  }
+
+  stopPage2ChatWatchers();
+
+  let latestMessageMs = 0;
+  let seenMs = 0;
+  const renderBadge = () => {
+    const liveBadge = document.getElementById("discussionFabBadge");
+    if (!liveBadge) {
+      stopPage2ChatWatchers();
+      return;
+    }
+    const unread = latestMessageMs > 0 && latestMessageMs > seenMs;
+    liveBadge.classList.toggle("hidden", !unread);
+  };
+
+  page2ChatLatestUnsub = onSnapshot(
+    query(collection(db, CHAT_COLLECTION), orderBy("createdAt", "desc"), limit(1)),
+    (snap) => {
+      if (snap.empty) {
+        latestMessageMs = 0;
+        renderBadge();
+        return;
+      }
+      const data = snap.docs[0].data() || {};
+      latestMessageMs = tsToMs(data.createdAt);
+      renderBadge();
+    },
+    (err) => {
+      console.error("Erreur listener messages discussion:", err);
+      latestMessageMs = 0;
+      renderBadge();
+    }
+  );
+
+  page2ChatSeenUnsub = onSnapshot(
+    doc(db, "clients", uid),
+    (snap) => {
+      const data = snap.exists() ? (snap.data() || {}) : {};
+      seenMs = tsToMs(data.chatLastSeenAt);
+      renderBadge();
+    },
+    (err) => {
+      console.error("Erreur listener lastSeen discussion:", err);
+    }
+  );
+}
+
+function initAgentSupportAlert(user) {
+  const alertWrap = document.getElementById("agentSupportAlertWrap");
+  const alertBtn = document.getElementById("agentSupportAlertBtn");
+  const alertText = document.getElementById("agentSupportAlertText");
+  if (!alertWrap || !alertBtn || !alertText) return;
+
+  if (alertBtn.dataset.bound !== "1") {
+    alertBtn.dataset.bound = "1";
+    alertBtn.addEventListener("click", () => {
+      window.location.href = "./discussion-agent.html";
+    });
+  }
+
+  const uid = String(user?.uid || "");
+  if (!uid) {
+    alertWrap.classList.add("hidden");
+    return;
+  }
+
+  page2SupportThreadUnsub = onSnapshot(
+    doc(db, SUPPORT_THREADS_COLLECTION, `user_${uid}`),
+    (snap) => {
+      const data = snap.exists() ? (snap.data() || {}) : {};
+      const unread = data.unreadForUser === true && String(data.lastSenderRole || "") === "agent";
+      alertWrap.classList.toggle("hidden", !unread);
+      if (!unread) return;
+
+      const preview = String(data.lastMessageText || "").trim();
+      alertText.textContent = preview
+        ? `Vous avez recu un message par un agent: ${preview}`
+        : "Vous avez recu un message par un agent.";
+    },
+    (err) => {
+      console.error("Erreur listener alerte agent:", err);
+      alertWrap.classList.add("hidden");
+    }
+  );
+}
+
+export function renderPage2(user) {
+  stopPage2ChatWatchers();
+  page2PresenceUser = user || null;
+  touchClientPresence(page2PresenceUser);
+
+  document.body.innerHTML = `
+    <div id="page2Root" class="min-h-screen bg-[#3F4766] px-0 pt-0 pb-8 text-white font-['Poppins']">
+      <div class="w-full">
+        <section class="relative h-[80vh] min-h-[420px] w-full overflow-hidden rounded-none">
+          <img src="hero.jpg" alt="Hero" class="h-full w-full object-cover" />
+          <div class="absolute inset-0 bg-[#3F4766]/55 backdrop-blur-[1px]"></div>
+          <header class="fixed inset-x-0 top-3 z-40 px-3 sm:top-4 sm:px-5">
+            <div class="mx-auto flex w-full max-w-[1080px] items-center justify-between px-1 py-1 sm:px-2 sm:py-1.5">
+              <div class="flex items-center">
+                <img id="p2Logo" src="./logo.png" alt="Logo" class="h-auto w-[128px] max-w-full object-contain sm:w-[148px]" />
+                <span id="p2LogoFallback" class="hidden text-2xl font-semibold tracking-tight text-white/95">Dominoes</span>
+              </div>
+              <div class="flex items-center gap-2 sm:gap-3">
+                <button id="soldBadge" type="button" class="inline-flex items-center gap-2 rounded-xl border border-white/20 bg-white/10 px-3 py-2 text-xs font-semibold text-white/90 shadow-[inset_4px_4px_10px_rgba(20,28,45,0.42),inset_-4px_-4px_10px_rgba(123,137,180,0.2)] backdrop-blur-md transition hover:bg-white/15">
+                  <span class="inline-flex h-5 w-5 items-center justify-center rounded-lg bg-white/20 text-[11px]">+</span>
+                  <span class="hidden sm:inline">Faire un dépôt</span>
+                  <span class="sm:hidden">Dépôt</span>
+                </button>
+                <button id="p2Profile" type="button" class="grid h-10 w-10 place-items-center rounded-xl border border-white/20 bg-white/10 text-white/85 shadow-[8px_8px_18px_rgba(22,29,45,0.4),-6px_-6px_14px_rgba(118,131,172,0.25)] backdrop-blur-md transition hover:bg-white/15 hover:text-white sm:h-11 sm:w-11" aria-label="Profil">
+                  <i class="fa-regular fa-circle-user text-[18px] sm:text-[19px]"></i>
+                </button>
+              </div>
+            </div>
+          </header>
+          <div class="absolute inset-0 flex items-end p-6 sm:p-8">
+            <div class="rounded-2xl border border-white/15 bg-[#3F4766]/55 px-6 py-5 shadow-[10px_10px_26px_rgba(18,24,38,0.45),-8px_-8px_20px_rgba(110,126,165,0.15)] backdrop-blur-md">
+              <h1 class="text-[34px] font-bold leading-none tracking-tight sm:text-[42px] lg:text-[56px]">Dominoes</h1>
+              <p class="mt-3 text-sm text-white/80 sm:text-base">Dominoes Lakay.</p>
+            </div>
+          </div>
+        </section>
+
+        <section class="mt-8 flex justify-center px-6">
+          <div class="flex w-[70vw] max-w-[780px] flex-col items-center gap-3">
+            <button id="startGameBtn" type="button" class="h-14 w-full rounded-[18px] border border-[#ffb26e] bg-[#F57C00] px-8 text-base font-semibold text-white shadow-[9px_9px_20px_rgba(155,78,25,0.45),-7px_-7px_16px_rgba(255,173,96,0.2)] transition hover:-translate-y-0.5">
+                LANCER UNE PARTIE
+            </button>
+            <button id="gameRulesBtn" type="button" class="h-12 w-full rounded-[16px] border border-white/25 bg-white/10 px-8 text-sm font-semibold text-white shadow-[8px_8px_18px_rgba(22,29,45,0.35),-6px_-6px_14px_rgba(118,131,172,0.2)] backdrop-blur-md transition hover:-translate-y-0.5 hover:bg-white/15">
+              Les règles
+            </button>
+          </div>
+        </section>
+      </div>
+    </div>
+  `;
+
+  if (!page2PresenceVisibilityBound) {
+    page2PresenceVisibilityBound = true;
+    document.addEventListener("visibilitychange", () => {
+      if (document.visibilityState === "visible") {
+        touchClientPresence(page2PresenceUser);
+      }
+    });
+  }
+
+  document.body.insertAdjacentHTML("beforeend", `
+    <div id="rulesModalOverlay" class="fixed inset-0 z-[3400] hidden items-center justify-center bg-black/45 p-4 backdrop-blur-sm">
+      <div id="rulesModalPanel" class="w-full max-w-2xl max-h-[85vh] overflow-y-auto rounded-3xl border border-white/20 bg-[#3F4766]/60 p-5 text-white shadow-[14px_14px_34px_rgba(16,23,40,0.5),-10px_-10px_24px_rgba(112,126,165,0.2)] backdrop-blur-xl sm:p-6">
+        <div class="flex items-center justify-between">
+          <h3 class="text-xl font-bold">🎮 RÈGLEMENT DU JEU</h3>
+          <button id="rulesModalClose" type="button" class="grid h-10 w-10 place-items-center rounded-full border border-white/20 bg-white/10 text-white">
+            <i class="fa-solid fa-xmark"></i>
+          </button>
+        </div>
+
+        <div class="mt-4 space-y-4 text-sm text-white/90 sm:text-base">
+          <div>
+            <p class="font-semibold text-white">💰 Dépôt & Conversion</p>
+            <p class="mt-1">Le dépôt minimum est de 25 Gdes.</p>
+            <p>25 Gdes = 500 Does (monnaie virtuelle du jeu).</p>
+            <p>Les Does sont utilisés exclusivement pour participer aux parties.</p>
+          </div>
+
+          <div>
+            <p class="font-semibold text-white">🎯 Participation</p>
+            <p class="mt-1">Chaque partie coûte 100 Does.</p>
+            <p>Le montant est automatiquement déduit du solde lors de l’inscription à une partie.</p>
+            <p>Une partie démarre uniquement lorsqu’il y a au moins 4 joueurs.</p>
+          </div>
+
+          <div>
+            <p class="font-semibold text-white">🏆 Gains</p>
+            <p class="mt-1">Il y a un seul gagnant par partie.</p>
+            <p>Le gagnant reçoit 300 Does.</p>
+            <p>Les autres participants ne récupèrent pas leur mise.</p>
+          </div>
+
+          <div>
+            <p class="font-semibold text-white">🔁 Conditions de jeu</p>
+            <p class="mt-1">Un joueur peut participer à plusieurs parties tant qu’il dispose d’un solde suffisant.</p>
+            <p>Les Does ne peuvent être utilisés que sur la plateforme.</p>
+          </div>
+
+          <div>
+            <p class="font-semibold text-white">📌 Règles générales</p>
+            <p class="mt-1">Toute tentative de fraude entraîne la suspension du compte.</p>
+            <p>La participation au jeu implique l’acceptation complète du règlement.</p>
+            <p>L’organisateur se réserve le droit de modifier les règles à tout moment si nécessaire.</p>
+          </div>
+        </div>
+      </div>
+    </div>
+  `);
+
+  document.body.insertAdjacentHTML("beforeend", `
+    <div id="doesRequiredOverlay" class="fixed inset-0 z-[3450] hidden items-center justify-center bg-black/50 p-4 backdrop-blur-sm">
+      <div class="w-full max-w-md rounded-3xl border border-white/20 bg-[#3F4766]/75 p-5 text-white shadow-[14px_14px_34px_rgba(16,23,40,0.5),-10px_-10px_24px_rgba(112,126,165,0.2)] backdrop-blur-xl sm:p-6">
+        <h3 class="text-xl font-bold">Solde Does insuffisant</h3>
+        <p class="mt-2 text-sm text-white/85">
+          Tu n'as pas assez de Does pour démarrer une partie.
+        </p>
+        <p class="mt-2 text-sm text-white/85">
+          Pour jouer, ouvre ton profil puis clique sur <span class="font-semibold text-white">Xchange en crypto</span> pour convertir ton argent en Does.
+        </p>
+        <div class="mt-5 grid grid-cols-1 gap-3 sm:grid-cols-2">
+          <button id="doesRequiredOpenProfile" type="button" class="h-11 rounded-2xl border border-[#ffb26e] bg-[#F57C00] text-sm font-semibold text-white shadow-[8px_8px_18px_rgba(163,82,27,0.45),-6px_-6px_14px_rgba(255,175,102,0.22)] transition hover:-translate-y-0.5">
+            Ouvrir profil
+          </button>
+          <button id="doesRequiredClose" type="button" class="h-11 rounded-2xl border border-white/20 bg-white/10 text-sm font-semibold text-white">
+            Fermer
+          </button>
+        </div>
+      </div>
+    </div>
+  `);
+
+  document.body.insertAdjacentHTML("beforeend", `
+    <div id="stakeSelectionOverlay" class="fixed inset-0 z-[3460] hidden items-center justify-center bg-black/55 p-4 backdrop-blur-sm">
+      <div id="stakeSelectionPanel" class="w-full max-w-lg rounded-3xl border border-white/20 bg-[#3F4766]/80 p-5 text-white shadow-[14px_14px_34px_rgba(16,23,40,0.5),-10px_-10px_24px_rgba(112,126,165,0.2)] backdrop-blur-xl sm:p-6">
+        <div class="flex items-center justify-between gap-3">
+          <h3 class="text-xl font-bold">Choisis ta mise</h3>
+          <button id="stakeSelectionClose" type="button" class="grid h-10 w-10 place-items-center rounded-full border border-white/20 bg-white/10 text-white">
+            <i class="fa-solid fa-xmark"></i>
+          </button>
+        </div>
+        <p class="mt-2 text-sm text-white/90">
+          Quand vous cliquez sur un des boutons, le jeu débute et la somme Does du bouton sélectionné est automatiquement pariée.
+        </p>
+        <div class="mt-5 grid grid-cols-2 gap-3">
+          <button data-stake="100" data-available="1" type="button" class="stake-option-btn h-12 rounded-2xl border border-[#ffb26e] bg-[#F57C00] text-sm font-semibold text-white shadow-[8px_8px_18px_rgba(163,82,27,0.45),-6px_-6px_14px_rgba(255,175,102,0.22)] transition hover:-translate-y-0.5">
+            100 Does
+          </button>
+          <button data-stake="500" data-available="0" type="button" class="stake-option-btn h-12 rounded-2xl border border-white/20 bg-white/10 text-sm font-semibold text-white/65 opacity-55 transition cursor-not-allowed">
+            500 Does
+          </button>
+          <button data-stake="1000" data-available="0" type="button" class="stake-option-btn h-12 rounded-2xl border border-white/20 bg-white/10 text-sm font-semibold text-white/65 opacity-55 transition cursor-not-allowed">
+            1000 Does
+          </button>
+          <button data-stake="5000" data-available="0" type="button" class="stake-option-btn h-12 rounded-2xl border border-white/20 bg-white/10 text-sm font-semibold text-white/65 opacity-55 transition cursor-not-allowed">
+            5000 Does
+          </button>
+        </div>
+      </div>
+    </div>
+  `);
+
+  document.body.insertAdjacentHTML("beforeend", `
+    <div id="stakeUnavailableOverlay" class="fixed inset-0 z-[3470] hidden items-center justify-center bg-black/55 p-4 backdrop-blur-sm">
+      <div id="stakeUnavailablePanel" class="w-full max-w-sm rounded-3xl border border-white/20 bg-[#3F4766]/82 p-5 text-white shadow-[14px_14px_34px_rgba(16,23,40,0.5),-10px_-10px_24px_rgba(112,126,165,0.2)] backdrop-blur-xl sm:p-6">
+        <h3 class="text-lg font-bold">Pas encore disponible</h3>
+        <p class="mt-2 text-sm text-white/90">Cette mise sera activée prochainement.</p>
+        <button id="stakeUnavailableClose" type="button" class="mt-4 h-11 w-full rounded-2xl border border-[#ffb26e] bg-[#F57C00] text-sm font-semibold text-white shadow-[8px_8px_18px_rgba(163,82,27,0.45),-6px_-6px_14px_rgba(255,175,102,0.22)] transition hover:-translate-y-0.5">
+          Compris
+        </button>
+      </div>
+    </div>
+  `);
+
+  document.body.insertAdjacentHTML("beforeend", `
+    <div class="fixed bottom-4 left-4 z-[3390]">
+      <button id="discussionFabBtn" type="button" class="relative grid h-14 w-14 place-items-center rounded-full border border-white/25 bg-[#3F4766]/75 text-white shadow-[10px_10px_22px_rgba(16,23,40,0.45),-8px_-8px_18px_rgba(112,126,165,0.2)] backdrop-blur-xl transition hover:-translate-y-0.5" aria-label="Ouvrir la discussion">
+        <i class="fa-solid fa-comments text-xl"></i>
+        <span id="discussionFabBadge" class="hidden absolute -right-1 -top-1 min-w-[1.3rem] rounded-full border border-red-200/60 bg-red-500 px-1 py-0.5 text-[11px] font-bold leading-none text-white">1</span>
+      </button>
+    </div>
+  `);
+
+  document.body.insertAdjacentHTML("beforeend", `
+    <div id="agentSupportAlertWrap" class="hidden fixed bottom-4 right-4 z-[3395]">
+      <button
+        id="agentSupportAlertBtn"
+        type="button"
+        class="flex max-w-[min(86vw,360px)] items-start gap-3 rounded-2xl border border-[#7b9cff]/35 bg-[#20324d]/88 px-4 py-3 text-left text-white shadow-[12px_12px_28px_rgba(16,23,40,0.45),-8px_-8px_18px_rgba(88,116,173,0.16)] backdrop-blur-xl transition hover:-translate-y-0.5"
+      >
+        <span class="mt-0.5 grid h-9 w-9 flex-none place-items-center rounded-xl bg-[#4a76ff]/25 text-[#dfe8ff]">
+          <i class="fa-solid fa-envelope-open-text"></i>
+        </span>
+        <span id="agentSupportAlertText" class="text-sm leading-5">Vous avez recu un message par un agent.</span>
+      </button>
+    </div>
+  `);
+
+  if (window.anime) {
+    anime({
+      targets: "#page2Root",
+      opacity: [0, 1],
+      duration: 550,
+      easing: "easeOutQuad",
+    });
+
+    anime({
+      targets: "header, section, #startGameBtn",
+      translateY: [16, 0],
+      opacity: [0, 1],
+      delay: anime.stagger(90, { start: 130 }),
+      duration: 520,
+      easing: "easeOutCubic",
+    });
+  }
+
+  const logo = document.getElementById("p2Logo");
+  const logoFallback = document.getElementById("p2LogoFallback");
+  const startGameBtn = document.getElementById("startGameBtn");
+  const rulesBtn = document.getElementById("gameRulesBtn");
+  const rulesOverlay = document.getElementById("rulesModalOverlay");
+  const rulesPanel = document.getElementById("rulesModalPanel");
+  const rulesClose = document.getElementById("rulesModalClose");
+  const doesRequiredOverlay = document.getElementById("doesRequiredOverlay");
+  const doesRequiredOpenProfile = document.getElementById("doesRequiredOpenProfile");
+  const doesRequiredClose = document.getElementById("doesRequiredClose");
+  const stakeSelectionOverlay = document.getElementById("stakeSelectionOverlay");
+  const stakeSelectionPanel = document.getElementById("stakeSelectionPanel");
+  const stakeSelectionClose = document.getElementById("stakeSelectionClose");
+  const stakeButtons = Array.from(document.querySelectorAll(".stake-option-btn"));
+  const stakeUnavailableOverlay = document.getElementById("stakeUnavailableOverlay");
+  const stakeUnavailablePanel = document.getElementById("stakeUnavailablePanel");
+  const stakeUnavailableClose = document.getElementById("stakeUnavailableClose");
+  if (logo && logoFallback) {
+    logo.addEventListener("error", () => {
+      logo.classList.add("hidden");
+      logoFallback.classList.remove("hidden");
+    });
+  }
+
+  const closeRules = () => {
+    if (!rulesOverlay) return;
+    rulesOverlay.classList.add("hidden");
+    rulesOverlay.classList.remove("flex");
+    document.body.classList.remove("overflow-hidden");
+  };
+  const openRules = () => {
+    if (!rulesOverlay) return;
+    rulesOverlay.classList.remove("hidden");
+    rulesOverlay.classList.add("flex");
+    document.body.classList.add("overflow-hidden");
+  };
+  if (rulesBtn) rulesBtn.addEventListener("click", openRules);
+  if (rulesClose) rulesClose.addEventListener("click", closeRules);
+  if (rulesOverlay) {
+    rulesOverlay.addEventListener("click", (ev) => {
+      if (ev.target === rulesOverlay) closeRules();
+    });
+  }
+  if (rulesPanel) {
+    rulesPanel.addEventListener("click", (ev) => ev.stopPropagation());
+  }
+
+  const openStakeSelection = () => {
+    if (!stakeSelectionOverlay) return;
+    stakeSelectionOverlay.classList.remove("hidden");
+    stakeSelectionOverlay.classList.add("flex");
+    document.body.classList.add("overflow-hidden");
+  };
+  const closeStakeSelection = () => {
+    if (!stakeSelectionOverlay) return;
+    stakeSelectionOverlay.classList.add("hidden");
+    stakeSelectionOverlay.classList.remove("flex");
+    document.body.classList.remove("overflow-hidden");
+  };
+
+  const openUnavailable = () => {
+    if (!stakeUnavailableOverlay) return;
+    stakeUnavailableOverlay.classList.remove("hidden");
+    stakeUnavailableOverlay.classList.add("flex");
+  };
+  const closeUnavailable = () => {
+    if (!stakeUnavailableOverlay) return;
+    stakeUnavailableOverlay.classList.add("hidden");
+    stakeUnavailableOverlay.classList.remove("flex");
+  };
+
+  if (startGameBtn) {
+    startGameBtn.addEventListener("click", () => {
+      openStakeSelection();
+    });
+  }
+
+  if (stakeSelectionClose) stakeSelectionClose.addEventListener("click", closeStakeSelection);
+  if (stakeSelectionOverlay) {
+    stakeSelectionOverlay.addEventListener("click", (ev) => {
+      if (ev.target === stakeSelectionOverlay) closeStakeSelection();
+    });
+  }
+  if (stakeSelectionPanel) {
+    stakeSelectionPanel.addEventListener("click", (ev) => ev.stopPropagation());
+  }
+
+  if (stakeUnavailableClose) stakeUnavailableClose.addEventListener("click", closeUnavailable);
+  if (stakeUnavailableOverlay) {
+    stakeUnavailableOverlay.addEventListener("click", (ev) => {
+      if (ev.target === stakeUnavailableOverlay) closeUnavailable();
+    });
+  }
+  if (stakeUnavailablePanel) {
+    stakeUnavailablePanel.addEventListener("click", (ev) => ev.stopPropagation());
+  }
+
+  stakeButtons.forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      const available = btn.getAttribute("data-available") === "1";
+      if (!available) {
+        openUnavailable();
+        return;
+      }
+
+      const stakeAmount = Number(btn.getAttribute("data-stake") || 100);
+      await withButtonLoading(btn, async () => {
+        await ensureXchangeState(user?.uid);
+        const state = getXchangeState(window.__userBaseBalance || window.__userBalance || 0, user?.uid);
+        if ((state?.does || 0) < stakeAmount) {
+          closeStakeSelection();
+          if (doesRequiredOverlay) {
+            doesRequiredOverlay.classList.remove("hidden");
+            doesRequiredOverlay.classList.add("flex");
+          }
+          return;
+        }
+        closeStakeSelection();
+        window.location.href = `./jeu.html?autostart=1&stake=${stakeAmount}`;
+      }, { loadingLabel: "Vérification..." });
+    });
+  });
+
+  if (doesRequiredClose) {
+    doesRequiredClose.addEventListener("click", () => {
+      doesRequiredOverlay?.classList.add("hidden");
+      doesRequiredOverlay?.classList.remove("flex");
+    });
+  }
+  if (doesRequiredOpenProfile) {
+    doesRequiredOpenProfile.addEventListener("click", () => {
+      doesRequiredOverlay?.classList.add("hidden");
+      doesRequiredOverlay?.classList.remove("flex");
+      const p = document.getElementById("p2Profile");
+      if (p) p.click();
+    });
+  }
+  if (doesRequiredOverlay) {
+    doesRequiredOverlay.addEventListener("click", (ev) => {
+      if (ev.target === doesRequiredOverlay) {
+        doesRequiredOverlay.classList.add("hidden");
+        doesRequiredOverlay.classList.remove("flex");
+      }
+    });
+  }
+
+  mountProfileModal({ triggerSelector: "#p2Profile" });
+  mountSoldeModal({ triggerSelector: "#soldBadge" });
+  initDiscussionFab(user);
+  initAgentSupportAlert(user);
+}
