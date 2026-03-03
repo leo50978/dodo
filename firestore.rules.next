@@ -141,14 +141,17 @@ service cloud.firestore {
     }
 
     match /globalChannelMessages/{messageId} {
-      allow read, write: if true;
+      allow read: if true;
+      allow write: if isFinanceAdmin();
     }
 
     match /supportThreads/{threadId} {
-      allow read, write: if true;
+      allow read: if isFinanceAdmin()
+        || (signedIn() && threadId == ("user_" + request.auth.uid));
+      allow write: if isFinanceAdmin();
 
       match /messages/{messageId} {
-        allow read, write: if true;
+        allow read, write: if isFinanceAdmin();
       }
     }
   }

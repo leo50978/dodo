@@ -2,12 +2,30 @@ rules_version = '2';
 
 service firebase.storage {
   match /b/{bucket}/o {
-    match /chat-media/{allPaths=**} {
-      allow read, write: if true;
+    function signedIn() {
+      return request.auth != null;
+    }
+
+    function isFinanceAdmin() {
+      return signedIn()
+        && request.auth.token.email != null
+        && request.auth.token.email == "leovitch2004@gmail.com";
+    }
+
+    match /chat-media/channel/{allPaths=**} {
+      allow read: if true;
+      allow write: if isFinanceAdmin();
+    }
+
+    match /chat-media/support/{threadId}/{allPaths=**} {
+      allow read: if isFinanceAdmin()
+        || (signedIn() && threadId == ("user_" + request.auth.uid));
+      allow write: if isFinanceAdmin()
+        || (signedIn() && threadId == ("user_" + request.auth.uid));
     }
 
     match /{allPaths=**} {
-      allow read, write: if true;
+      allow read, write: if false;
     }
   }
 }

@@ -1,34 +1,32 @@
 import {
   auth,
-  db,
-  collection,
-  addDoc,
-  doc,
-  getDoc,
-  setDoc,
-  query,
-  orderBy,
-  limit,
-  onSnapshot,
   onAuthStateChanged,
-  serverTimestamp,
 } from "./firebase-init.js";
 import {
-  SUPPORT_THREADS_COLLECTION,
-  SUPPORT_MESSAGES_SUBCOLLECTION,
+  ensureSupportThreadSecure,
+  getSupportMessagesSecure,
+  createSupportMessageSecure,
+  markSupportThreadSeenSecure,
+} from "./secure-functions.js";
+import {
   THREAD_MESSAGES_LIMIT,
   getSupportThreadIdentity,
   formatMessageTime,
   uploadChatMedia,
-  createMessagePayload,
-  messagePreviewFromPayload,
+  getGuestAccessToken,
+  setGuestAccessToken,
 } from "./discussion-shared.js";
+
+const SUPPORT_REFRESH_MS = 3000;
+const LAST_SEEN_THROTTLE_MS = 4500;
 
 let currentUser = null;
 let currentThreadId = "";
 let currentActor = null;
-let messagesUnsub = null;
 let pendingFile = null;
+let refreshTimer = null;
+let lastSeenWriteAt = 0;
+let refreshToken = 0;
 
 const backBtn = document.getElementById("agentChatBackBtn");
 const liveStatusEl = document.getElementById("agentChatLiveStatus");
@@ -79,6 +77,21 @@ function setPendingFile(file) {
 
   filePreviewEl.classList.add("visible");
   fileLabelEl.textContent = `${pendingFile.name} (${Math.max(1, Math.round((pendingFile.size || 0) / 1024))} Ko)`;
+}
+
+function canUploadMedia() {
+  return !!currentUser?.uid;
+}
+
+function syncComposerPermissions() {
+  const canUpload = canUploadMedia();
+  if (attachBtn) attachBtn.disabled = !canUpload;
+  if (fileInputEl) fileInputEl.disabled = !canUpload;
+  if (fileRemoveBtn) fileRemoveBtn.disabled = !canUpload;
+  if (!canUpload) {
+    setPendingFile(null);
+    setComposerStatus("Les médias sont disponibles après connexion.", "neutral");
+  }
 }
 
 function isNearBottom() {
@@ -187,78 +200,85 @@ function renderMessages(entries) {
   scrollToBottom(keepBottom);
 }
 
-async function markThreadSeen() {
+function stopRefreshLoop() {
+  if (!refreshTimer) return;
+  window.clearInterval(refreshTimer);
+  refreshTimer = null;
+}
+
+function buildSupportPayload(extra = {}) {
+  if (currentUser?.uid) return { ...extra };
+  return {
+    guestId: currentThreadId || String(currentActor?.guestId || ""),
+    guestToken: getGuestAccessToken(),
+    displayName: String(currentActor?.displayName || ""),
+    ...extra,
+  };
+}
+
+async function markThreadSeen(force = false) {
   if (!currentThreadId) return;
+  const now = Date.now();
+  if (!force && now - lastSeenWriteAt < LAST_SEEN_THROTTLE_MS) return;
+  lastSeenWriteAt = now;
+
   try {
-    await setDoc(doc(db, SUPPORT_THREADS_COLLECTION, currentThreadId), {
-      unreadForUser: false,
-      participantSeenAt: serverTimestamp(),
-      updatedAt: serverTimestamp(),
-    }, { merge: true });
+    const result = await markSupportThreadSeenSecure(buildSupportPayload({}));
+    if (!currentUser?.uid && result?.guestToken) {
+      setGuestAccessToken(result.guestToken);
+    }
   } catch (error) {
     console.error("[SUPPORT] markThreadSeen error", error);
   }
 }
 
-function watchThreadMessages(threadId) {
-  if (messagesUnsub) {
-    messagesUnsub();
-    messagesUnsub = null;
-  }
+async function refreshThreadMessages(forceSeen = false) {
+  if (!currentThreadId) return;
+  const myToken = ++refreshToken;
 
-  messagesUnsub = onSnapshot(
-    query(
-      collection(db, SUPPORT_THREADS_COLLECTION, threadId, SUPPORT_MESSAGES_SUBCOLLECTION),
-      orderBy("createdAtMs", "desc"),
-      limit(THREAD_MESSAGES_LIMIT)
-    ),
-    async (snapshot) => {
-      const entries = snapshot.docs.map((item) => ({
-        id: item.id,
-        data: item.data() || {},
-      })).reverse();
-      renderMessages(entries);
-      setLiveStatus("Conversation active", "ok");
-      await markThreadSeen();
-    },
-    (error) => {
-      console.error("[SUPPORT] watchThreadMessages error", error);
-      setLiveStatus("Conversation indisponible", "error");
+  try {
+    const result = await getSupportMessagesSecure(
+      buildSupportPayload({ limit: THREAD_MESSAGES_LIMIT })
+    );
+    if (myToken !== refreshToken) return;
+
+    if (!currentUser?.uid && result?.guestToken) {
+      setGuestAccessToken(result.guestToken);
     }
-  );
+
+    const messages = Array.isArray(result?.messages) ? result.messages : [];
+    const entries = messages.map((item) => ({
+      id: item.id,
+      data: item,
+    }));
+
+    renderMessages(entries);
+
+    const thread = result?.thread && typeof result.thread === "object" ? result.thread : null;
+    if (identityEl) {
+      if (thread?.participantType === "guest") {
+        identityEl.textContent = `Fil anonyme: ${thread.participantName || currentActor?.displayName || "Anonyme"} (${currentThreadId})`;
+      } else {
+        const label = thread?.participantName || currentActor?.displayName || "Utilisateur";
+        const email = thread?.participantEmail || currentActor?.email || currentActor?.uid || "";
+        identityEl.textContent = `Fil utilisateur: ${label}${email ? ` (${email})` : ""}`;
+      }
+    }
+
+    setLiveStatus("Conversation active", "ok");
+    await markThreadSeen(forceSeen);
+  } catch (error) {
+    if (myToken !== refreshToken) return;
+    console.error("[SUPPORT] refreshThreadMessages error", error);
+    setLiveStatus("Conversation indisponible", "error");
+  }
 }
 
-async function ensureThread(threadId, actor, participantType, participantId) {
-  const threadRef = doc(db, SUPPORT_THREADS_COLLECTION, threadId);
-  const snap = await getDoc(threadRef);
-  const base = {
-    threadId,
-    participantType,
-    participantId,
-    participantUid: actor.uid || "",
-    guestId: actor.guestId || "",
-    participantName: actor.displayName || "Utilisateur",
-    participantEmail: actor.email || "",
-    status: "open",
-    unreadForAgent: false,
-    unreadForUser: false,
-    firstAgentReplyAt: snap.exists() ? (snap.data()?.firstAgentReplyAt || null) : null,
-    firstAgentReplyAtMs: Number(snap.exists() ? (snap.data()?.firstAgentReplyAtMs || 0) : 0),
-    resolvedAt: snap.exists() ? (snap.data()?.resolvedAt || null) : null,
-    resolvedAtMs: Number(snap.exists() ? (snap.data()?.resolvedAtMs || 0) : 0),
-    resolutionTag: String(snap.exists() ? (snap.data()?.resolutionTag || "") : ""),
-    updatedAt: serverTimestamp(),
-  };
-
-  if (!snap.exists()) {
-    base.createdAt = serverTimestamp();
-    base.createdAtMs = Date.now();
-    base.lastMessageText = "Aucun message";
-    base.lastMessageAtMs = 0;
-    base.lastSenderRole = "";
-  }
-
-  await setDoc(threadRef, base, { merge: true });
+function startRefreshLoop() {
+  stopRefreshLoop();
+  refreshTimer = window.setInterval(() => {
+    refreshThreadMessages(false);
+  }, SUPPORT_REFRESH_MS);
 }
 
 async function activateThreadForUser(user) {
@@ -266,6 +286,8 @@ async function activateThreadForUser(user) {
   currentUser = user || null;
   currentThreadId = info.threadId;
   currentActor = info.actor;
+  lastSeenWriteAt = 0;
+  refreshToken += 1;
 
   if (identityEl) {
     identityEl.textContent = info.participantType === "user"
@@ -274,8 +296,25 @@ async function activateThreadForUser(user) {
   }
 
   setLiveStatus("Preparation du fil...", "neutral");
-  await ensureThread(info.threadId, info.actor, info.participantType, info.participantId);
-  watchThreadMessages(info.threadId);
+
+  const result = await ensureSupportThreadSecure(
+    currentUser?.uid
+      ? {}
+      : {
+          guestId: info.participantId,
+          displayName: info.actor.displayName,
+          guestToken: getGuestAccessToken(),
+        }
+  );
+
+  currentThreadId = String(result?.threadId || info.threadId || "");
+  if (!currentUser?.uid && result?.guestToken) {
+    setGuestAccessToken(result.guestToken);
+  }
+
+  syncComposerPermissions();
+  await refreshThreadMessages(true);
+  startRefreshLoop();
 }
 
 async function sendSupportMessage() {
@@ -285,7 +324,12 @@ async function sendSupportMessage() {
     return;
   }
   if (!currentThreadId || !currentActor) {
-    setComposerStatus("Le fil de discussion n'est pas encore prêt.", "error");
+    setComposerStatus("Le fil de discussion n'est pas encore pret.", "error");
+    return;
+  }
+
+  if (pendingFile && !canUploadMedia()) {
+    setComposerStatus("Les médias sont réservés aux utilisateurs connectés.", "error");
     return;
   }
 
@@ -298,33 +342,21 @@ async function sendSupportMessage() {
       media = await uploadChatMedia(pendingFile, { scope: "support", threadId: currentThreadId });
     }
 
-    const payload = createMessagePayload(currentActor, text, media, {
-      createdAt: serverTimestamp(),
-      scope: "support",
-      threadId: currentThreadId,
-    });
+    const result = await createSupportMessageSecure(
+      buildSupportPayload({
+        text,
+        media,
+      })
+    );
 
-    await addDoc(collection(db, SUPPORT_THREADS_COLLECTION, currentThreadId, SUPPORT_MESSAGES_SUBCOLLECTION), payload);
-    await setDoc(doc(db, SUPPORT_THREADS_COLLECTION, currentThreadId), {
-      lastMessageText: messagePreviewFromPayload(payload),
-      lastMessageAt: serverTimestamp(),
-      lastMessageAtMs: payload.createdAtMs,
-      lastSenderRole: payload.senderRole,
-      status: "open",
-      unreadForAgent: true,
-      unreadForUser: false,
-      resolvedAt: null,
-      resolvedAtMs: 0,
-      resolutionTag: "",
-      updatedAt: serverTimestamp(),
-      participantName: currentActor.displayName || "Utilisateur",
-      participantEmail: currentActor.email || "",
-    }, { merge: true });
+    if (!currentUser?.uid && result?.guestToken) {
+      setGuestAccessToken(result.guestToken);
+    }
 
     if (inputEl) inputEl.value = "";
     setPendingFile(null);
     setComposerStatus("Message envoye.", "success");
-    scrollToBottom(true);
+    await refreshThreadMessages(true);
   } catch (error) {
     console.error("[SUPPORT] sendSupportMessage error", error);
     setComposerStatus(error?.message || "Impossible d'envoyer le message.", "error");
@@ -344,6 +376,10 @@ function bindUI() {
   if (attachBtn && attachBtn.dataset.bound !== "1") {
     attachBtn.dataset.bound = "1";
     attachBtn.addEventListener("click", () => {
+      if (!canUploadMedia()) {
+        setComposerStatus("Les médias sont disponibles après connexion.", "neutral");
+        return;
+      }
       fileInputEl?.click();
     });
   }
@@ -382,15 +418,12 @@ function bindUI() {
 
   document.addEventListener("visibilitychange", () => {
     if (document.visibilityState === "visible") {
-      markThreadSeen();
+      refreshThreadMessages(true);
     }
   });
 
   window.addEventListener("beforeunload", () => {
-    if (messagesUnsub) {
-      messagesUnsub();
-      messagesUnsub = null;
-    }
+    stopRefreshLoop();
   });
 }
 
@@ -398,6 +431,7 @@ bindUI();
 setLiveStatus("Preparation du fil...", "neutral");
 
 onAuthStateChanged(auth, async (user) => {
+  stopRefreshLoop();
   try {
     await activateThreadForUser(user || null);
   } catch (error) {

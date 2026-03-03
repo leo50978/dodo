@@ -34,7 +34,8 @@ function readStoredGuest() {
     const guestId = String(parsed.guestId || "").trim();
     const displayName = String(parsed.displayName || "").trim();
     if (!guestId || !displayName) return null;
-    return { guestId, displayName };
+    const guestAccessToken = String(parsed.guestAccessToken || "").trim();
+    return { guestId, displayName, guestAccessToken };
   } catch (_) {
     return null;
   }
@@ -54,9 +55,23 @@ export function getGuestIdentity() {
 
   const guestId = `guest_${Date.now()}_${randomToken(8)}`;
   const displayName = `Anonyme ${guestId.slice(-4).toUpperCase()}`;
-  const created = { guestId, displayName };
+  const created = { guestId, displayName, guestAccessToken: "" };
   storeGuestIdentity(created);
   return created;
+}
+
+export function getGuestAccessToken() {
+  return String(getGuestIdentity()?.guestAccessToken || "").trim();
+}
+
+export function setGuestAccessToken(token = "") {
+  const identity = getGuestIdentity();
+  const next = {
+    ...identity,
+    guestAccessToken: String(token || "").trim(),
+  };
+  storeGuestIdentity(next);
+  return next;
 }
 
 export function getActorFromUser(user, role = "user") {

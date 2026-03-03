@@ -40,6 +40,7 @@ const AUTH_HASH_KEYLEN = 64;
 const AMBASSADOR_CODE_CHARS = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
 const DISCUSSION_MESSAGE_RETENTION_MS = 7 * 24 * 60 * 60 * 1000;
 const DISCUSSION_PURGE_BATCH_SIZE = 200;
+const DISCUSSION_MESSAGES_FETCH_LIMIT = 250;
 const DEFAULT_PUBLIC_SETTINGS = Object.freeze({
   verificationHours: 12,
   expiredMessage: "Le délai de vérification est dépassé. Contactez le support.",
@@ -2851,6 +2852,234 @@ function messagePreviewFromRecord(data = {}) {
   return "Message";
 }
 
+function sanitizeGuestThreadId(value = "") {
+  const safe = String(value || "")
+    .trim()
+    .replace(/[^a-zA-Z0-9_-]/g, "")
+    .slice(0, 160);
+  return safe.startsWith("guest_") ? safe : "";
+}
+
+function defaultGuestDisplayName(guestId = "") {
+  const suffix = String(guestId || "").slice(-4).toUpperCase();
+  return suffix ? `Anonyme ${suffix}` : "Anonyme";
+}
+
+function randomGuestAccessToken() {
+  return crypto.randomBytes(24).toString("hex");
+}
+
+function supportThreadRecordForCallable(docSnap) {
+  const base = snapshotRecordForCallable(docSnap);
+  delete base.guestAccessToken;
+  return base;
+}
+
+function sanitizeSupportMediaPayload(raw = {}) {
+  const mediaType = sanitizeText(raw?.mediaType || "", 16).toLowerCase();
+  if (mediaType !== "image" && mediaType !== "video") {
+    return {
+      mediaType: "",
+      mediaUrl: "",
+      mediaPath: "",
+      fileName: "",
+    };
+  }
+
+  const mediaUrl = sanitizePublicAsset(raw?.mediaUrl || "", 2000);
+  const mediaPath = sanitizeText(raw?.mediaPath || "", 600);
+  if (!mediaUrl || !mediaPath.startsWith("chat-media/")) {
+    return {
+      mediaType: "",
+      mediaUrl: "",
+      mediaPath: "",
+      fileName: "",
+    };
+  }
+
+  return {
+    mediaType,
+    mediaUrl,
+    mediaPath,
+    fileName: sanitizeText(raw?.fileName || "", 120),
+  };
+}
+
+function buildSupportMessageRecord(actor = {}, text = "", media = null, extras = {}) {
+  const createdAtMs = Date.now();
+  const expiresAtMs = createdAtMs + DISCUSSION_MESSAGE_RETENTION_MS;
+  const safeMedia = sanitizeSupportMediaPayload(media);
+
+  return {
+    text: sanitizeText(text || "", MAX_PUBLIC_TEXT_LENGTH),
+    mediaType: safeMedia.mediaType,
+    mediaUrl: safeMedia.mediaUrl,
+    mediaPath: safeMedia.mediaPath,
+    fileName: safeMedia.fileName,
+    senderRole: sanitizeText(actor.senderRole || "user", 20),
+    senderType: sanitizeText(actor.senderType || "user", 20),
+    senderKey: sanitizeText(actor.senderKey || "", 160),
+    uid: sanitizeText(actor.uid || "", 160),
+    guestId: sanitizeText(actor.guestId || "", 160),
+    email: sanitizeEmail(actor.email || "", 160),
+    displayName: sanitizeText(actor.displayName || "Utilisateur", 80) || "Utilisateur",
+    createdAt: admin.firestore.FieldValue.serverTimestamp(),
+    createdAtMs,
+    expiresAtMs,
+    expiresAt: admin.firestore.Timestamp.fromMillis(expiresAtMs),
+    editedAtMs: 0,
+    updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+    ...extras,
+  };
+}
+
+async function resolveSupportThreadContext(request, payload = {}, options = {}) {
+  const allowCreate = options.allowCreate !== false;
+
+  if (request.auth?.uid) {
+    const { uid, email } = assertAuth(request);
+    const threadId = `user_${uid}`;
+    const threadRef = db.collection(SUPPORT_THREADS_COLLECTION).doc(threadId);
+    const [threadSnap, clientSnap] = await Promise.all([
+      threadRef.get(),
+      walletRef(uid).get(),
+    ]);
+    const clientData = clientSnap.exists ? (clientSnap.data() || {}) : {};
+    const displayName = sanitizeText(
+      clientData.name || clientData.displayName || String(email || "").split("@")[0] || "Utilisateur",
+      80
+    ) || "Utilisateur";
+
+    if (!threadSnap.exists && !allowCreate) {
+      throw new HttpsError("not-found", "Fil support introuvable.");
+    }
+
+    const patch = {
+      threadId,
+      participantType: "user",
+      participantId: uid,
+      participantUid: uid,
+      guestId: "",
+      participantName: displayName,
+      participantEmail: sanitizeEmail(email || "", 160),
+      status: threadSnap.exists ? sanitizeText(threadSnap.data()?.status || "open", 16) || "open" : "open",
+      updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+    };
+
+    if (!threadSnap.exists) {
+      patch.createdAt = admin.firestore.FieldValue.serverTimestamp();
+      patch.createdAtMs = Date.now();
+      patch.lastMessageText = "Aucun message";
+      patch.lastMessageAt = null;
+      patch.lastMessageAtMs = 0;
+      patch.lastSenderRole = "";
+      patch.unreadForAgent = false;
+      patch.unreadForUser = false;
+      patch.firstAgentReplyAt = null;
+      patch.firstAgentReplyAtMs = 0;
+      patch.resolvedAt = null;
+      patch.resolvedAtMs = 0;
+      patch.resolutionTag = "";
+    }
+
+    await threadRef.set(patch, { merge: true });
+    const freshSnap = await threadRef.get();
+
+    return {
+      threadId,
+      threadRef,
+      threadSnap: freshSnap,
+      guestToken: "",
+      actor: {
+        senderRole: "user",
+        senderType: "user",
+        senderKey: uid,
+        uid,
+        guestId: "",
+        email: sanitizeEmail(email || "", 160),
+        displayName,
+      },
+    };
+  }
+
+  const guestId = sanitizeGuestThreadId(payload.guestId || "");
+  if (!guestId) {
+    throw new HttpsError("invalid-argument", "Identifiant invité invalide.");
+  }
+
+  const threadId = guestId;
+  const threadRef = db.collection(SUPPORT_THREADS_COLLECTION).doc(threadId);
+  const requestedToken = sanitizeText(payload.guestToken || "", 128);
+  const requestedName = sanitizeText(payload.displayName || "", 80);
+  const displayName = requestedName || defaultGuestDisplayName(guestId);
+  const threadSnap = await threadRef.get();
+
+  if (!threadSnap.exists && !allowCreate) {
+    throw new HttpsError("not-found", "Fil support introuvable.");
+  }
+
+  let issuedToken = "";
+  if (!threadSnap.exists) {
+    issuedToken = randomGuestAccessToken();
+    await threadRef.set({
+      threadId,
+      participantType: "guest",
+      participantId: guestId,
+      participantUid: "",
+      guestId,
+      participantName: displayName,
+      participantEmail: "",
+      guestAccessToken: issuedToken,
+      status: "open",
+      unreadForAgent: false,
+      unreadForUser: false,
+      createdAt: admin.firestore.FieldValue.serverTimestamp(),
+      createdAtMs: Date.now(),
+      lastMessageText: "Aucun message",
+      lastMessageAt: null,
+      lastMessageAtMs: 0,
+      lastSenderRole: "",
+      firstAgentReplyAt: null,
+      firstAgentReplyAtMs: 0,
+      resolvedAt: null,
+      resolvedAtMs: 0,
+      resolutionTag: "",
+      updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+    }, { merge: true });
+  } else {
+    const existingData = threadSnap.data() || {};
+    issuedToken = sanitizeText(existingData.guestAccessToken || "", 128);
+    if (!issuedToken) {
+      issuedToken = randomGuestAccessToken();
+    } else if (!requestedToken || requestedToken !== issuedToken) {
+      throw new HttpsError("permission-denied", "Accès invité refusé.");
+    }
+
+    await threadRef.set({
+      participantName: displayName,
+      guestAccessToken: issuedToken,
+      updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+    }, { merge: true });
+  }
+
+  const freshSnap = await threadRef.get();
+  return {
+    threadId,
+    threadRef,
+    threadSnap: freshSnap,
+    guestToken: issuedToken,
+    actor: {
+      senderRole: "guest",
+      senderType: "guest",
+      senderKey: guestId,
+      uid: "",
+      guestId,
+      email: "",
+      displayName,
+    },
+  };
+}
+
 async function refreshSupportThreadSummaryAdmin(threadId = "") {
   const safeThreadId = String(threadId || "").trim();
   if (!safeThreadId) return;
@@ -3369,6 +3598,125 @@ exports.markChatSeenSecure = publicOnCall("markChatSeenSecure", async (request) 
     updatedAt: admin.firestore.FieldValue.serverTimestamp(),
   }, { merge: true });
   return { ok: true };
+});
+
+exports.ensureSupportThreadSecure = publicOnCall("ensureSupportThreadSecure", async (request) => {
+  const payload = request.data && typeof request.data === "object" ? request.data : {};
+  const context = await resolveSupportThreadContext(request, payload, { allowCreate: true });
+  return {
+    ok: true,
+    threadId: context.threadId,
+    guestToken: context.guestToken || "",
+    thread: supportThreadRecordForCallable(context.threadSnap),
+  };
+});
+
+exports.getSupportMessagesSecure = publicOnCall("getSupportMessagesSecure", async (request) => {
+  const payload = request.data && typeof request.data === "object" ? request.data : {};
+  const context = await resolveSupportThreadContext(request, payload, { allowCreate: true });
+  const limitValue = Math.max(
+    1,
+    Math.min(
+      DISCUSSION_MESSAGES_FETCH_LIMIT,
+      safeInt(payload.limit || DISCUSSION_MESSAGES_FETCH_LIMIT) || DISCUSSION_MESSAGES_FETCH_LIMIT
+    )
+  );
+  const messagesSnap = await context.threadRef
+    .collection(SUPPORT_MESSAGES_SUBCOLLECTION)
+    .orderBy("createdAtMs", "desc")
+    .limit(limitValue)
+    .get();
+
+  const messages = messagesSnap.docs
+    .map((item) => supportMessageRecordForCallable(item))
+    .reverse();
+
+  return {
+    ok: true,
+    threadId: context.threadId,
+    guestToken: context.guestToken || "",
+    thread: supportThreadRecordForCallable(context.threadSnap),
+    messages,
+  };
+});
+
+exports.createSupportMessageSecure = publicOnCall("createSupportMessageSecure", async (request) => {
+  const payload = request.data && typeof request.data === "object" ? request.data : {};
+  const context = await resolveSupportThreadContext(request, payload, { allowCreate: true });
+  const text = sanitizeText(payload.text || "", MAX_PUBLIC_TEXT_LENGTH);
+  const media = sanitizeSupportMediaPayload(payload.media || {});
+  if (!text && !media.mediaUrl) {
+    throw new HttpsError("invalid-argument", "Le message est vide.");
+  }
+
+  const record = buildSupportMessageRecord(context.actor, text, media, {
+    scope: "support",
+    threadId: context.threadId,
+  });
+
+  const ref = await context.threadRef
+    .collection(SUPPORT_MESSAGES_SUBCOLLECTION)
+    .add(record);
+
+  const threadData = context.threadSnap.exists ? (context.threadSnap.data() || {}) : {};
+  await context.threadRef.set({
+    lastMessageText: messagePreviewFromRecord(record),
+    lastMessageAt: admin.firestore.FieldValue.serverTimestamp(),
+    lastMessageAtMs: record.createdAtMs,
+    lastSenderRole: record.senderRole,
+    status: "open",
+    unreadForAgent: true,
+    unreadForUser: false,
+    resolvedAt: null,
+    resolvedAtMs: 0,
+    resolutionTag: "",
+    participantName: record.displayName,
+    participantEmail: record.email,
+    updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+    firstAgentReplyAt: threadData.firstAgentReplyAt || null,
+    firstAgentReplyAtMs: safeInt(threadData.firstAgentReplyAtMs),
+  }, { merge: true });
+
+  return {
+    ok: true,
+    threadId: context.threadId,
+    guestToken: context.guestToken || "",
+    message: {
+      id: ref.id,
+      threadId: context.threadId,
+      text: record.text,
+      mediaType: record.mediaType,
+      mediaUrl: record.mediaUrl,
+      mediaPath: record.mediaPath,
+      fileName: record.fileName,
+      senderRole: record.senderRole,
+      senderType: record.senderType,
+      senderKey: record.senderKey,
+      uid: record.uid,
+      guestId: record.guestId,
+      email: record.email,
+      displayName: record.displayName,
+      createdAtMs: record.createdAtMs,
+      expiresAtMs: record.expiresAtMs,
+    },
+  };
+});
+
+exports.markSupportThreadSeenSecure = publicOnCall("markSupportThreadSeenSecure", async (request) => {
+  const payload = request.data && typeof request.data === "object" ? request.data : {};
+  const context = await resolveSupportThreadContext(request, payload, { allowCreate: true });
+  await context.threadRef.set({
+    unreadForUser: false,
+    participantSeenAt: admin.firestore.FieldValue.serverTimestamp(),
+    participantSeenAtMs: Date.now(),
+    updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+  }, { merge: true });
+
+  return {
+    ok: true,
+    threadId: context.threadId,
+    guestToken: context.guestToken || "",
+  };
 });
 
 exports.adminCheck = onCall(async (request) => {

@@ -2,23 +2,18 @@ import {
   auth,
   db,
   collection,
-  addDoc,
   query,
   orderBy,
   limit,
   onSnapshot,
   onAuthStateChanged,
-  serverTimestamp,
 } from "./firebase-init.js";
 import { markChatSeenSecure } from "./secure-functions.js";
 import {
   CHAT_COLLECTION,
   CHANNEL_LIMIT,
   getGuestIdentity,
-  resolveActor,
   formatMessageTime,
-  uploadChatMedia,
-  createMessagePayload,
 } from "./discussion-shared.js";
 
 const LAST_SEEN_THROTTLE_MS = 4500;
@@ -196,6 +191,32 @@ function renderMessages(entries) {
   scrollToBottom(keepBottom);
 }
 
+function applyReadOnlyMode() {
+  if (inputEl) {
+    inputEl.value = "";
+    inputEl.disabled = true;
+    inputEl.setAttribute("placeholder", "Le canal public est en lecture seule.");
+    inputEl.style.opacity = "0.65";
+  }
+  if (sendBtn) {
+    sendBtn.disabled = true;
+    sendBtn.style.display = "none";
+  }
+  if (attachBtn) {
+    attachBtn.disabled = true;
+    attachBtn.style.display = "none";
+  }
+  if (fileInputEl) fileInputEl.disabled = true;
+  if (fileRemoveBtn) {
+    fileRemoveBtn.disabled = true;
+    fileRemoveBtn.style.display = "none";
+  }
+  if (filePreviewEl) filePreviewEl.classList.remove("visible");
+  if (composerStatusEl) {
+    setComposerStatus("Le canal public est en lecture seule. Utilise \"Discuter avec un agent\" pour écrire.", "neutral");
+  }
+}
+
 async function markChatSeen(force = false) {
   if (!currentUser?.uid) return;
   const now = Date.now();
@@ -238,42 +259,6 @@ function watchChannel() {
   );
 }
 
-async function sendChannelMessage() {
-  const text = String(inputEl?.value || "").trim();
-  if (!text && !pendingFile) {
-    setComposerStatus("Ecris un message ou ajoute un média.", "error");
-    return;
-  }
-
-  if (sendBtn) sendBtn.disabled = true;
-  setComposerStatus("Envoi en cours...", "neutral");
-
-  try {
-    let media = null;
-    if (pendingFile) {
-      media = await uploadChatMedia(pendingFile, { scope: "channel", threadId: "public" });
-    }
-
-    const actor = resolveActor(currentUser, "user");
-    const payload = createMessagePayload(actor, text, media, {
-      createdAt: serverTimestamp(),
-      scope: "channel",
-    });
-
-    await addDoc(collection(db, CHAT_COLLECTION), payload);
-
-    if (inputEl) inputEl.value = "";
-    setPendingFile(null);
-    setComposerStatus("Message envoye.", "success");
-    scrollToBottom(true);
-  } catch (error) {
-    console.error("[DISCUSSION] sendChannelMessage error", error);
-    setComposerStatus(error?.message || "Impossible d'envoyer le message.", "error");
-  } finally {
-    if (sendBtn) sendBtn.disabled = false;
-  }
-}
-
 function bindUI() {
   if (backBtn && backBtn.dataset.bound !== "1") {
     backBtn.dataset.bound = "1";
@@ -286,49 +271,6 @@ function bindUI() {
     openAgentChatBtn.dataset.bound = "1";
     openAgentChatBtn.addEventListener("click", () => {
       window.location.href = "./discussion-agent.html";
-    });
-  }
-
-  if (attachBtn && attachBtn.dataset.bound !== "1") {
-    attachBtn.dataset.bound = "1";
-    attachBtn.addEventListener("click", () => {
-      fileInputEl?.click();
-    });
-  }
-
-  if (fileInputEl && fileInputEl.dataset.bound !== "1") {
-    fileInputEl.dataset.bound = "1";
-    fileInputEl.addEventListener("change", () => {
-      const file = fileInputEl.files?.[0] || null;
-      if (!file) {
-        setPendingFile(null);
-        return;
-      }
-      setPendingFile(file);
-      setComposerStatus("Media pret a etre envoye.", "neutral");
-    });
-  }
-
-  if (fileRemoveBtn && fileRemoveBtn.dataset.bound !== "1") {
-    fileRemoveBtn.dataset.bound = "1";
-    fileRemoveBtn.addEventListener("click", () => {
-      setPendingFile(null);
-      setComposerStatus("", "neutral");
-    });
-  }
-
-  if (sendBtn && sendBtn.dataset.bound !== "1") {
-    sendBtn.dataset.bound = "1";
-    sendBtn.addEventListener("click", sendChannelMessage);
-  }
-
-  if (inputEl && inputEl.dataset.bound !== "1") {
-    inputEl.dataset.bound = "1";
-    inputEl.addEventListener("keydown", (event) => {
-      if (event.key === "Enter" && !event.shiftKey) {
-        event.preventDefault();
-        sendChannelMessage();
-      }
     });
   }
 
@@ -347,6 +289,7 @@ function bindUI() {
 }
 
 bindUI();
+applyReadOnlyMode();
 watchChannel();
 
 onAuthStateChanged(auth, async (user) => {

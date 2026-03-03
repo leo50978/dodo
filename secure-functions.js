@@ -104,6 +104,22 @@ export async function markChatSeenSecure(payload = {}) {
   return invokeCallable("markChatSeenSecure", payload, "Impossible de marquer la discussion comme lue.");
 }
 
+export async function ensureSupportThreadSecure(payload = {}) {
+  return invokeCallable("ensureSupportThreadSecure", payload, "Impossible d'ouvrir le fil de support.");
+}
+
+export async function getSupportMessagesSecure(payload = {}) {
+  return invokeCallable("getSupportMessagesSecure", payload, "Impossible de charger les messages du support.");
+}
+
+export async function createSupportMessageSecure(payload = {}) {
+  return invokeCallable("createSupportMessageSecure", payload, "Impossible d'envoyer le message au support.");
+}
+
+export async function markSupportThreadSeenSecure(payload = {}) {
+  return invokeCallable("markSupportThreadSeenSecure", payload, "Impossible de marquer le support comme lu.");
+}
+
 export async function createAmbassadorSecure(payload = {}) {
   return invokeCallable("createAmbassadorSecure", payload, "Impossible de créer le compte ambassadeur.");
 }
