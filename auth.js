@@ -247,7 +247,7 @@ async function loginWithGoogle() {
     }
     if (code === "auth/popup-closed-by-user" || code === "auth/cancelled-popup-request") {
       authDebug("loginWithGoogle:popupClosedOrCancelled:waitUser");
-      const resolvedUser = await waitForResolvedPopupUser();
+      const resolvedUser = await waitForResolvedPopupUser(12000);
       if (resolvedUser) {
         authDebug("loginWithGoogle:resolvedUserAfterPopupClose", {
           uid: String(resolvedUser?.uid || ""),
@@ -255,13 +255,19 @@ async function loginWithGoogle() {
         });
         return { mode: "popup", result: { user: resolvedUser } };
       }
-      if (canUseRedirect) {
+      // Redirect fallback only on mobile-like contexts where popup flow is often blocked.
+      // On desktop-like contexts, avoid forced redirect loops and surface an explicit error.
+      if (preferRedirect && canUseRedirect) {
         markGoogleRedirectPending();
         authDebug("loginWithGoogle:noResolvedUser->redirect");
         await signInWithRedirect(auth, provider);
         authDebug("loginWithGoogle:redirectTriggeredAfterPopupClose");
         return { mode: "redirect", result: null };
       }
+      authDebug("loginWithGoogle:noResolvedUser:noRedirectFallback", {
+        canUseRedirect,
+        preferRedirect,
+      });
     }
     throw err;
   }
