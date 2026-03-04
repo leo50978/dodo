@@ -7,6 +7,7 @@ import { db, collection, query, orderBy, limit, onSnapshot, doc, setDoc, serverT
 
 const CHAT_COLLECTION = "globalChannelMessages";
 const SUPPORT_THREADS_COLLECTION = "supportThreads";
+const AUTH_SUCCESS_NOTICE_STORAGE_KEY = "domino_auth_success_notice_v1";
 const DEFAULT_STAKE_REWARD_MULTIPLIER = 3;
 const DEFAULT_GAME_STAKE_OPTIONS = Object.freeze([
   Object.freeze({ id: "stake_100", stakeDoes: 100, rewardDoes: 300, enabled: true, sortOrder: 10 }),
@@ -91,6 +92,20 @@ function tsToMs(value) {
   if (typeof value.seconds === "number") return value.seconds * 1000;
   const parsed = Date.parse(String(value));
   return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function consumeAuthSuccessNotice() {
+  try {
+    const raw = sessionStorage.getItem(AUTH_SUCCESS_NOTICE_STORAGE_KEY) || "";
+    if (!raw) return false;
+    sessionStorage.removeItem(AUTH_SUCCESS_NOTICE_STORAGE_KEY);
+    const parsed = JSON.parse(raw);
+    const ts = Number(parsed?.ts || 0);
+    if (!Number.isFinite(ts) || ts <= 0) return false;
+    return (Date.now() - ts) < 60_000;
+  } catch (_) {
+    return false;
+  }
 }
 
 async function touchClientPresence(user) {
@@ -410,6 +425,18 @@ export function renderPage2(user) {
       </button>
     </div>
   `);
+
+  if (consumeAuthSuccessNotice()) {
+    document.body.insertAdjacentHTML("beforeend", `
+      <div id="authSuccessToast" class="fixed top-4 left-1/2 z-[3500] -translate-x-1/2 rounded-2xl border border-emerald-300/40 bg-emerald-500/20 px-4 py-3 text-sm font-semibold text-emerald-100 shadow-[10px_10px_22px_rgba(14,36,28,0.45),-8px_-8px_18px_rgba(91,153,126,0.16)] backdrop-blur-xl">
+        Connexion réussie.
+      </div>
+    `);
+    window.setTimeout(() => {
+      const toast = document.getElementById("authSuccessToast");
+      if (toast) toast.remove();
+    }, 2600);
+  }
 
   if (window.anime) {
     anime({
