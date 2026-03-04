@@ -62,6 +62,26 @@ const firebaseConfig = {
   measurementId: "G-3D8KT7BD8J",
 };
 
+function resolveRuntimeAuthDomain(defaultAuthDomain) {
+  if (typeof window === "undefined") return defaultAuthDomain;
+
+  const protocol = String(window.location?.protocol || "").trim().toLowerCase();
+  const host = String(window.location?.hostname || "").trim().toLowerCase();
+  if (!host) return defaultAuthDomain;
+  if (protocol !== "http:" && protocol !== "https:") return defaultAuthDomain;
+  if (host === "localhost" || host === "127.0.0.1" || host === "::1" || host.endsWith(".local")) {
+    return defaultAuthDomain;
+  }
+
+  if (host === "www.dominoeslakay.com") {
+    return "dominoeslakay.com";
+  }
+
+  return host;
+}
+
+firebaseConfig.authDomain = resolveRuntimeAuthDomain(firebaseConfig.authDomain);
+
 const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
 const db = getFirestore(app);

@@ -91,13 +91,39 @@ function isGoogleRedirectSupportedOnCurrentHost() {
   const protocol = String(window.location?.protocol || "").trim().toLowerCase();
   if (!host) return false;
   if (protocol === "file:") return false;
+  if (protocol !== "http:" && protocol !== "https:") return false;
   if (host === "localhost" || host === "127.0.0.1" || host === "::1" || host.endsWith(".local")) {
     return false;
   }
-  return host.endsWith(".firebaseapp.com") || host.endsWith(".web.app");
+  return true;
 }
 
-async function waitForResolvedPopupUser(timeoutMs = 1800) {
+function shouldPreferGoogleRedirect() {
+  if (typeof window === "undefined") return false;
+
+  const ua = String(window.navigator?.userAgent || "").toLowerCase();
+  const coarsePointer = typeof window.matchMedia === "function"
+    ? window.matchMedia("(pointer: coarse)").matches
+    : false;
+  const smallViewport = Math.min(
+    Number(window.screen?.width || 0),
+    Number(window.screen?.height || 0)
+  ) > 0 && Math.min(
+    Number(window.screen?.width || 0),
+    Number(window.screen?.height || 0)
+  ) <= 900;
+
+  const mobileUa =
+    ua.includes("android") ||
+    ua.includes("iphone") ||
+    ua.includes("ipad") ||
+    ua.includes("ipod") ||
+    ua.includes("mobile");
+
+  return coarsePointer || smallViewport || mobileUa;
+}
+
+async function waitForResolvedPopupUser(timeoutMs = 4500) {
   if (auth.currentUser) return auth.currentUser;
 
   return new Promise((resolve) => {
@@ -125,13 +151,19 @@ async function waitForResolvedPopupUser(timeoutMs = 1800) {
 async function loginWithGoogle() {
   const provider = new GoogleAuthProvider();
   provider.setCustomParameters({ prompt: "select_account" });
+  const canUseRedirect = isGoogleRedirectSupportedOnCurrentHost();
+
+  if (canUseRedirect && shouldPreferGoogleRedirect()) {
+    await signInWithRedirect(auth, provider);
+    return { mode: "redirect", result: null };
+  }
+
   try {
     const res = await signInWithPopup(auth, provider);
     return { mode: "popup", result: res };
   } catch (err) {
     const code = err?.code ? String(err.code) : "";
-    // Popup remains the primary flow. Redirect is only reliable on Firebase-hosted domains.
-    if (code === "auth/popup-blocked" && isGoogleRedirectSupportedOnCurrentHost()) {
+    if (code === "auth/popup-blocked" && canUseRedirect) {
       await signInWithRedirect(auth, provider);
       return { mode: "redirect", result: null };
     }
@@ -140,13 +172,22 @@ async function loginWithGoogle() {
       if (resolvedUser) {
         return { mode: "popup", result: { user: resolvedUser } };
       }
+      if (canUseRedirect) {
+        await signInWithRedirect(auth, provider);
+        return { mode: "redirect", result: null };
+      }
     }
     throw err;
   }
 }
 
 async function completeGoogleRedirectIfAny() {
-  return getRedirectResult(auth);
+  const result = await getRedirectResult(auth);
+  if (result?.user) return result;
+  if (auth.currentUser) {
+    return { user: auth.currentUser };
+  }
+  return result;
 }
 
 function watchAuthState(callback) {
