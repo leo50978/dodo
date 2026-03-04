@@ -34,8 +34,10 @@ let authStateResolved = false;
 let latestObservedUser = undefined;
 let authFallbackRenderTimer = null;
 let authBootstrapMessage = "";
+let authBootstrapTone = "info";
 const PENDING_PROMO_STORAGE_KEY = "domino_pending_promo_code";
 const CLIENT_DEVICE_STORAGE_KEY = "domino_device_id_v1";
+const AUTH_SUCCESS_NOTICE_STORAGE_KEY = "domino_auth_success_notice_v1";
 const verificationEmailSentByUid = new Set();
 const APP_HOME_ROUTE = "./index.html";
 const TERMS_ROUTE = "./conditions-utilisation.html";
@@ -129,6 +131,20 @@ function clearAuthFallbackRenderTimer() {
     window.clearTimeout(authFallbackRenderTimer);
     authFallbackRenderTimer = null;
   }
+}
+
+function setAuthBootstrapMessage(message = "", tone = "info") {
+  authBootstrapMessage = String(message || "").trim();
+  authBootstrapTone = tone || "info";
+}
+
+function storeAuthSuccessNotice() {
+  try {
+    sessionStorage.setItem(
+      AUTH_SUCCESS_NOTICE_STORAGE_KEY,
+      JSON.stringify({ ts: Date.now(), type: "auth_success" })
+    );
+  } catch (_) {}
 }
 
 function scheduleAuthFallbackRender(delayMs = 1200) {
@@ -407,6 +423,8 @@ async function checkEmailVerificationAndContinue(explicitPromoCode = "", options
 function redirectToHomeApp(user) {
   if (redirectingToApp) return;
   redirectingToApp = true;
+  storeAuthSuccessNotice();
+  setAuthBootstrapMessage("Connexion réussie. Redirection vers l'accueil...", "success");
   const currentPath = String(window.location.pathname || "");
   const onHomePage =
     currentPath.endsWith("/inedex.html") ||
@@ -420,6 +438,12 @@ function redirectToHomeApp(user) {
     return;
   }
   window.location.replace(APP_HOME_ROUTE);
+  window.setTimeout(() => {
+    const path = String(window.location.pathname || "");
+    if (path.endsWith("/auth.html") || path.endsWith("auth.html")) {
+      window.location.assign(APP_HOME_ROUTE);
+    }
+  }, 1200);
 }
 
 async function bootstrapReferralBeforeRedirect(user, explicitPromoCode = "") {
@@ -499,7 +523,7 @@ function renderPage1() {
     `
     : "";
   const bootstrapInfo = authBootstrapMessage
-    ? `<div id="authInfo" class="mt-2 min-h-5 text-xs text-amber-200">${escapeAttr(authBootstrapMessage)}</div>`
+    ? `<div id="authInfo" class="mt-2 min-h-5 text-xs ${authBootstrapTone === "success" ? "text-emerald-200" : authBootstrapTone === "error" ? "text-[#ffb0b0]" : "text-amber-200"}">${escapeAttr(authBootstrapMessage)}</div>`
     : `<div id="authInfo" class="mt-2 min-h-5 text-xs text-amber-200"></div>`;
 
   document.body.innerHTML = `
@@ -806,7 +830,7 @@ function bindPage1Events() {
       const errorEl = document.getElementById("authError");
       const infoEl = document.getElementById("authInfo");
       if (errorEl) errorEl.textContent = "";
-      authBootstrapMessage = "";
+      setAuthBootstrapMessage("", "info");
       if (infoEl) infoEl.textContent = "";
       setForgotPasswordStatus("", "neutral");
       try {
@@ -819,8 +843,12 @@ function bindPage1Events() {
           savePendingPromoCode(promoCode);
           authFlowBusy = true;
           const res = await loginWithGoogle();
-          if (res?.mode === "redirect" && errorEl) {
-            errorEl.textContent = "Redirection Google en cours...";
+          if (res?.mode === "redirect") {
+            setAuthBootstrapMessage("Connexion Google en cours...", "info");
+            if (infoEl) {
+              infoEl.className = "mt-2 min-h-5 text-xs text-amber-200";
+              infoEl.textContent = "Connexion Google en cours...";
+            }
           }
           if (res?.mode === "popup") {
             await handleAuthenticatedUser(auth.currentUser, promoCode);
@@ -876,18 +904,19 @@ renderAuthLoading();
 completeGoogleRedirectIfAny()
   .then((result) => {
     if (result?.user) {
-      authBootstrapMessage = "";
+      setAuthBootstrapMessage("", "info");
       clearPendingGoogleRedirect();
       return handleAuthenticatedUser(result.user, consumePendingPromoCode());
     }
     if (hasPendingGoogleRedirect()) {
       clearPendingGoogleRedirect();
-      authBootstrapMessage = "Connexion Google interrompue. Réessaie le bouton Google.";
+      setAuthBootstrapMessage("Connexion Google interrompue. Réessaie le bouton Google.", "error");
     }
     return null;
   })
   .catch((err) => {
     console.error("Google redirect auth error:", err);
+    setAuthBootstrapMessage(formatAuthError(err, "Connexion Google échouée."), "error");
   })
   .finally(() => {
     authBootstrapReady = true;
@@ -945,7 +974,7 @@ watchAuthState((user) => {
   authStateResolved = true;
   latestObservedUser = user || null;
   if (user) {
-    authBootstrapMessage = "";
+    setAuthBootstrapMessage("", "info");
     clearPendingGoogleRedirect();
     clearAuthFallbackRenderTimer();
     handleAuthenticatedUser(user).catch((err) => {
