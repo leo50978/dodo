@@ -45,6 +45,25 @@ const PRIVACY_ROUTE = "./politique-confidentialite.html";
 const LEGAL_ROUTE = "./mentions-legales.html";
 let signupConsentResolver = null;
 
+function pageAuthDebug(event, data = {}) {
+  try {
+    const payload = {
+      ts: new Date().toISOString(),
+      href: String(window.location?.href || ""),
+      authMode,
+      authFlowBusy,
+      redirectingToApp,
+      authBootstrapReady,
+      authStateResolved,
+      latestObservedUser: latestObservedUser === undefined ? "undefined" : (latestObservedUser ? String(latestObservedUser?.uid || "user") : "null"),
+      ...data,
+    };
+    console.log(`[AUTH_DEBUG][PAGE1] ${event}`, payload);
+  } catch (error) {
+    console.log(`[AUTH_DEBUG][PAGE1] ${event}`, { ts: new Date().toISOString(), logError: String(error?.message || error) });
+  }
+}
+
 function escapeAttr(text) {
   return String(text || "")
     .replace(/&/g, "&amp;")
@@ -136,6 +155,10 @@ function clearAuthFallbackRenderTimer() {
 function setAuthBootstrapMessage(message = "", tone = "info") {
   authBootstrapMessage = String(message || "").trim();
   authBootstrapTone = tone || "info";
+  pageAuthDebug("setBootstrapMessage", {
+    tone: authBootstrapTone,
+    message: authBootstrapMessage,
+  });
 }
 
 function storeAuthSuccessNotice() {
@@ -148,13 +171,16 @@ function storeAuthSuccessNotice() {
 }
 
 function scheduleAuthFallbackRender(delayMs = 1200) {
+  pageAuthDebug("scheduleAuthFallbackRender", { delayMs });
   clearAuthFallbackRenderTimer();
   authFallbackRenderTimer = window.setTimeout(() => {
     authFallbackRenderTimer = null;
+    pageAuthDebug("scheduleAuthFallbackRender:tick");
     if (redirectingToApp) return;
     if (auth.currentUser) return;
     if (latestObservedUser !== null) return;
     if (authBootstrapReady !== true || authStateResolved !== true) return;
+    pageAuthDebug("scheduleAuthFallbackRender:renderPage1");
     renderPage1();
   }, Math.max(250, Number(delayMs) || 1200));
 }
@@ -392,6 +418,10 @@ async function sendVerificationEmailIfNeeded(user) {
 }
 
 async function showEmailVerificationModal(user) {
+  pageAuthDebug("showEmailVerificationModal", {
+    uid: String(user?.uid || ""),
+    email: String(user?.email || ""),
+  });
   const overlay = ensureEmailVerificationModal();
   const emailTarget = document.getElementById("emailVerifyTarget");
   if (emailTarget) emailTarget.textContent = user?.email || "ton adresse email";
@@ -403,17 +433,29 @@ async function showEmailVerificationModal(user) {
 }
 
 async function checkEmailVerificationAndContinue(explicitPromoCode = "", options = {}) {
+  pageAuthDebug("checkEmailVerificationAndContinue:start", {
+    explicitPromoCode: String(explicitPromoCode || ""),
+    showWaitingMessage: options?.showWaitingMessage === true,
+  });
   const refreshedUser = await refreshCurrentUser(auth.currentUser);
   if (!refreshedUser) {
+    pageAuthDebug("checkEmailVerificationAndContinue:noRefreshedUser");
     closeEmailVerificationModal();
     return false;
   }
   if (userRequiresEmailVerification(refreshedUser)) {
+    pageAuthDebug("checkEmailVerificationAndContinue:stillUnverified", {
+      uid: String(refreshedUser?.uid || ""),
+      emailVerified: refreshedUser?.emailVerified === true,
+    });
     if (options.showWaitingMessage) {
       setVerificationStatus("Toujours en attente de vérification. Ouvre le mail reçu et clique le lien de confirmation.", "warning");
     }
     return false;
   }
+  pageAuthDebug("checkEmailVerificationAndContinue:verified", {
+    uid: String(refreshedUser?.uid || ""),
+  });
   closeEmailVerificationModal();
   await bootstrapReferralBeforeRedirect(refreshedUser, explicitPromoCode);
   redirectToHomeApp(refreshedUser);
@@ -421,6 +463,9 @@ async function checkEmailVerificationAndContinue(explicitPromoCode = "", options
 }
 
 function redirectToHomeApp(user) {
+  pageAuthDebug("redirectToHomeApp:enter", {
+    uid: String(user?.uid || auth.currentUser?.uid || ""),
+  });
   if (redirectingToApp) return;
   redirectingToApp = true;
   storeAuthSuccessNotice();
@@ -433,14 +478,23 @@ function redirectToHomeApp(user) {
     currentPath.endsWith("index.html") ||
     currentPath === "/" ||
     currentPath === "";
+  pageAuthDebug("redirectToHomeApp:pathCheck", {
+    currentPath,
+    onHomePage,
+    target: APP_HOME_ROUTE,
+  });
   if (onHomePage) {
+    pageAuthDebug("redirectToHomeApp:renderPage2Inline");
     renderPage2(user || auth.currentUser);
     return;
   }
+  pageAuthDebug("redirectToHomeApp:replace");
   window.location.replace(APP_HOME_ROUTE);
   window.setTimeout(() => {
     const path = String(window.location.pathname || "");
+    pageAuthDebug("redirectToHomeApp:fallbackCheck", { path });
     if (path.endsWith("/auth.html") || path.endsWith("auth.html")) {
+      pageAuthDebug("redirectToHomeApp:fallbackAssign");
       window.location.assign(APP_HOME_ROUTE);
     }
   }, 1200);
@@ -466,14 +520,27 @@ async function bootstrapReferralBeforeRedirect(user, explicitPromoCode = "") {
   }
 
   if (!referralBootstrapPromise) {
+    pageAuthDebug("bootstrapReferralBeforeRedirect:start", {
+      uid: String(user?.uid || ""),
+      explicitPromoCode: typedPromoCode,
+      pendingPromoCode,
+      queryPromoCode,
+      linkReferralCode,
+      referralPayload,
+    });
     referralBootstrapPromise = updateClientProfileSecure({
       ...collectAnalyticsContext(),
       ...referralPayload,
     })
       .catch((err) => {
         console.error("Secure profile bootstrap error:", err);
+        pageAuthDebug("bootstrapReferralBeforeRedirect:error", {
+          error: String(err?.message || err),
+          code: String(err?.code || ""),
+        });
       })
       .finally(() => {
+        pageAuthDebug("bootstrapReferralBeforeRedirect:done");
         referralBootstrapPromise = null;
       });
   }
@@ -482,14 +549,22 @@ async function bootstrapReferralBeforeRedirect(user, explicitPromoCode = "") {
 }
 
 async function handleAuthenticatedUser(user, explicitPromoCode = "") {
+  pageAuthDebug("handleAuthenticatedUser:start", {
+    uid: String(user?.uid || ""),
+    email: String(user?.email || ""),
+    emailVerified: user?.emailVerified === true,
+    explicitPromoCode: String(explicitPromoCode || ""),
+  });
   if (!user) return;
   clearAuthFallbackRenderTimer();
   if (userRequiresEmailVerification(user)) {
+    pageAuthDebug("handleAuthenticatedUser:requiresEmailVerification");
     await showEmailVerificationModal(user);
     return;
   }
   closeEmailVerificationModal();
   await bootstrapReferralBeforeRedirect(user, explicitPromoCode);
+  pageAuthDebug("handleAuthenticatedUser:redirectToHome");
   redirectToHomeApp(user);
 }
 
@@ -504,6 +579,7 @@ function renderAuthLoading() {
 }
 
 function renderPage1() {
+  pageAuthDebug("renderPage1");
   const modeTitle = authMode === "signin" ? "SE CONNECTER" : "S'INSCRIRE";
   const helperPrefix = authMode === "signin" ? "Pas encore de compte ?" : "Déjà un compte ?";
   const helperAction = authMode === "signin" ? "S'inscrire" : "Se connecter";
@@ -771,6 +847,11 @@ function bindPage1Events() {
     const confirmPassword = passwordConfirmInput?.value || "";
     const promoCode = authMode === "signup" ? normalizeCode(promoCodeInput?.value || "") : "";
     const errorEl = document.getElementById("authError");
+    pageAuthDebug("submitAuth:begin", {
+      email,
+      mode: authMode,
+      promoCode,
+    });
 
     if (!isValidEmail(email)) {
       if (errorEl) errorEl.textContent = "Email invalide.";
@@ -799,21 +880,32 @@ function bindPage1Events() {
     try {
       await withButtonLoading(submitBtn, async () => {
         authFlowBusy = true;
-        if (authMode === "signin") {
-          savePendingPromoCode("");
-          await loginWithEmail(email, password);
-          await handleAuthenticatedUser(auth.currentUser);
-        } else {
-          savePendingPromoCode(promoCode);
-          await signupWithEmail(email, password);
-          await handleAuthenticatedUser(auth.currentUser, promoCode);
-        }
+      if (authMode === "signin") {
+        savePendingPromoCode("");
+        await loginWithEmail(email, password);
+        pageAuthDebug("submitAuth:signinSuccess", {
+          uid: String(auth.currentUser?.uid || ""),
+        });
+        await handleAuthenticatedUser(auth.currentUser);
+      } else {
+        savePendingPromoCode(promoCode);
+        await signupWithEmail(email, password);
+        pageAuthDebug("submitAuth:signupSuccess", {
+          uid: String(auth.currentUser?.uid || ""),
+        });
+        await handleAuthenticatedUser(auth.currentUser, promoCode);
+      }
       }, { loadingLabel: authMode === "signin" ? "Connexion..." : "Création..." });
     } catch (err) {
       console.error("Auth error:", err);
+      pageAuthDebug("submitAuth:error", {
+        error: String(err?.message || err),
+        code: String(err?.code || ""),
+      });
       if (errorEl) errorEl.textContent = formatAuthError(err, "Erreur d'authentification");
     } finally {
       authFlowBusy = false;
+      pageAuthDebug("submitAuth:finally");
     }
   };
 
@@ -829,6 +921,7 @@ function bindPage1Events() {
     googleBtn.addEventListener("click", async () => {
       const errorEl = document.getElementById("authError");
       const infoEl = document.getElementById("authInfo");
+      pageAuthDebug("googleClick:start");
       if (errorEl) errorEl.textContent = "";
       setAuthBootstrapMessage("", "info");
       if (infoEl) infoEl.textContent = "";
@@ -836,13 +929,23 @@ function bindPage1Events() {
       try {
         await withButtonLoading(googleBtn, async () => {
           const promoCode = authMode === "signup" ? normalizeCode(promoCodeInput?.value || "") : "";
+          pageAuthDebug("googleClick:beforeLoginWithGoogle", {
+            promoCode,
+            mode: authMode,
+          });
           if (authMode === "signup") {
             const consentOk = await requestSignupConsentForGoogle();
+            pageAuthDebug("googleClick:signupConsentResult", { consentOk });
             if (!consentOk) return;
           }
           savePendingPromoCode(promoCode);
           authFlowBusy = true;
           const res = await loginWithGoogle();
+          pageAuthDebug("googleClick:loginWithGoogleResult", {
+            mode: String(res?.mode || ""),
+            hasPopupUser: Boolean(res?.result?.user),
+            currentUid: String(auth.currentUser?.uid || ""),
+          });
           if (res?.mode === "redirect") {
             setAuthBootstrapMessage("Connexion Google en cours...", "info");
             if (infoEl) {
@@ -851,14 +954,20 @@ function bindPage1Events() {
             }
           }
           if (res?.mode === "popup") {
+            pageAuthDebug("googleClick:popupHandleAuthenticatedUser");
             await handleAuthenticatedUser(auth.currentUser, promoCode);
           }
         }, { loadingLabel: "Connexion Google..." });
       } catch (err) {
         console.error("Google auth error:", err);
+        pageAuthDebug("googleClick:error", {
+          error: String(err?.message || err),
+          code: String(err?.code || ""),
+        });
         if (errorEl) errorEl.textContent = formatAuthError(err, "Erreur de connexion Google");
       } finally {
         authFlowBusy = false;
+        pageAuthDebug("googleClick:finally");
       }
     });
   }
@@ -900,9 +1009,16 @@ function bindPage1Events() {
 }
 
 renderAuthLoading();
+pageAuthDebug("bootstrap:renderAuthLoadingDone");
 
 completeGoogleRedirectIfAny()
   .then((result) => {
+    pageAuthDebug("bootstrap:completeGoogleRedirectIfAny:then", {
+      hasResult: Boolean(result),
+      hasResultUser: Boolean(result?.user),
+      resultUid: String(result?.user?.uid || ""),
+      currentUid: String(auth.currentUser?.uid || ""),
+    });
     if (result?.user) {
       setAuthBootstrapMessage("", "info");
       clearPendingGoogleRedirect();
@@ -916,10 +1032,15 @@ completeGoogleRedirectIfAny()
   })
   .catch((err) => {
     console.error("Google redirect auth error:", err);
+    pageAuthDebug("bootstrap:completeGoogleRedirectIfAny:catch", {
+      error: String(err?.message || err),
+      code: String(err?.code || ""),
+    });
     setAuthBootstrapMessage(formatAuthError(err, "Connexion Google échouée."), "error");
   })
   .finally(() => {
     authBootstrapReady = true;
+    pageAuthDebug("bootstrap:completeGoogleRedirectIfAny:finally");
     if (latestObservedUser === null && authStateResolved === true && redirectingToApp === false) {
       scheduleAuthFallbackRender();
     }
@@ -971,6 +1092,13 @@ function animatePage1() {
 }
 
 watchAuthState((user) => {
+  pageAuthDebug("watchAuthState:callback", {
+    hasUser: Boolean(user),
+    uid: String(user?.uid || ""),
+    email: String(user?.email || ""),
+    emailVerified: user?.emailVerified === true,
+    currentUid: String(auth.currentUser?.uid || ""),
+  });
   authStateResolved = true;
   latestObservedUser = user || null;
   if (user) {
@@ -979,9 +1107,16 @@ watchAuthState((user) => {
     clearAuthFallbackRenderTimer();
     handleAuthenticatedUser(user).catch((err) => {
       console.error("Auth state redirect error:", err);
+      pageAuthDebug("watchAuthState:handleAuthenticatedUser:catch", {
+        error: String(err?.message || err),
+        code: String(err?.code || ""),
+      });
       if (userRequiresEmailVerification(user)) {
         showEmailVerificationModal(user).catch((modalErr) => {
           console.error("Email verification modal error:", modalErr);
+          pageAuthDebug("watchAuthState:showEmailVerificationModal:catch", {
+            error: String(modalErr?.message || modalErr),
+          });
         });
         return;
       }
@@ -990,6 +1125,7 @@ watchAuthState((user) => {
     return;
   }
   redirectingToApp = false;
+  pageAuthDebug("watchAuthState:noUser");
   if (authBootstrapReady !== true) return;
   scheduleAuthFallbackRender();
 });

@@ -17,6 +17,19 @@ import {
 const GOOGLE_REDIRECT_PENDING_KEY = "domino_google_redirect_pending_v1";
 const GOOGLE_REDIRECT_PENDING_TTL_MS = 15 * 60 * 1000;
 
+function authDebug(event, data = {}) {
+  try {
+    const payload = {
+      ts: new Date().toISOString(),
+      href: typeof window !== "undefined" ? String(window.location?.href || "") : "",
+      ...data,
+    };
+    console.log(`[AUTH_DEBUG][AUTH] ${event}`, payload);
+  } catch (error) {
+    console.log(`[AUTH_DEBUG][AUTH] ${event}`, { ts: new Date().toISOString(), logError: String(error?.message || error) });
+  }
+}
+
 function formatAuthError(err, fallback) {
   const code = err && err.code ? String(err.code) : "";
   const map = {
@@ -110,6 +123,7 @@ function markGoogleRedirectPending() {
       path: String(window.location?.pathname || ""),
     };
     window.sessionStorage?.setItem(GOOGLE_REDIRECT_PENDING_KEY, JSON.stringify(payload));
+    authDebug("redirectPending:set", payload);
   } catch (_) {}
 }
 
@@ -124,8 +138,10 @@ function readGoogleRedirectPending() {
     if (!Number.isFinite(startedAt) || startedAt <= 0) return null;
     if ((Date.now() - startedAt) > GOOGLE_REDIRECT_PENDING_TTL_MS) {
       window.sessionStorage?.removeItem(GOOGLE_REDIRECT_PENDING_KEY);
+      authDebug("redirectPending:expired", { startedAt });
       return null;
     }
+    authDebug("redirectPending:read", parsed);
     return parsed;
   } catch (_) {
     return null;
@@ -136,6 +152,7 @@ function clearGoogleRedirectPending() {
   if (typeof window === "undefined") return;
   try {
     window.sessionStorage?.removeItem(GOOGLE_REDIRECT_PENDING_KEY);
+    authDebug("redirectPending:clear");
   } catch (_) {}
 }
 
@@ -168,31 +185,56 @@ async function loginWithGoogle() {
   const provider = new GoogleAuthProvider();
   provider.setCustomParameters({ prompt: "select_account" });
   const canUseRedirect = isGoogleRedirectSupportedOnCurrentHost();
+  authDebug("loginWithGoogle:start", {
+    canUseRedirect,
+    host: typeof window !== "undefined" ? String(window.location?.hostname || "") : "",
+    protocol: typeof window !== "undefined" ? String(window.location?.protocol || "") : "",
+  });
 
   // On production-like hosts, redirect is the most stable option across
   // browsers (popup blockers / mobile WebView / third-party restrictions).
   if (canUseRedirect) {
     markGoogleRedirectPending();
+    authDebug("loginWithGoogle:useRedirect");
     await signInWithRedirect(auth, provider);
+    authDebug("loginWithGoogle:redirectTriggered");
     return { mode: "redirect", result: null };
   }
 
   try {
+    authDebug("loginWithGoogle:usePopup");
     const res = await signInWithPopup(auth, provider);
+    authDebug("loginWithGoogle:popupSuccess", {
+      uid: String(res?.user?.uid || ""),
+      email: String(res?.user?.email || ""),
+    });
     return { mode: "popup", result: res };
   } catch (err) {
     const code = err?.code ? String(err.code) : "";
+    authDebug("loginWithGoogle:error", {
+      code,
+      message: String(err?.message || ""),
+    });
     if (code === "auth/popup-blocked" && canUseRedirect) {
+      authDebug("loginWithGoogle:popupBlocked->redirect");
       await signInWithRedirect(auth, provider);
+      authDebug("loginWithGoogle:redirectTriggeredAfterPopupBlocked");
       return { mode: "redirect", result: null };
     }
     if (code === "auth/popup-closed-by-user" || code === "auth/cancelled-popup-request") {
+      authDebug("loginWithGoogle:popupClosedOrCancelled:waitUser");
       const resolvedUser = await waitForResolvedPopupUser();
       if (resolvedUser) {
+        authDebug("loginWithGoogle:resolvedUserAfterPopupClose", {
+          uid: String(resolvedUser?.uid || ""),
+          email: String(resolvedUser?.email || ""),
+        });
         return { mode: "popup", result: { user: resolvedUser } };
       }
       if (canUseRedirect) {
+        authDebug("loginWithGoogle:noResolvedUser->redirect");
         await signInWithRedirect(auth, provider);
+        authDebug("loginWithGoogle:redirectTriggeredAfterPopupClose");
         return { mode: "redirect", result: null };
       }
     }
@@ -201,20 +243,40 @@ async function loginWithGoogle() {
 }
 
 async function completeGoogleRedirectIfAny() {
+  authDebug("completeRedirect:start", {
+    hasCurrentUserBefore: Boolean(auth.currentUser),
+    currentUidBefore: String(auth.currentUser?.uid || ""),
+  });
   const result = await getRedirectResult(auth);
+  authDebug("completeRedirect:rawResult", {
+    hasResult: Boolean(result),
+    hasResultUser: Boolean(result?.user),
+    resultUid: String(result?.user?.uid || ""),
+  });
   if (result?.user) {
     clearGoogleRedirectPending();
+    authDebug("completeRedirect:resultUser", {
+      uid: String(result.user?.uid || ""),
+      email: String(result.user?.email || ""),
+    });
     return result;
   }
   if (auth.currentUser) {
     clearGoogleRedirectPending();
+    authDebug("completeRedirect:fallbackCurrentUser", {
+      uid: String(auth.currentUser?.uid || ""),
+      email: String(auth.currentUser?.email || ""),
+    });
     return { user: auth.currentUser };
   }
+  authDebug("completeRedirect:noUser");
   return result;
 }
 
 function hasPendingGoogleRedirect() {
-  return Boolean(readGoogleRedirectPending());
+  const pending = Boolean(readGoogleRedirectPending());
+  authDebug("redirectPending:has", { pending });
+  return pending;
 }
 
 function clearPendingGoogleRedirect() {
@@ -222,7 +284,16 @@ function clearPendingGoogleRedirect() {
 }
 
 function watchAuthState(callback) {
-  return onAuthStateChanged(auth, callback);
+  return onAuthStateChanged(auth, (user) => {
+    authDebug("onAuthStateChanged", {
+      hasUser: Boolean(user),
+      uid: String(user?.uid || ""),
+      email: String(user?.email || ""),
+      emailVerified: user?.emailVerified === true,
+      providerIds: Array.isArray(user?.providerData) ? user.providerData.map((p) => String(p?.providerId || "")) : [],
+    });
+    callback(user);
+  });
 }
 
 export {
