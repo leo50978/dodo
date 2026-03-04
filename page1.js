@@ -5,10 +5,6 @@ import {
   isValidEmail,
   isValidPassword,
   loginWithEmail,
-  loginWithGoogle,
-  completeGoogleRedirectIfAny,
-  hasPendingGoogleRedirect,
-  clearPendingGoogleRedirect,
   signupWithEmail,
   sendPasswordReset,
   sendSignupVerificationEmail,
@@ -43,7 +39,6 @@ const APP_HOME_ROUTE = "./index.html";
 const TERMS_ROUTE = "./conditions-utilisation.html";
 const PRIVACY_ROUTE = "./politique-confidentialite.html";
 const LEGAL_ROUTE = "./mentions-legales.html";
-let signupConsentResolver = null;
 
 function pageAuthDebug(event, data = {}) {
   try {
@@ -210,126 +205,6 @@ function closeEmailVerificationModal() {
   if (!overlay) return;
   overlay.classList.add("hidden");
   overlay.classList.remove("flex");
-}
-
-function resolveSignupConsent(value) {
-  if (!signupConsentResolver) return;
-  const resolver = signupConsentResolver;
-  signupConsentResolver = null;
-  resolver(Boolean(value));
-}
-
-function closeSignupConsentModal(accepted = false) {
-  const overlay = document.getElementById("signupConsentOverlay");
-  if (!overlay) {
-    resolveSignupConsent(accepted);
-    return;
-  }
-  overlay.classList.add("hidden");
-  overlay.classList.remove("flex");
-  document.body.classList.remove("overflow-hidden");
-  resolveSignupConsent(accepted);
-}
-
-function ensureSignupConsentModal() {
-  let overlay = document.getElementById("signupConsentOverlay");
-  if (!overlay) {
-    overlay = document.createElement("div");
-    overlay.id = "signupConsentOverlay";
-    overlay.className = "fixed inset-0 z-[5300] hidden items-center justify-center bg-black/65 p-4 backdrop-blur-md";
-    overlay.innerHTML = `
-      <div class="w-[min(94vw,34rem)] rounded-3xl border border-white/20 bg-[#3F4766]/88 p-5 text-white shadow-[14px_14px_34px_rgba(16,23,40,0.5),-10px_-10px_24px_rgba(112,126,165,0.2)] backdrop-blur-xl sm:p-6">
-        <h2 class="text-xl font-bold tracking-wide sm:text-2xl">Avant de continuer</h2>
-        <p class="mt-2 text-sm text-white/80">
-          Pour créer un compte, tu dois confirmer ton âge et accepter les règles d'utilisation de Dominoes Lakay.
-        </p>
-
-        <div class="mt-5 space-y-3">
-          <label class="flex items-start gap-3 rounded-2xl border border-white/15 bg-white/8 px-4 py-3">
-            <input id="signupConsentAge" type="checkbox" class="mt-1 h-4 w-4 rounded border-white/30 bg-white/10 text-[#f48f45]" />
-            <span class="text-sm text-white/90">J'ai 18 ans ou plus.</span>
-          </label>
-
-          <label class="flex items-start gap-3 rounded-2xl border border-white/15 bg-white/8 px-4 py-3">
-            <input id="signupConsentTerms" type="checkbox" class="mt-1 h-4 w-4 rounded border-white/30 bg-white/10 text-[#f48f45]" />
-            <span class="text-sm text-white/90">
-              J'accepte les <a href="${TERMS_ROUTE}" target="_blank" rel="noopener noreferrer" class="font-semibold text-[#ffd8b5] underline underline-offset-2">conditions d'utilisation</a>.
-            </span>
-          </label>
-        </div>
-
-        <div class="mt-4 rounded-2xl border border-amber-300/35 bg-amber-500/12 px-4 py-3 text-xs text-amber-100 sm:text-sm">
-          Important: en créant un compte, tu confirmes utiliser des informations exactes, respecter les règles du jeu et accepter les politiques du service.
-        </div>
-
-        <div id="signupConsentError" class="mt-3 min-h-5 text-sm text-[#ffb0b0]"></div>
-
-        <div class="mt-4 flex flex-col gap-3 sm:flex-row">
-          <button id="signupConsentCancelBtn" type="button" class="h-11 flex-1 rounded-2xl border border-white/15 bg-white/8 text-sm font-semibold text-white/85 transition hover:bg-white/12">
-            Annuler
-          </button>
-          <button id="signupConsentConfirmBtn" type="button" class="h-11 flex-1 rounded-2xl border border-[#ffb26e] bg-[#F57C00] text-sm font-semibold text-white shadow-[8px_8px_18px_rgba(163,82,27,0.45),-6px_-6px_14px_rgba(255,175,102,0.22)] transition hover:-translate-y-0.5">
-            Continuer
-          </button>
-        </div>
-      </div>
-    `;
-    document.body.appendChild(overlay);
-  }
-
-  const cancelBtn = document.getElementById("signupConsentCancelBtn");
-  const confirmBtn = document.getElementById("signupConsentConfirmBtn");
-
-  if (cancelBtn && !cancelBtn.dataset.bound) {
-    cancelBtn.dataset.bound = "1";
-    cancelBtn.addEventListener("click", () => {
-      closeSignupConsentModal(false);
-    });
-  }
-
-  if (confirmBtn && !confirmBtn.dataset.bound) {
-    confirmBtn.dataset.bound = "1";
-    confirmBtn.addEventListener("click", () => {
-      const ageCheckbox = document.getElementById("signupConsentAge");
-      const termsCheckbox = document.getElementById("signupConsentTerms");
-      const errorEl = document.getElementById("signupConsentError");
-      const hasAgeConsent = ageCheckbox?.checked === true;
-      const hasTermsConsent = termsCheckbox?.checked === true;
-
-      if (!hasAgeConsent || !hasTermsConsent) {
-        if (errorEl) errorEl.textContent = "Tu dois cocher les deux cases pour créer un compte.";
-        return;
-      }
-
-      if (errorEl) errorEl.textContent = "";
-      closeSignupConsentModal(true);
-    });
-  }
-
-  return overlay;
-}
-
-function requestSignupConsentForGoogle() {
-  if (signupConsentResolver) {
-    resolveSignupConsent(false);
-  }
-
-  const overlay = ensureSignupConsentModal();
-  const ageCheckbox = document.getElementById("signupConsentAge");
-  const termsCheckbox = document.getElementById("signupConsentTerms");
-  const errorEl = document.getElementById("signupConsentError");
-
-  if (ageCheckbox) ageCheckbox.checked = false;
-  if (termsCheckbox) termsCheckbox.checked = false;
-  if (errorEl) errorEl.textContent = "";
-
-  overlay.classList.remove("hidden");
-  overlay.classList.add("flex");
-  document.body.classList.add("overflow-hidden");
-
-  return new Promise((resolve) => {
-    signupConsentResolver = resolve;
-  });
 }
 
 function ensureEmailVerificationModal() {
@@ -678,7 +553,7 @@ function renderPage1() {
                     class="block w-full rounded-2xl border border-white/20 bg-white/10 px-5 py-3.5 text-sm uppercase text-white placeholder-white/60 shadow-[inset_6px_6px_12px_rgba(34,40,59,0.45),inset_-6px_-6px_12px_rgba(93,105,143,0.28)] backdrop-blur-md outline-none ring-0 transition focus:border-[#f48f45] sm:text-base"
                   />
                   <div class="mt-2 px-1 text-[11px] text-white/65 sm:text-xs">
-                    Utilisé lors de la création du compte, y compris avec Google.
+                    Utilisé lors de la création du compte.
                   </div>
                 </div>
               ` : ""}
@@ -728,21 +603,6 @@ function renderPage1() {
             >
               ${modeTitle}
             </button>
-
-            <div class="mt-7 flex items-center gap-4 text-white/65">
-              <div class="h-px flex-1 bg-white/20"></div>
-              <span class="text-sm">ou</span>
-              <div class="h-px flex-1 bg-white/20"></div>
-            </div>
-
-            <button
-              id="googleContinueBtn"
-              type="button"
-              class="mt-5 flex w-full items-center justify-center gap-3 rounded-full border border-white/35 bg-white/80 px-6 py-3.5 text-sm font-semibold text-[#1f2937] shadow-[8px_8px_18px_rgba(22,28,44,0.3),-6px_-6px_14px_rgba(255,255,255,0.28)] backdrop-blur-sm transition hover:-translate-y-0.5 sm:text-base"
-            >
-              <i class="fa-brands fa-google text-[#4285F4]"></i>
-              Continuer avec Google
-            </button>
           </div>
 
           <div class="mt-auto pt-8 text-[11px] leading-relaxed text-white/70 sm:text-xs">
@@ -788,7 +648,6 @@ function bindPage1Events() {
   const promoCodeInput = document.getElementById("promoCodeInput");
   const signupAgeCheckbox = document.getElementById("signupAgeCheckbox");
   const signupTermsCheckbox = document.getElementById("signupTermsCheckbox");
-  const googleBtn = document.getElementById("googleContinueBtn");
   const forgotPasswordBtn = document.getElementById("forgotPasswordBtn");
   const forgotPasswordStatus = document.getElementById("forgotPasswordStatus");
   const discussionFabBtn = document.getElementById("loginDiscussionFabBtn");
@@ -917,61 +776,6 @@ function bindPage1Events() {
     });
   }
 
-  if (googleBtn) {
-    googleBtn.addEventListener("click", async () => {
-      const errorEl = document.getElementById("authError");
-      const infoEl = document.getElementById("authInfo");
-      pageAuthDebug("googleClick:start");
-      if (errorEl) errorEl.textContent = "";
-      setAuthBootstrapMessage("", "info");
-      if (infoEl) infoEl.textContent = "";
-      setForgotPasswordStatus("", "neutral");
-      try {
-        await withButtonLoading(googleBtn, async () => {
-          const promoCode = authMode === "signup" ? normalizeCode(promoCodeInput?.value || "") : "";
-          pageAuthDebug("googleClick:beforeLoginWithGoogle", {
-            promoCode,
-            mode: authMode,
-          });
-          if (authMode === "signup") {
-            const consentOk = await requestSignupConsentForGoogle();
-            pageAuthDebug("googleClick:signupConsentResult", { consentOk });
-            if (!consentOk) return;
-          }
-          savePendingPromoCode(promoCode);
-          authFlowBusy = true;
-          const res = await loginWithGoogle();
-          pageAuthDebug("googleClick:loginWithGoogleResult", {
-            mode: String(res?.mode || ""),
-            hasPopupUser: Boolean(res?.result?.user),
-            currentUid: String(auth.currentUser?.uid || ""),
-          });
-          if (res?.mode === "redirect") {
-            setAuthBootstrapMessage("Connexion Google en cours...", "info");
-            if (infoEl) {
-              infoEl.className = "mt-2 min-h-5 text-xs text-amber-200";
-              infoEl.textContent = "Connexion Google en cours...";
-            }
-          }
-          if (res?.mode === "popup") {
-            pageAuthDebug("googleClick:popupHandleAuthenticatedUser");
-            await handleAuthenticatedUser(auth.currentUser, promoCode);
-          }
-        }, { loadingLabel: "Connexion Google..." });
-      } catch (err) {
-        console.error("Google auth error:", err);
-        pageAuthDebug("googleClick:error", {
-          error: String(err?.message || err),
-          code: String(err?.code || ""),
-        });
-        if (errorEl) errorEl.textContent = formatAuthError(err, "Erreur de connexion Google");
-      } finally {
-        authFlowBusy = false;
-        pageAuthDebug("googleClick:finally");
-      }
-    });
-  }
-
   if (forgotPasswordBtn && forgotPasswordBtn.dataset.bound !== "1") {
     forgotPasswordBtn.dataset.bound = "1";
     forgotPasswordBtn.addEventListener("click", async () => {
@@ -1010,41 +814,18 @@ function bindPage1Events() {
 
 renderAuthLoading();
 pageAuthDebug("bootstrap:renderAuthLoadingDone");
-
-completeGoogleRedirectIfAny()
-  .then((result) => {
-    pageAuthDebug("bootstrap:completeGoogleRedirectIfAny:then", {
-      hasResult: Boolean(result),
-      hasResultUser: Boolean(result?.user),
-      resultUid: String(result?.user?.uid || ""),
-      currentUid: String(auth.currentUser?.uid || ""),
-    });
-    if (result?.user) {
-      setAuthBootstrapMessage("", "info");
-      clearPendingGoogleRedirect();
-      return handleAuthenticatedUser(result.user, consumePendingPromoCode());
-    }
-    if (hasPendingGoogleRedirect()) {
-      clearPendingGoogleRedirect();
-      setAuthBootstrapMessage("Connexion Google interrompue. Réessaie le bouton Google.", "error");
-    }
-    return null;
-  })
-  .catch((err) => {
-    console.error("Google redirect auth error:", err);
-    pageAuthDebug("bootstrap:completeGoogleRedirectIfAny:catch", {
+authBootstrapReady = true;
+pageAuthDebug("bootstrap:noGoogle:ready");
+if (auth.currentUser) {
+  handleAuthenticatedUser(auth.currentUser).catch((err) => {
+    pageAuthDebug("bootstrap:noGoogle:currentUser:catch", {
       error: String(err?.message || err),
       code: String(err?.code || ""),
     });
-    setAuthBootstrapMessage(formatAuthError(err, "Connexion Google échouée."), "error");
-  })
-  .finally(() => {
-    authBootstrapReady = true;
-    pageAuthDebug("bootstrap:completeGoogleRedirectIfAny:finally");
-    if (latestObservedUser === null && authStateResolved === true && redirectingToApp === false) {
-      scheduleAuthFallbackRender();
-    }
   });
+} else {
+  renderPage1();
+}
 
 function animatePage1() {
   if (!window.anime) return;
@@ -1103,7 +884,6 @@ watchAuthState((user) => {
   latestObservedUser = user || null;
   if (user) {
     setAuthBootstrapMessage("", "info");
-    clearPendingGoogleRedirect();
     clearAuthFallbackRenderTimer();
     handleAuthenticatedUser(user).catch((err) => {
       console.error("Auth state redirect error:", err);
