@@ -114,6 +114,28 @@ function isGoogleRedirectSupportedOnCurrentHost() {
   return true;
 }
 
+function shouldPreferGoogleRedirect() {
+  if (typeof window === "undefined") return false;
+  const ua = String(window.navigator?.userAgent || "").toLowerCase();
+  const coarsePointer = typeof window.matchMedia === "function"
+    ? window.matchMedia("(pointer: coarse)").matches
+    : false;
+  const smallViewport = Math.min(
+    Number(window.screen?.width || 0),
+    Number(window.screen?.height || 0)
+  ) > 0 && Math.min(
+    Number(window.screen?.width || 0),
+    Number(window.screen?.height || 0)
+  ) <= 900;
+  const mobileUa =
+    ua.includes("android") ||
+    ua.includes("iphone") ||
+    ua.includes("ipad") ||
+    ua.includes("ipod") ||
+    ua.includes("mobile");
+  return coarsePointer || smallViewport || mobileUa;
+}
+
 function markGoogleRedirectPending() {
   if (typeof window === "undefined") return;
   try {
@@ -185,15 +207,16 @@ async function loginWithGoogle() {
   const provider = new GoogleAuthProvider();
   provider.setCustomParameters({ prompt: "select_account" });
   const canUseRedirect = isGoogleRedirectSupportedOnCurrentHost();
+  const preferRedirect = canUseRedirect && shouldPreferGoogleRedirect();
   authDebug("loginWithGoogle:start", {
     canUseRedirect,
+    preferRedirect,
     host: typeof window !== "undefined" ? String(window.location?.hostname || "") : "",
     protocol: typeof window !== "undefined" ? String(window.location?.protocol || "") : "",
   });
 
-  // On production-like hosts, redirect is the most stable option across
-  // browsers (popup blockers / mobile WebView / third-party restrictions).
-  if (canUseRedirect) {
+  // Prefer redirect on mobile-like contexts, popup first on desktop-like.
+  if (preferRedirect) {
     markGoogleRedirectPending();
     authDebug("loginWithGoogle:useRedirect");
     await signInWithRedirect(auth, provider);
@@ -216,6 +239,7 @@ async function loginWithGoogle() {
       message: String(err?.message || ""),
     });
     if (code === "auth/popup-blocked" && canUseRedirect) {
+      markGoogleRedirectPending();
       authDebug("loginWithGoogle:popupBlocked->redirect");
       await signInWithRedirect(auth, provider);
       authDebug("loginWithGoogle:redirectTriggeredAfterPopupBlocked");
@@ -232,6 +256,7 @@ async function loginWithGoogle() {
         return { mode: "popup", result: { user: resolvedUser } };
       }
       if (canUseRedirect) {
+        markGoogleRedirectPending();
         authDebug("loginWithGoogle:noResolvedUser->redirect");
         await signInWithRedirect(auth, provider);
         authDebug("loginWithGoogle:redirectTriggeredAfterPopupClose");
@@ -269,6 +294,29 @@ async function completeGoogleRedirectIfAny() {
     });
     return { user: auth.currentUser };
   }
+
+  const hasPendingMarker = Boolean(readGoogleRedirectPending());
+  if (hasPendingMarker) {
+    authDebug("completeRedirect:pendingWithoutUser:retryScheduled");
+    await new Promise((resolve) => window.setTimeout(resolve, 1200));
+    const retryResult = await getRedirectResult(auth);
+    authDebug("completeRedirect:retryResult", {
+      hasRetryResult: Boolean(retryResult),
+      hasRetryUser: Boolean(retryResult?.user),
+      retryUid: String(retryResult?.user?.uid || ""),
+      hasCurrentUserAfterRetry: Boolean(auth.currentUser),
+      currentUidAfterRetry: String(auth.currentUser?.uid || ""),
+    });
+    if (retryResult?.user) {
+      clearGoogleRedirectPending();
+      return retryResult;
+    }
+    if (auth.currentUser) {
+      clearGoogleRedirectPending();
+      return { user: auth.currentUser };
+    }
+  }
+
   authDebug("completeRedirect:noUser");
   return result;
 }
