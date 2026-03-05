@@ -258,12 +258,13 @@ function ensureOneClickModal() {
       <div class="w-[min(94vw,34rem)] rounded-3xl border border-white/20 bg-[#3F4766]/88 p-5 text-white shadow-[14px_14px_34px_rgba(16,23,40,0.5),-10px_-10px_24px_rgba(112,126,165,0.2)] backdrop-blur-xl sm:p-6">
         <h2 class="text-xl font-bold tracking-wide sm:text-2xl">Auth en un click</h2>
         <p class="mt-2 text-sm text-white/80">
-          Choisis ton username et ton mot de passe. Ton identifiant unique est généré automatiquement.
+          Choisis ton username et ton mot de passe. L'identifiant unique est optionnel.
         </p>
         <div class="mt-4 space-y-3">
           <div>
-            <label for="oneClickGeneratedId" class="mb-1 block text-xs text-white/70">ID unique</label>
-            <input id="oneClickGeneratedId" type="text" readonly class="block w-full rounded-2xl border border-white/20 bg-white/8 px-4 py-3 text-sm font-semibold tracking-wide text-[#ffd8b5]" />
+            <label for="oneClickGeneratedId" class="mb-1 block text-xs text-white/70">ID unique (optionnel)</label>
+            <input id="oneClickGeneratedId" type="text" placeholder="Laisse vide pour génération automatique" class="block w-full rounded-2xl border border-white/20 bg-white/10 px-4 py-3 text-sm font-semibold tracking-wide text-[#ffd8b5] placeholder-white/55" />
+            <div class="mt-1 text-[11px] text-white/60">Si laissé vide, un ID unique est généré automatiquement.</div>
           </div>
           <div>
             <label for="oneClickUsername" class="mb-1 block text-xs text-white/70">Username</label>
@@ -297,7 +298,7 @@ function openOneClickModal() {
   const usernameInput = document.getElementById("oneClickUsername");
   const passwordInput = document.getElementById("oneClickPassword");
   const errorEl = document.getElementById("oneClickAuthError");
-  if (idInput) idInput.value = createOneClickAccountId();
+  if (idInput) idInput.value = "";
   if (usernameInput) usernameInput.value = "";
   if (passwordInput) passwordInput.value = "";
   if (errorEl) errorEl.textContent = "";
@@ -718,13 +719,15 @@ function renderPage1() {
               ${modeTitle}
             </button>
 
-            <button
-              id="oneClickAuthBtn"
-              type="button"
-              class="mt-3 w-full rounded-full border border-white/25 bg-white/10 px-6 py-3 text-sm font-semibold tracking-wide text-white shadow-[8px_8px_18px_rgba(22,29,45,0.35),-6px_-6px_14px_rgba(118,131,172,0.2)] backdrop-blur-md transition hover:-translate-y-0.5 hover:bg-white/15 sm:text-base"
-            >
-              Auth en un click
-            </button>
+            ${authMode === "signup" ? `
+              <button
+                id="oneClickAuthBtn"
+                type="button"
+                class="mt-3 w-full rounded-full border border-white/25 bg-white/10 px-6 py-3 text-sm font-semibold tracking-wide text-white shadow-[8px_8px_18px_rgba(22,29,45,0.35),-6px_-6px_14px_rgba(118,131,172,0.2)] backdrop-blur-md transition hover:-translate-y-0.5 hover:bg-white/15 sm:text-base"
+              >
+                Auth en un click
+              </button>
+            ` : ""}
           </div>
 
           <div class="mt-auto pt-8 text-[11px] leading-relaxed text-white/70 sm:text-xs">
@@ -921,6 +924,12 @@ function bindPage1Events() {
   if (oneClickAuthBtn && oneClickAuthBtn.dataset.bound !== "1") {
     oneClickAuthBtn.dataset.bound = "1";
     oneClickAuthBtn.addEventListener("click", () => {
+      const errorEl = document.getElementById("authError");
+      if (signupAgeCheckbox?.checked !== true || signupTermsCheckbox?.checked !== true) {
+        if (errorEl) errorEl.textContent = "Tu dois cocher les 2 cases (18+ et conditions) avant de créer un compte.";
+        return;
+      }
+      if (errorEl) errorEl.textContent = "";
       openOneClickModal();
     });
   }
@@ -954,8 +963,13 @@ function bindPage1Events() {
       const username = normalizeUsername(usernameRaw);
       const password = String(oneClickPasswordInput?.value || "");
       const oneClickId = String(oneClickGeneratedIdInput?.value || "").trim().toUpperCase() || createOneClickAccountId();
+      const promoCode = normalizeCode(promoCodeInput?.value || "");
 
       if (oneClickErrorEl) oneClickErrorEl.textContent = "";
+      if (signupAgeCheckbox?.checked !== true || signupTermsCheckbox?.checked !== true) {
+        if (oneClickErrorEl) oneClickErrorEl.textContent = "Tu dois cocher les 2 cases (18+ et conditions) pour t'inscrire.";
+        return;
+      }
       if (!isValidUsername(username)) {
         if (oneClickErrorEl) oneClickErrorEl.textContent = "Username invalide (3-24 caractères alphanumériques, ., _, -).";
         return;
@@ -970,7 +984,7 @@ function bindPage1Events() {
           pageAuthDebug("oneClickSignup:start", { username, oneClickId });
           savePendingUsername(username);
           savePendingOneClickId(oneClickId);
-          savePendingPromoCode("");
+          savePendingPromoCode(promoCode);
           await signupWithUsername(username, password);
           pageAuthDebug("oneClickSignup:success", { uid: String(auth.currentUser?.uid || ""), username, oneClickId });
           closeOneClickModal();
