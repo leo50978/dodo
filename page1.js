@@ -258,14 +258,9 @@ function ensureOneClickModal() {
       <div class="w-[min(94vw,34rem)] rounded-3xl border border-white/20 bg-[#3F4766]/88 p-5 text-white shadow-[14px_14px_34px_rgba(16,23,40,0.5),-10px_-10px_24px_rgba(112,126,165,0.2)] backdrop-blur-xl sm:p-6">
         <h2 class="text-xl font-bold tracking-wide sm:text-2xl">Auth en un click</h2>
         <p class="mt-2 text-sm text-white/80">
-          Choisis ton username et ton mot de passe. L'identifiant unique est optionnel.
+          Choisis ton username et ton mot de passe. L'identifiant unique est généré automatiquement.
         </p>
         <div class="mt-4 space-y-3">
-          <div>
-            <label for="oneClickGeneratedId" class="mb-1 block text-xs text-white/70">ID unique (optionnel)</label>
-            <input id="oneClickGeneratedId" type="text" placeholder="Laisse vide pour génération automatique" class="block w-full rounded-2xl border border-white/20 bg-white/10 px-4 py-3 text-sm font-semibold tracking-wide text-[#ffd8b5] placeholder-white/55" />
-            <div class="mt-1 text-[11px] text-white/60">Si laissé vide, un ID unique est généré automatiquement.</div>
-          </div>
           <div>
             <label for="oneClickUsername" class="mb-1 block text-xs text-white/70">Username</label>
             <input id="oneClickUsername" type="text" autocomplete="off" placeholder="ex: player509" class="block w-full rounded-2xl border border-white/20 bg-white/10 px-4 py-3 text-sm text-white placeholder-white/60 outline-none focus:border-[#f48f45]" />
@@ -294,11 +289,9 @@ function ensureOneClickModal() {
 
 function openOneClickModal() {
   const overlay = ensureOneClickModal();
-  const idInput = document.getElementById("oneClickGeneratedId");
   const usernameInput = document.getElementById("oneClickUsername");
   const passwordInput = document.getElementById("oneClickPassword");
   const errorEl = document.getElementById("oneClickAuthError");
-  if (idInput) idInput.value = "";
   if (usernameInput) usernameInput.value = "";
   if (passwordInput) passwordInput.value = "";
   if (errorEl) errorEl.textContent = "";
@@ -940,7 +933,6 @@ function bindPage1Events() {
   const oneClickErrorEl = document.getElementById("oneClickAuthError");
   const oneClickUsernameInput = document.getElementById("oneClickUsername");
   const oneClickPasswordInput = document.getElementById("oneClickPassword");
-  const oneClickGeneratedIdInput = document.getElementById("oneClickGeneratedId");
 
   if (oneClickCancelBtn && oneClickCancelBtn.dataset.bound !== "1") {
     oneClickCancelBtn.dataset.bound = "1";
@@ -962,7 +954,7 @@ function bindPage1Events() {
       const usernameRaw = String(oneClickUsernameInput?.value || "").trim();
       const username = normalizeUsername(usernameRaw);
       const password = String(oneClickPasswordInput?.value || "");
-      const oneClickId = String(oneClickGeneratedIdInput?.value || "").trim().toUpperCase() || createOneClickAccountId();
+      const oneClickId = createOneClickAccountId();
       const promoCode = normalizeCode(promoCodeInput?.value || "");
 
       if (oneClickErrorEl) oneClickErrorEl.textContent = "";
