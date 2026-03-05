@@ -16,6 +16,7 @@ import {
 
 const GOOGLE_REDIRECT_PENDING_KEY = "domino_google_redirect_pending_v1";
 const GOOGLE_REDIRECT_PENDING_TTL_MS = 15 * 60 * 1000;
+const USERNAME_EMAIL_DOMAIN = "username.dominoeslakay.local";
 
 function authDebug(event, data = {}) {
   try {
@@ -37,6 +38,8 @@ function formatAuthError(err, fallback) {
     "auth/invalid-api-key": "API key Firebase invalide.",
     "auth/unauthorized-domain": "Domaine non autorisé dans Firebase Authentication.",
     "auth/invalid-email": "Adresse email invalide.",
+    "auth/invalid-username": "Username invalide.",
+    "auth/username-already-in-use": "Ce username est déjà utilisé.",
     "auth/email-already-in-use": "Cet email est déjà utilisé.",
     "auth/weak-password": "Mot de passe trop faible (min 6 caractères).",
     "auth/network-request-failed": "Erreur réseau vers Firebase.",
@@ -61,6 +64,40 @@ function isValidEmail(email) {
   return /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(String(email || "").trim());
 }
 
+function normalizeUsername(username) {
+  return String(username || "")
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9._-]/g, "")
+    .slice(0, 24);
+}
+
+function isValidUsername(username) {
+  const normalized = normalizeUsername(username);
+  return /^[a-z0-9](?:[a-z0-9._-]{1,22}[a-z0-9])$/.test(normalized);
+}
+
+function usernameToSyntheticEmail(username) {
+  const normalized = normalizeUsername(username);
+  if (!isValidUsername(normalized)) {
+    const err = new Error("Nom d'utilisateur invalide.");
+    err.code = "auth/invalid-username";
+    throw err;
+  }
+  return `${normalized}@${USERNAME_EMAIL_DOMAIN}`;
+}
+
+function isOneClickAuthEmail(email) {
+  const normalized = String(email || "").trim().toLowerCase();
+  return normalized.endsWith(`@${USERNAME_EMAIL_DOMAIN}`);
+}
+
+function createOneClickAccountId() {
+  const stamp = Date.now().toString(36).toUpperCase();
+  const random = Math.random().toString(36).slice(2, 8).toUpperCase();
+  return `DLK-${stamp}-${random}`;
+}
+
 function isValidPassword(pass) {
   return typeof pass === "string" && pass.length >= 6;
 }
@@ -71,6 +108,26 @@ async function loginWithEmail(email, password) {
 
 async function signupWithEmail(email, password) {
   return createUserWithEmailAndPassword(auth, String(email || "").trim(), String(password || ""));
+}
+
+async function loginWithUsername(username, password) {
+  const email = usernameToSyntheticEmail(username);
+  return signInWithEmailAndPassword(auth, email, String(password || ""));
+}
+
+async function signupWithUsername(username, password) {
+  const email = usernameToSyntheticEmail(username);
+  try {
+    return await createUserWithEmailAndPassword(auth, email, String(password || ""));
+  } catch (err) {
+    const code = String(err?.code || "");
+    if (code === "auth/email-already-in-use") {
+      const conflict = new Error("Ce username est déjà utilisé.");
+      conflict.code = "auth/username-already-in-use";
+      throw conflict;
+    }
+    throw err;
+  }
 }
 
 async function sendPasswordReset(email) {
@@ -354,13 +411,19 @@ export {
   auth,
   formatAuthError,
   isValidEmail,
+  normalizeUsername,
+  isValidUsername,
+  isOneClickAuthEmail,
+  createOneClickAccountId,
   isValidPassword,
   loginWithEmail,
+  loginWithUsername,
   loginWithGoogle,
   completeGoogleRedirectIfAny,
   hasPendingGoogleRedirect,
   clearPendingGoogleRedirect,
   signupWithEmail,
+  signupWithUsername,
   sendPasswordReset,
   sendSignupVerificationEmail,
   refreshCurrentUser,
