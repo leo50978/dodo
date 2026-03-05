@@ -3,9 +3,15 @@ import {
   auth,
   formatAuthError,
   isValidEmail,
+  isValidUsername,
+  normalizeUsername,
+  isOneClickAuthEmail,
+  createOneClickAccountId,
   isValidPassword,
   loginWithEmail,
+  loginWithUsername,
   signupWithEmail,
+  signupWithUsername,
   sendPasswordReset,
   sendSignupVerificationEmail,
   refreshCurrentUser,
@@ -32,6 +38,8 @@ let authFallbackRenderTimer = null;
 let authBootstrapMessage = "";
 let authBootstrapTone = "info";
 const PENDING_PROMO_STORAGE_KEY = "domino_pending_promo_code";
+const PENDING_USERNAME_STORAGE_KEY = "domino_pending_username";
+const PENDING_ONECLICK_ID_STORAGE_KEY = "domino_pending_oneclick_id";
 const CLIENT_DEVICE_STORAGE_KEY = "domino_device_id_v1";
 const AUTH_SUCCESS_NOTICE_STORAGE_KEY = "domino_auth_success_notice_v1";
 const verificationEmailSentByUid = new Set();
@@ -80,6 +88,36 @@ function consumePendingPromoCode() {
   const raw = sessionStorage.getItem(PENDING_PROMO_STORAGE_KEY) || "";
   sessionStorage.removeItem(PENDING_PROMO_STORAGE_KEY);
   return normalizeCode(raw);
+}
+
+function savePendingUsername(username) {
+  const normalized = normalizeUsername(username || "");
+  if (!normalized) {
+    sessionStorage.removeItem(PENDING_USERNAME_STORAGE_KEY);
+    return;
+  }
+  sessionStorage.setItem(PENDING_USERNAME_STORAGE_KEY, normalized);
+}
+
+function consumePendingUsername() {
+  const raw = sessionStorage.getItem(PENDING_USERNAME_STORAGE_KEY) || "";
+  sessionStorage.removeItem(PENDING_USERNAME_STORAGE_KEY);
+  return normalizeUsername(raw);
+}
+
+function savePendingOneClickId(oneClickId) {
+  const clean = String(oneClickId || "").trim().toUpperCase().slice(0, 64);
+  if (!clean) {
+    sessionStorage.removeItem(PENDING_ONECLICK_ID_STORAGE_KEY);
+    return;
+  }
+  sessionStorage.setItem(PENDING_ONECLICK_ID_STORAGE_KEY, clean);
+}
+
+function consumePendingOneClickId() {
+  const raw = sessionStorage.getItem(PENDING_ONECLICK_ID_STORAGE_KEY) || "";
+  sessionStorage.removeItem(PENDING_ONECLICK_ID_STORAGE_KEY);
+  return String(raw || "").trim().toUpperCase().slice(0, 64);
 }
 
 function randomToken(size = 10) {
@@ -181,7 +219,10 @@ function scheduleAuthFallbackRender(delayMs = 1200) {
 }
 
 function userRequiresEmailVerification(user) {
-  return Boolean(user && isEmailPasswordUser(user) && user.emailVerified !== true);
+  if (!user || !isEmailPasswordUser(user)) return false;
+  const email = String(user?.email || "").trim().toLowerCase();
+  if (isOneClickAuthEmail(email)) return false;
+  return user.emailVerified !== true;
 }
 
 function setVerificationStatus(message, tone = "info") {
@@ -205,6 +246,72 @@ function closeEmailVerificationModal() {
   if (!overlay) return;
   overlay.classList.add("hidden");
   overlay.classList.remove("flex");
+}
+
+function ensureOneClickModal() {
+  let overlay = document.getElementById("oneClickAuthOverlay");
+  if (!overlay) {
+    overlay = document.createElement("div");
+    overlay.id = "oneClickAuthOverlay";
+    overlay.className = "fixed inset-0 z-[5400] hidden items-center justify-center bg-black/65 p-4 backdrop-blur-md";
+    overlay.innerHTML = `
+      <div class="w-[min(94vw,34rem)] rounded-3xl border border-white/20 bg-[#3F4766]/88 p-5 text-white shadow-[14px_14px_34px_rgba(16,23,40,0.5),-10px_-10px_24px_rgba(112,126,165,0.2)] backdrop-blur-xl sm:p-6">
+        <h2 class="text-xl font-bold tracking-wide sm:text-2xl">Auth en un click</h2>
+        <p class="mt-2 text-sm text-white/80">
+          Choisis ton username et ton mot de passe. Ton identifiant unique est généré automatiquement.
+        </p>
+        <div class="mt-4 space-y-3">
+          <div>
+            <label for="oneClickGeneratedId" class="mb-1 block text-xs text-white/70">ID unique</label>
+            <input id="oneClickGeneratedId" type="text" readonly class="block w-full rounded-2xl border border-white/20 bg-white/8 px-4 py-3 text-sm font-semibold tracking-wide text-[#ffd8b5]" />
+          </div>
+          <div>
+            <label for="oneClickUsername" class="mb-1 block text-xs text-white/70">Username</label>
+            <input id="oneClickUsername" type="text" autocomplete="off" placeholder="ex: player509" class="block w-full rounded-2xl border border-white/20 bg-white/10 px-4 py-3 text-sm text-white placeholder-white/60 outline-none focus:border-[#f48f45]" />
+            <div class="mt-1 text-[11px] text-white/60">3-24 caractères: lettres, chiffres, point, tiret, underscore.</div>
+          </div>
+          <div>
+            <label for="oneClickPassword" class="mb-1 block text-xs text-white/70">Mot de passe</label>
+            <input id="oneClickPassword" type="password" autocomplete="new-password" placeholder="Min 6 caractères" class="block w-full rounded-2xl border border-white/20 bg-white/10 px-4 py-3 text-sm text-white placeholder-white/60 outline-none focus:border-[#f48f45]" />
+          </div>
+        </div>
+        <div id="oneClickAuthError" class="mt-3 min-h-5 text-sm text-[#ffb0b0]"></div>
+        <div class="mt-4 flex flex-col gap-3 sm:flex-row">
+          <button id="oneClickAuthCancelBtn" type="button" class="h-11 flex-1 rounded-2xl border border-white/15 bg-white/8 text-sm font-semibold text-white/85 transition hover:bg-white/12">
+            Annuler
+          </button>
+          <button id="oneClickAuthSubmitBtn" type="button" class="h-11 flex-1 rounded-2xl border border-[#ffb26e] bg-[#F57C00] text-sm font-semibold text-white shadow-[8px_8px_18px_rgba(163,82,27,0.45),-6px_-6px_14px_rgba(255,175,102,0.22)] transition hover:-translate-y-0.5">
+            Créer le compte
+          </button>
+        </div>
+      </div>
+    `;
+    document.body.appendChild(overlay);
+  }
+  return overlay;
+}
+
+function openOneClickModal() {
+  const overlay = ensureOneClickModal();
+  const idInput = document.getElementById("oneClickGeneratedId");
+  const usernameInput = document.getElementById("oneClickUsername");
+  const passwordInput = document.getElementById("oneClickPassword");
+  const errorEl = document.getElementById("oneClickAuthError");
+  if (idInput) idInput.value = createOneClickAccountId();
+  if (usernameInput) usernameInput.value = "";
+  if (passwordInput) passwordInput.value = "";
+  if (errorEl) errorEl.textContent = "";
+  overlay.classList.remove("hidden");
+  overlay.classList.add("flex");
+  document.body.classList.add("overflow-hidden");
+}
+
+function closeOneClickModal() {
+  const overlay = document.getElementById("oneClickAuthOverlay");
+  if (!overlay) return;
+  overlay.classList.add("hidden");
+  overlay.classList.remove("flex");
+  document.body.classList.remove("overflow-hidden");
 }
 
 function ensureEmailVerificationModal() {
@@ -380,6 +487,8 @@ async function bootstrapReferralBeforeRedirect(user, explicitPromoCode = "") {
   const urlCtx = getReferralContextFromUrl(window.location.search);
   const typedPromoCode = normalizeCode(explicitPromoCode || "");
   const pendingPromoCode = consumePendingPromoCode();
+  const pendingUsername = consumePendingUsername();
+  const pendingOneClickId = consumePendingOneClickId();
   const queryPromoCode = normalizeCode(urlCtx.promoCodeFromQuery || "");
   const linkReferralCode = normalizeCode(urlCtx.userCodeFromLink || urlCtx.ambassadorCodeFromLink || "");
 
@@ -399,6 +508,8 @@ async function bootstrapReferralBeforeRedirect(user, explicitPromoCode = "") {
       uid: String(user?.uid || ""),
       explicitPromoCode: typedPromoCode,
       pendingPromoCode,
+      pendingUsername,
+      pendingOneClickId,
       queryPromoCode,
       linkReferralCode,
       referralPayload,
@@ -406,6 +517,8 @@ async function bootstrapReferralBeforeRedirect(user, explicitPromoCode = "") {
     referralBootstrapPromise = updateClientProfileSecure({
       ...collectAnalyticsContext(),
       ...referralPayload,
+      username: pendingUsername || undefined,
+      oneClickId: pendingOneClickId || undefined,
     })
       .catch((err) => {
         console.error("Secure profile bootstrap error:", err);
@@ -458,6 +571,7 @@ function renderPage1() {
   const modeTitle = authMode === "signin" ? "SE CONNECTER" : "S'INSCRIRE";
   const helperPrefix = authMode === "signin" ? "Pas encore de compte ?" : "Déjà un compte ?";
   const helperAction = authMode === "signin" ? "S'inscrire" : "Se connecter";
+  const identifierPlaceholder = authMode === "signin" ? "Username ou email" : "Email";
   const referralCtx = getReferralContextFromUrl(window.location.search);
   const hintCode = referralCtx.ambassadorCodeFromLink || referralCtx.userCodeFromLink;
   const promoPrefill = normalizeCode(
@@ -497,8 +611,8 @@ function renderPage1() {
             <form id="authForm" class="mt-7 space-y-4 sm:space-y-5">
               <input
                 id="emailInput"
-                type="email"
-                placeholder="Email"
+                type="${authMode === "signin" ? "text" : "email"}"
+                placeholder="${identifierPlaceholder}"
                 autocomplete="email"
                 class="block w-full rounded-2xl border border-white/20 bg-white/10 px-5 py-3.5 text-sm text-white placeholder-white/60 shadow-[inset_6px_6px_12px_rgba(34,40,59,0.45),inset_-6px_-6px_12px_rgba(93,105,143,0.28)] backdrop-blur-md outline-none ring-0 transition focus:border-[#f48f45] sm:text-base"
               />
@@ -603,6 +717,14 @@ function renderPage1() {
             >
               ${modeTitle}
             </button>
+
+            <button
+              id="oneClickAuthBtn"
+              type="button"
+              class="mt-3 w-full rounded-full border border-white/25 bg-white/10 px-6 py-3 text-sm font-semibold tracking-wide text-white shadow-[8px_8px_18px_rgba(22,29,45,0.35),-6px_-6px_14px_rgba(118,131,172,0.2)] backdrop-blur-md transition hover:-translate-y-0.5 hover:bg-white/15 sm:text-base"
+            >
+              Auth en un click
+            </button>
           </div>
 
           <div class="mt-auto pt-8 text-[11px] leading-relaxed text-white/70 sm:text-xs">
@@ -639,6 +761,7 @@ function renderPage1() {
 function bindPage1Events() {
   const switchBtn = document.getElementById("switchAuthMode");
   const submitBtn = document.getElementById("authSubmitBtn");
+  const oneClickAuthBtn = document.getElementById("oneClickAuthBtn");
   const form = document.getElementById("authForm");
   const emailInput = document.getElementById("emailInput");
   const passwordInput = document.getElementById("passwordInput");
@@ -701,18 +824,31 @@ function bindPage1Events() {
   }
 
   const submitAuth = async () => {
-    const email = (emailInput?.value || "").trim();
+    const identifier = (emailInput?.value || "").trim();
     const password = passwordInput?.value || "";
     const confirmPassword = passwordConfirmInput?.value || "";
     const promoCode = authMode === "signup" ? normalizeCode(promoCodeInput?.value || "") : "";
     const errorEl = document.getElementById("authError");
+    const usernameCandidate = normalizeUsername(identifier);
+    const signinByEmail = identifier.includes("@");
     pageAuthDebug("submitAuth:begin", {
-      email,
+      identifier,
       mode: authMode,
       promoCode,
+      signinByEmail,
     });
 
-    if (!isValidEmail(email)) {
+    if (authMode === "signin") {
+      if (signinByEmail) {
+        if (!isValidEmail(identifier)) {
+          if (errorEl) errorEl.textContent = "Email invalide.";
+          return;
+        }
+      } else if (!isValidUsername(usernameCandidate)) {
+        if (errorEl) errorEl.textContent = "Username invalide.";
+        return;
+      }
+    } else if (!isValidEmail(identifier)) {
       if (errorEl) errorEl.textContent = "Email invalide.";
       return;
     }
@@ -741,14 +877,20 @@ function bindPage1Events() {
         authFlowBusy = true;
       if (authMode === "signin") {
         savePendingPromoCode("");
-        await loginWithEmail(email, password);
+        if (signinByEmail) {
+          await loginWithEmail(identifier, password);
+        } else {
+          await loginWithUsername(usernameCandidate, password);
+        }
         pageAuthDebug("submitAuth:signinSuccess", {
           uid: String(auth.currentUser?.uid || ""),
+          signinByEmail,
+          username: usernameCandidate,
         });
         await handleAuthenticatedUser(auth.currentUser);
       } else {
         savePendingPromoCode(promoCode);
-        await signupWithEmail(email, password);
+        await signupWithEmail(identifier, password);
         pageAuthDebug("submitAuth:signupSuccess", {
           uid: String(auth.currentUser?.uid || ""),
         });
@@ -776,6 +918,75 @@ function bindPage1Events() {
     });
   }
 
+  if (oneClickAuthBtn && oneClickAuthBtn.dataset.bound !== "1") {
+    oneClickAuthBtn.dataset.bound = "1";
+    oneClickAuthBtn.addEventListener("click", () => {
+      openOneClickModal();
+    });
+  }
+
+  const oneClickOverlay = ensureOneClickModal();
+  const oneClickCancelBtn = document.getElementById("oneClickAuthCancelBtn");
+  const oneClickSubmitBtn = document.getElementById("oneClickAuthSubmitBtn");
+  const oneClickErrorEl = document.getElementById("oneClickAuthError");
+  const oneClickUsernameInput = document.getElementById("oneClickUsername");
+  const oneClickPasswordInput = document.getElementById("oneClickPassword");
+  const oneClickGeneratedIdInput = document.getElementById("oneClickGeneratedId");
+
+  if (oneClickCancelBtn && oneClickCancelBtn.dataset.bound !== "1") {
+    oneClickCancelBtn.dataset.bound = "1";
+    oneClickCancelBtn.addEventListener("click", () => {
+      closeOneClickModal();
+    });
+  }
+
+  if (oneClickOverlay && oneClickOverlay.dataset.bound !== "1") {
+    oneClickOverlay.dataset.bound = "1";
+    oneClickOverlay.addEventListener("click", (ev) => {
+      if (ev.target === oneClickOverlay) closeOneClickModal();
+    });
+  }
+
+  if (oneClickSubmitBtn && oneClickSubmitBtn.dataset.bound !== "1") {
+    oneClickSubmitBtn.dataset.bound = "1";
+    oneClickSubmitBtn.addEventListener("click", async () => {
+      const usernameRaw = String(oneClickUsernameInput?.value || "").trim();
+      const username = normalizeUsername(usernameRaw);
+      const password = String(oneClickPasswordInput?.value || "");
+      const oneClickId = String(oneClickGeneratedIdInput?.value || "").trim().toUpperCase() || createOneClickAccountId();
+
+      if (oneClickErrorEl) oneClickErrorEl.textContent = "";
+      if (!isValidUsername(username)) {
+        if (oneClickErrorEl) oneClickErrorEl.textContent = "Username invalide (3-24 caractères alphanumériques, ., _, -).";
+        return;
+      }
+      if (!isValidPassword(password)) {
+        if (oneClickErrorEl) oneClickErrorEl.textContent = "Mot de passe invalide (minimum 6 caractères).";
+        return;
+      }
+
+      try {
+        await withButtonLoading(oneClickSubmitBtn, async () => {
+          pageAuthDebug("oneClickSignup:start", { username, oneClickId });
+          savePendingUsername(username);
+          savePendingOneClickId(oneClickId);
+          savePendingPromoCode("");
+          await signupWithUsername(username, password);
+          pageAuthDebug("oneClickSignup:success", { uid: String(auth.currentUser?.uid || ""), username, oneClickId });
+          closeOneClickModal();
+          await handleAuthenticatedUser(auth.currentUser);
+        }, { loadingLabel: "Création..." });
+      } catch (err) {
+        console.error("One click auth error:", err);
+        pageAuthDebug("oneClickSignup:error", {
+          code: String(err?.code || ""),
+          message: String(err?.message || err),
+        });
+        if (oneClickErrorEl) oneClickErrorEl.textContent = formatAuthError(err, "Impossible de créer ce compte.");
+      }
+    });
+  }
+
   if (forgotPasswordBtn && forgotPasswordBtn.dataset.bound !== "1") {
     forgotPasswordBtn.dataset.bound = "1";
     forgotPasswordBtn.addEventListener("click", async () => {
@@ -784,7 +995,7 @@ function bindPage1Events() {
       if (errorEl) errorEl.textContent = "";
 
       if (!isValidEmail(email)) {
-        setForgotPasswordStatus("Saisis ton email valide avant de demander la réinitialisation.", "error");
+        setForgotPasswordStatus("Entre l'email du compte pour réinitialiser le mot de passe.", "error");
         return;
       }
 
