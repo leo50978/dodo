@@ -289,6 +289,27 @@ function supportMessageRecordForCallable(docSnap) {
   };
 }
 
+function mergePinnedDiscussionRecords(records = []) {
+  const byId = new Map();
+  records.forEach((record) => {
+    if (!record || typeof record !== "object") return;
+    const id = String(record.id || "").trim();
+    if (!id) return;
+    byId.set(id, record);
+  });
+  return Array.from(byId.values()).sort((left, right) => {
+    const leftPinned = left.pinned === true;
+    const rightPinned = right.pinned === true;
+    if (leftPinned !== rightPinned) return leftPinned ? -1 : 1;
+    if (leftPinned && rightPinned) {
+      const rightPinnedAt = safeSignedInt(right.pinnedAtMs);
+      const leftPinnedAt = safeSignedInt(left.pinnedAtMs);
+      if (rightPinnedAt !== leftPinnedAt) return rightPinnedAt - leftPinnedAt;
+    }
+    return safeSignedInt(left.createdAtMs) - safeSignedInt(right.createdAtMs);
+  });
+}
+
 function normalizeCode(value) {
   return String(value || "")
     .trim()
@@ -3559,6 +3580,10 @@ function buildSupportMessageRecord(actor = {}, text = "", media = null, extras =
     createdAtMs,
     expiresAtMs,
     expiresAt: admin.firestore.Timestamp.fromMillis(expiresAtMs),
+    pinned: false,
+    pinnedAtMs: 0,
+    pinnedAt: null,
+    pinnedBy: "",
     editedAtMs: 0,
     updatedAt: admin.firestore.FieldValue.serverTimestamp(),
     ...extras,
@@ -3812,6 +3837,7 @@ exports.purgeExpiredDiscussionMessages = onSchedule("every 60 minutes", async ()
 
   for (const docSnap of expiredChannelDocs) {
     const data = docSnap.data() || {};
+    if (data.pinned === true) continue;
     const expiresAtMs = safeSignedInt(data.expiresAtMs) || (safeSignedInt(data.createdAtMs) + DISCUSSION_MESSAGE_RETENTION_MS);
     if (expiresAtMs > nowMs) continue;
     try {
@@ -3827,6 +3853,7 @@ exports.purgeExpiredDiscussionMessages = onSchedule("every 60 minutes", async ()
   for (const docSnap of expiredSupportDocs) {
     const data = docSnap.data() || {};
     const threadId = String(docSnap.ref.parent?.parent?.id || "").trim();
+    if (data.pinned === true) continue;
     const expiresAtMs = safeSignedInt(data.expiresAtMs) || (safeSignedInt(data.createdAtMs) + DISCUSSION_MESSAGE_RETENTION_MS);
     if (expiresAtMs > nowMs) continue;
     try {
@@ -4418,15 +4445,22 @@ exports.getSupportMessagesSecure = publicOnCall("getSupportMessagesSecure", asyn
       safeInt(payload.limit || DISCUSSION_MESSAGES_FETCH_LIMIT) || DISCUSSION_MESSAGES_FETCH_LIMIT
     )
   );
-  const messagesSnap = await context.threadRef
-    .collection(SUPPORT_MESSAGES_SUBCOLLECTION)
-    .orderBy("createdAtMs", "desc")
-    .limit(limitValue)
-    .get();
+  const [messagesSnap, pinnedMessagesSnap] = await Promise.all([
+    context.threadRef
+      .collection(SUPPORT_MESSAGES_SUBCOLLECTION)
+      .orderBy("createdAtMs", "desc")
+      .limit(limitValue)
+      .get(),
+    context.threadRef
+      .collection(SUPPORT_MESSAGES_SUBCOLLECTION)
+      .where("pinned", "==", true)
+      .get(),
+  ]);
 
-  const messages = messagesSnap.docs
-    .map((item) => supportMessageRecordForCallable(item))
-    .reverse();
+  const messages = mergePinnedDiscussionRecords([
+    ...messagesSnap.docs.map((item) => supportMessageRecordForCallable(item)),
+    ...pinnedMessagesSnap.docs.map((item) => supportMessageRecordForCallable(item)),
+  ]);
 
   return {
     ok: true,
