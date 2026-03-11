@@ -1270,7 +1270,24 @@ async function onGameEnded(winnerSeat) {
   const currentRoomId = roomId;
   const isHost = !!(window.GameSession && window.GameSession.isHost === true);
   if (!isHost) return;
-  if (!areRoomActionsReady(currentRoomId)) return;
+  if (!areRoomActionsReady(currentRoomId)) {
+    debugMatch("onGameEnded:waitActionsReady", {
+      targetRoomId: currentRoomId,
+      winnerSeat,
+      roomStatus: String(lastRoomSnapshotData?.status || ""),
+    });
+    clearFinalizeGameTimer();
+    finalizeGameTargetRoomId = currentRoomId;
+    finalizeGameTimer = setTimeout(() => {
+      finalizeGameTimer = null;
+      if (finalizeGameTargetRoomId !== currentRoomId) return;
+      if (roomId !== currentRoomId) return;
+      onGameEnded(winnerSeat).catch((err) => {
+        console.error("[MATCH] onGameEnded retry error", err);
+      });
+    }, 150);
+    return;
+  }
   if (String(lastRoomSnapshotData?.status || "") === "ended") return;
 
   clearFinalizeGameTimer();

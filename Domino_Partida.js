@@ -171,6 +171,18 @@ var Domino_Partida = function() {
         );
     };
 
+    this.ContarFichasColocadasSeat = function(Seat) {
+        if (typeof(Seat) !== "number" || Seat < 0 || Seat > 3) return 0;
+        var Colocadas = 0;
+        var Ini = this.SeatInicio(Seat);
+        for (var i = 0; i < 7; i++) {
+            if (this.Ficha[Ini + i] && this.Ficha[Ini + i].Colocada === true) {
+                Colocadas++;
+            }
+        }
+        return Colocadas;
+    };
+
     this.PrepararSesion = function() {
         var S = (typeof(window.GameSession) !== "undefined") ? window.GameSession : null;
         this.Multijugador = (S && S.roomId) ? true : false;
@@ -963,12 +975,9 @@ var Domino_Partida = function() {
         if (this.ManoTerminada === true) return true;
 
         var SeatComprobar = (typeof(SeatReferencia) === "number") ? SeatReferencia : this.JugadorActual;
-        var Colocadas = 0;
+        var Colocadas = this.ContarFichasColocadasSeat(SeatComprobar);
         var GanadorDetectado = -1;
         var MotivoDetectado = "";
-        for (var i = 0; i < 7; i++) {
-            if (this.Ficha[(SeatComprobar * 7) + i].Colocada === true) Colocadas++;
-        }
 
         if (Colocadas === 7) {
             if (this.Multijugador === false && this.HayAnimacionColocarActiva() === true) {
@@ -1035,13 +1044,15 @@ var Domino_Partida = function() {
         if (this.ServerWinnerShown === true) return true;
         var MetaInfo = (Meta && typeof(Meta) === "object") ? Meta : { };
         var ExpectedLastActionSeq = (typeof(MetaInfo.expectedLastActionSeq) === "number") ? MetaInfo.expectedLastActionSeq : -1;
-        var DebeEsperarAccion = (ExpectedLastActionSeq >= 0 && this.SiguienteAccionSeq <= ExpectedLastActionSeq);
+        var WinnerHandVisualReady = (Motivo === "out" && this.ContarFichasColocadasSeat(GanadorSeat) >= 7);
+        var DebeEsperarAccion = (ExpectedLastActionSeq >= 0 && this.SiguienteAccionSeq <= ExpectedLastActionSeq && WinnerHandVisualReady === false);
         var DebeEsperarAnimacion = (this.HayAnimacionColocarActiva() === true);
         this.DebugLog("MarcarManoTerminadaServidor:check", {
             winnerSeat: GanadorSeat,
             reason: Motivo || "out",
             expectedLastActionSeq: ExpectedLastActionSeq,
             siguienteAccionSeq: this.SiguienteAccionSeq,
+            winnerHandVisualReady: WinnerHandVisualReady,
             debeEsperarAccion: DebeEsperarAccion,
             debeEsperarAnimacion: DebeEsperarAnimacion
         });
@@ -1053,7 +1064,8 @@ var Domino_Partida = function() {
                 reason: Motivo || "out",
                 expectedLastActionSeq: ExpectedLastActionSeq
             }, function() {
-                var ActionReady = (ExpectedLastActionSeq < 0 || this.SiguienteAccionSeq > ExpectedLastActionSeq);
+                var VisualWinnerReady = (Motivo === "out" && this.ContarFichasColocadasSeat(GanadorSeat) >= 7);
+                var ActionReady = (ExpectedLastActionSeq < 0 || this.SiguienteAccionSeq > ExpectedLastActionSeq || VisualWinnerReady === true);
                 return (this.HayAnimacionColocarActiva() === false && ActionReady === true);
             }.bind(this));
             return false;
