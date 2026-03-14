@@ -48,6 +48,10 @@ export async function ensureRoomReadySecure(payload = {}) {
   return invokeCallable("ensureRoomReady", payload, "Impossible de demarrer la partie.");
 }
 
+export async function touchRoomPresenceSecure(payload = {}) {
+  return invokeCallable("touchRoomPresence", payload, "Impossible de mettre à jour la présence.");
+}
+
 export async function ackRoomStartSeenSecure(payload = {}) {
   return invokeCallable("ackRoomStartSeen", payload, "Impossible de synchroniser le démarrage de la partie.");
 }

@@ -15,6 +15,7 @@ import { getXchangeState, ensureXchangeState } from "./xchange.js";
 import {
   joinMatchmakingSecure,
   ensureRoomReadySecure,
+  touchRoomPresenceSecure,
   ackRoomStartSeenSecure,
   leaveRoomSecure,
   finalizeGameSecure,
@@ -24,6 +25,7 @@ import {
 
 const ROOMS = "rooms";
 const TURN_LIMIT_MS = 30 * 1000;
+const PRESENCE_PING_MS = 5 * 1000;
 const ACTION_CACHE_PREFIX = "domino_actions_";
 const ROOM_DECK_CACHE_PREFIX = "domino_deck_";
 const ROOM_SETTLEMENT_PREFIX = "domino_settle_";
@@ -98,6 +100,9 @@ let waitingStartKickLastAtMs = 0;
 let turnTimer = null;
 let turnTimerKey = "";
 let turnTick = null;
+let presenceTick = null;
+let presenceRoomId = "";
+let presenceInFlight = false;
 let gameLaunched = false;
 let matchmakingBusy = false;
 let resumePromise = null;
@@ -713,6 +718,45 @@ function clearTurnTimer() {
   }
 }
 
+async function touchPresence(reason = "") {
+  const activeRoomId = String(roomId || "").trim();
+  if (!activeRoomId || !auth.currentUser) return;
+  if (presenceInFlight) return;
+  presenceInFlight = true;
+  try {
+    await touchRoomPresenceSecure({ roomId: activeRoomId });
+  } catch (err) {
+    debugMatch("presence:error", {
+      reason,
+      message: String(err && err.message ? err.message : err),
+      code: err && err.code ? String(err.code) : "",
+    });
+  } finally {
+    presenceInFlight = false;
+  }
+}
+
+function stopPresenceHeartbeat() {
+  if (presenceTick) {
+    clearInterval(presenceTick);
+    presenceTick = null;
+  }
+  presenceRoomId = "";
+  presenceInFlight = false;
+}
+
+function startPresenceHeartbeat(targetRoomId) {
+  const safeRoomId = String(targetRoomId || "").trim();
+  if (!safeRoomId) return;
+  if (presenceRoomId === safeRoomId && presenceTick) return;
+  stopPresenceHeartbeat();
+  presenceRoomId = safeRoomId;
+  touchPresence("start");
+  presenceTick = setInterval(() => {
+    touchPresence("tick");
+  }, PRESENCE_PING_MS);
+}
+
 function clearFinalizeGameTimer() {
   if (finalizeGameTimer) {
     clearTimeout(finalizeGameTimer);
@@ -849,6 +893,7 @@ function clearSubs() {
   clearLaunchRetryTimer();
   clearRehydrationRetryTimer();
   clearRoomActionsReady(roomId);
+  stopPresenceHeartbeat();
   startRevealAckInFlightId = "";
   startRevealAckDoneId = "";
   lastRoomSnapshotData = null;
@@ -1876,6 +1921,7 @@ function launchLocalGame(roomData) {
 function watchRoom(id) {
   if (roomUnsub) roomUnsub();
   const roomRef = doc(db, ROOMS, id);
+  startPresenceHeartbeat(id);
 
   roomUnsub = onSnapshot(
     roomRef,

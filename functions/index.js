@@ -63,6 +63,8 @@ const DEFAULT_GAME_STAKE_OPTIONS = Object.freeze([
 ]);
 const DEFAULT_BOT_DIFFICULTY = "expert";
 const ROOM_WAIT_MS = 15 * 1000;
+const ROOM_DISCONNECT_TAKEOVER_MS = 5 * 1000;
+const ROOM_DISCONNECT_GRACE_MS = 15 * 1000;
 const BOT_DIFFICULTY_LEVELS = new Set(["amateur", "expert", "ultra"]);
 const BOT_DIFFICULTY_LOOKAHEAD = Object.freeze({
   amateur: 0,
@@ -1234,10 +1236,23 @@ function normalizeSeatHands(raw, fallbackDeckOrder = []) {
 }
 
 function getHumanSeatSet(room = {}) {
-  return new Set(
+  const humans = new Set(
     Object.values(getRoomSeats(room))
       .map((seat) => Number(seat))
       .filter((seat) => Number.isFinite(seat) && seat >= 0 && seat < 4)
+  );
+  const takeoverSeats = getBotTakeoverSeatSet(room);
+  takeoverSeats.forEach((seat) => humans.delete(seat));
+  return humans;
+}
+
+function getBotTakeoverSeatSet(room = {}) {
+  return new Set(
+    Array.isArray(room.botTakeoverSeats)
+      ? room.botTakeoverSeats
+        .map((seat) => Number(seat))
+        .filter((seat) => Number.isFinite(seat) && seat >= 0 && seat < 4)
+      : []
   );
 }
 
@@ -2534,9 +2549,18 @@ exports.joinMatchmaking = publicOnCall("joinMatchmaking", async (request) => {
       const seatIndex = getSeatForUser(room, uid);
       if (seatIndex < 0) return null;
 
+      const nowMs = Date.now();
+      const nextPresence = room.roomPresenceMs && typeof room.roomPresenceMs === "object"
+        ? { ...room.roomPresenceMs }
+        : {};
+      nextPresence[uid] = nowMs;
+      tx.update(activeRoomRef, {
+        roomPresenceMs: nextPresence,
+        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      });
+
       const status = String(room.status || "");
       if (status === "waiting") {
-        const nowMs = Date.now();
         const humans = Array.isArray(room.playerUids) ? room.playerUids.filter(Boolean).length : safeInt(room.humanCount);
         const waitingDeadlineMs = resolveWaitingDeadlineMs(room, nowMs);
         if (safeSignedInt(room.waitingDeadlineMs) !== waitingDeadlineMs) {
@@ -2659,6 +2683,14 @@ exports.joinMatchmaking = publicOnCall("joinMatchmaking", async (request) => {
         if (playerUids.includes(uid)) {
           const seats = currentSeats;
           const seatIndex = typeof seats[uid] === "number" ? seats[uid] : 0;
+          const nextPresence = room.roomPresenceMs && typeof room.roomPresenceMs === "object"
+            ? { ...room.roomPresenceMs }
+            : {};
+          nextPresence[uid] = nowMs;
+          tx.update(roomRef, {
+            roomPresenceMs: nextPresence,
+            updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+          });
           const privateDeckOrder = room.status === "playing"
             ? await readPrivateDeckOrderForRoom(roomRef.id)
             : [];
@@ -2727,12 +2759,17 @@ exports.joinMatchmaking = publicOnCall("joinMatchmaking", async (request) => {
           [uid]: seatIndex,
         };
         const nextHumans = nextPlayerUids.filter(Boolean).length;
+        const nextPresence = room.roomPresenceMs && typeof room.roomPresenceMs === "object"
+          ? { ...room.roomPresenceMs }
+          : {};
+        nextPresence[uid] = nowMs;
 
         const updates = {
           playerUids: nextPlayerUids,
           playerNames: nextPlayerNames,
           playerEmails: admin.firestore.FieldValue.delete(),
           seats: nextSeats,
+          roomPresenceMs: nextPresence,
           humanCount: nextHumans,
           botCount: Math.max(0, 4 - nextHumans),
           botDifficulty: configuredBotDifficulty,
@@ -2833,6 +2870,14 @@ exports.joinMatchmaking = publicOnCall("joinMatchmaking", async (request) => {
           if (playerUids.includes(uid)) {
             const currentSeats = room.seats && typeof room.seats === "object" ? room.seats : {};
             const seatIndex = typeof currentSeats[uid] === "number" ? currentSeats[uid] : 0;
+            const nextPresence = room.roomPresenceMs && typeof room.roomPresenceMs === "object"
+              ? { ...room.roomPresenceMs }
+              : {};
+            nextPresence[uid] = nowMs;
+            tx.update(openRoomRef, {
+              roomPresenceMs: nextPresence,
+              updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+            });
             return {
               ok: true,
               resumed: true,
@@ -2885,6 +2930,10 @@ exports.joinMatchmaking = publicOnCall("joinMatchmaking", async (request) => {
                   [uid]: seatIndex,
                 };
                 const nextHumans = nextPlayerUids.filter(Boolean).length;
+                const nextPresence = room.roomPresenceMs && typeof room.roomPresenceMs === "object"
+                  ? { ...room.roomPresenceMs }
+                  : {};
+                nextPresence[uid] = nowMs;
 
                 if (nextHumans >= 4) {
                   clearMatchmakingPool(tx, poolRef);
@@ -2915,6 +2964,7 @@ exports.joinMatchmaking = publicOnCall("joinMatchmaking", async (request) => {
                   playerNames: nextPlayerNames,
                   playerEmails: admin.firestore.FieldValue.delete(),
                   seats: nextSeats,
+                  roomPresenceMs: nextPresence,
                   humanCount: nextHumans,
                   botCount: Math.max(0, 4 - nextHumans),
                   botDifficulty: configuredBotDifficulty,
@@ -2985,6 +3035,7 @@ exports.joinMatchmaking = publicOnCall("joinMatchmaking", async (request) => {
       blockedRejoinUids: [],
       humanCount: 1,
       seats: { [uid]: 0 },
+      roomPresenceMs: { [uid]: nowMs },
       botCount: 3,
       botDifficulty: configuredBotDifficulty,
       startRevealPending: false,
@@ -3104,6 +3155,139 @@ exports.ensureRoomReady = publicOnCall("ensureRoomReady", async (request) => {
   return startResult;
 });
 
+exports.touchRoomPresence = publicOnCall("touchRoomPresence", async (request) => {
+  const { uid } = assertAuth(request);
+  const payload = request.data && typeof request.data === "object" ? request.data : {};
+  const roomId = String(payload.roomId || "").trim();
+
+  if (!roomId) {
+    throw new HttpsError("invalid-argument", "roomId requis.");
+  }
+
+  const roomRef = db.collection(ROOMS_COLLECTION).doc(roomId);
+  let shouldNudgeBots = false;
+
+  const result = await db.runTransaction(async (tx) => {
+    const roomSnap = await tx.get(roomRef);
+    if (!roomSnap.exists) {
+      throw new HttpsError("not-found", "Salle introuvable.");
+    }
+
+    const room = roomSnap.data() || {};
+    const seatIndex = getSeatForUser(room, uid);
+    if (seatIndex < 0) {
+      throw new HttpsError("permission-denied", "Tu ne fais pas partie de cette salle.");
+    }
+
+    const nowMs = Date.now();
+    const currentPresence = room.roomPresenceMs && typeof room.roomPresenceMs === "object"
+      ? { ...room.roomPresenceMs }
+      : {};
+    currentPresence[uid] = nowMs;
+
+    const playerUids = Array.from({ length: 4 }, (_, idx) => String((room.playerUids || [])[idx] || ""));
+    const playerNames = Array.from({ length: 4 }, (_, idx) => String((room.playerNames || [])[idx] || ""));
+    const seats = { ...getRoomSeats(room) };
+    const takeoverSeats = getBotTakeoverSeatSet(room);
+    const graceUntil = room.botGraceUntilMs && typeof room.botGraceUntilMs === "object"
+      ? { ...room.botGraceUntilMs }
+      : {};
+    const blockedRejoinUids = Array.from(getBlockedRejoinSet(room));
+
+    if (takeoverSeats.has(seatIndex)) {
+      takeoverSeats.delete(seatIndex);
+      delete graceUntil[String(seatIndex)];
+    }
+
+    let removedAny = false;
+
+    for (let seat = 0; seat < 4; seat += 1) {
+      const seatUid = String(playerUids[seat] || "").trim();
+      if (!seatUid || seatUid === uid) continue;
+
+      const lastSeen = safeSignedInt(currentPresence[seatUid]);
+      if (lastSeen <= 0) continue;
+
+      const offlineForMs = nowMs - lastSeen;
+      if (offlineForMs < ROOM_DISCONNECT_TAKEOVER_MS) continue;
+
+      if (!takeoverSeats.has(seat)) {
+        takeoverSeats.add(seat);
+        graceUntil[String(seat)] = lastSeen + ROOM_DISCONNECT_GRACE_MS;
+      }
+
+      const seatGraceUntil = safeSignedInt(graceUntil[String(seat)]);
+      if (seatGraceUntil > 0 && nowMs > seatGraceUntil) {
+        removedAny = true;
+        playerUids[seat] = "";
+        playerNames[seat] = String(room.status || "") === "playing" ? botSeatLabel(seat) : "";
+        delete seats[seatUid];
+        delete currentPresence[seatUid];
+        takeoverSeats.delete(seat);
+        delete graceUntil[String(seat)];
+        if (!blockedRejoinUids.includes(seatUid)) {
+          blockedRejoinUids.push(seatUid);
+        }
+      }
+    }
+
+    const updates = {
+      roomPresenceMs: currentPresence,
+      botTakeoverSeats: Array.from(takeoverSeats),
+      updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+    };
+
+    if (Object.keys(graceUntil).length > 0) {
+      updates.botGraceUntilMs = graceUntil;
+    } else {
+      updates.botGraceUntilMs = admin.firestore.FieldValue.delete();
+    }
+
+    if (removedAny) {
+      const humans = playerUids.filter(Boolean).length;
+      updates.playerUids = playerUids;
+      updates.playerNames = playerNames;
+      updates.seats = seats;
+      updates.humanCount = humans;
+      updates.botCount = Math.max(0, 4 - humans);
+      updates.blockedRejoinUids = blockedRejoinUids;
+      updates.playerEmails = admin.firestore.FieldValue.delete();
+    }
+
+    const effectiveRoom = {
+      ...room,
+      playerUids: updates.playerUids || room.playerUids,
+      playerNames: updates.playerNames || room.playerNames,
+      seats: updates.seats || room.seats,
+      botTakeoverSeats: updates.botTakeoverSeats,
+    };
+
+    if (String(room.status || "") === "playing" && room.startRevealPending !== true) {
+      const currentPlayerSeat = safeInt(room.currentPlayer);
+      if (currentPlayerSeat >= 0 && currentPlayerSeat < 4 && !isSeatHuman(effectiveRoom, currentPlayerSeat)) {
+        shouldNudgeBots = true;
+      }
+    }
+
+    tx.update(roomRef, updates);
+
+    return {
+      ok: true,
+      roomId: roomRef.id,
+      seatIndex,
+      nowMs,
+      removed: removedAny,
+      takeoverCount: updates.botTakeoverSeats.length,
+    };
+  });
+
+  if (shouldNudgeBots) {
+    await processPendingBotTurns(roomId);
+  }
+
+  return result;
+});
+
 exports.ackRoomStartSeen = publicOnCall("ackRoomStartSeen", async (request) => {
   const { uid } = assertAuth(request);
   const payload = request.data && typeof request.data === "object" ? request.data : {};
@@ -3121,8 +3305,13 @@ exports.ackRoomStartSeen = publicOnCall("ackRoomStartSeen", async (request) => {
     }
 
     const room = roomSnap.data() || {};
+    const botTakeoverSeats = getBotTakeoverSeatSet(room);
     const humanUids = Array.isArray(room.playerUids)
-      ? room.playerUids.map((item) => String(item || "").trim()).filter(Boolean)
+      ? room.playerUids
+        .map((item) => String(item || "").trim())
+        .map((value, idx) => ({ value, idx }))
+        .filter((item) => item.value && !botTakeoverSeats.has(item.idx))
+        .map((item) => item.value)
       : [];
     const ackUids = Array.isArray(room.startRevealAckUids)
       ? room.startRevealAckUids.map((item) => String(item || "").trim()).filter(Boolean)
@@ -3229,6 +3418,19 @@ exports.leaveRoom = publicOnCall("leaveRoom", async (request) => {
     if (!blockedRejoinUids.includes(uid)) {
       blockedRejoinUids.push(uid);
     }
+    const nextPresence = room.roomPresenceMs && typeof room.roomPresenceMs === "object"
+      ? { ...room.roomPresenceMs }
+      : {};
+    delete nextPresence[uid];
+    const nextBotTakeoverSeats = Array.isArray(room.botTakeoverSeats)
+      ? room.botTakeoverSeats
+        .map((seat) => Number(seat))
+        .filter((seat) => Number.isFinite(seat) && seat >= 0 && seat < 4 && seat !== seatIndex)
+      : [];
+    const nextGraceUntil = room.botGraceUntilMs && typeof room.botGraceUntilMs === "object"
+      ? { ...room.botGraceUntilMs }
+      : {};
+    delete nextGraceUntil[String(seatIndex)];
 
     const humans = nextPlayerUids.filter(Boolean).length;
     if (humans <= 0) {
@@ -3240,6 +3442,9 @@ exports.leaveRoom = publicOnCall("leaveRoom", async (request) => {
         blockedRejoinUids,
         playerEmails: admin.firestore.FieldValue.delete(),
         seats: {},
+        roomPresenceMs: nextPresence,
+        botTakeoverSeats: nextBotTakeoverSeats,
+        botGraceUntilMs: Object.keys(nextGraceUntil).length > 0 ? nextGraceUntil : admin.firestore.FieldValue.delete(),
         humanCount: 0,
         botCount: 4,
         updatedAt: admin.firestore.FieldValue.serverTimestamp(),
@@ -3265,6 +3470,9 @@ exports.leaveRoom = publicOnCall("leaveRoom", async (request) => {
       blockedRejoinUids,
       playerEmails: admin.firestore.FieldValue.delete(),
       seats: nextSeats,
+      roomPresenceMs: nextPresence,
+      botTakeoverSeats: nextBotTakeoverSeats,
+      botGraceUntilMs: Object.keys(nextGraceUntil).length > 0 ? nextGraceUntil : admin.firestore.FieldValue.delete(),
       humanCount: humans,
       botCount: nextBotCount,
       startRevealAckUids: nextAckUids,
