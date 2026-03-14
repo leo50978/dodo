@@ -81,7 +81,7 @@ DominoThree.prototype = Object.assign( Object.create(ObjetoCanvas.prototype) , {
         if (typeof(this.Camara) === "undefined") return;
         this.EsMovilVisual = this.EsPantallaMovil();
         var portrait = (window.innerHeight > window.innerWidth);
-        var mobileCameraBackOffset = 0.7;
+        var mobileCameraBackOffset = 1.1;
         var distancia = 10;
         var altura = 10;
         var fov = 75;
