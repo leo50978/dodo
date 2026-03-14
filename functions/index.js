@@ -2414,6 +2414,10 @@ function buildStartedRoomTransaction(tx, roomRefDoc, room = {}, options = {}) {
   tx.set(gameStateRef(roomRefDoc.id), buildGameStateWrite(finalState), { merge: true });
 
   const updates = {
+    playerUids: Array.isArray(room.playerUids) ? room.playerUids : ["", "", "", ""],
+    playerNames: Array.isArray(room.playerNames) ? room.playerNames : ["", "", "", ""],
+    seats: getRoomSeats(room),
+    humanCount: humans,
     status: finalState.winnerSeat >= 0 ? "ended" : "playing",
     startRevealPending: finalState.winnerSeat < 0,
     startRevealAckUids: [],
@@ -2645,8 +2649,19 @@ exports.joinMatchmaking = publicOnCall("joinMatchmaking", async (request) => {
         return left - right;
       });
 
-    for (const candidate of waitingDocs) {
-      const roomRef = candidate.ref;
+    const waitingRoomRefs = waitingDocs.map((docSnap) => docSnap.ref);
+    let openRoomId = "";
+    try {
+      const poolSnap = await poolRef.get();
+      openRoomId = String(poolSnap.exists ? (poolSnap.data() || {}).openRoomId || "" : "").trim();
+    } catch (_) {
+      openRoomId = "";
+    }
+    if (openRoomId && !waitingRoomRefs.some((ref) => ref.id === openRoomId)) {
+      waitingRoomRefs.unshift(db.collection(ROOMS_COLLECTION).doc(openRoomId));
+    }
+
+    for (const roomRef of waitingRoomRefs) {
       try {
         const joined = await db.runTransaction(async (tx) => {
         const [roomSnap, walletSnap] = await Promise.all([
