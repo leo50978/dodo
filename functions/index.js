@@ -4420,6 +4420,128 @@ exports.purgeExpiredDiscussionMessages = onSchedule("every 60 minutes", async ()
   }));
 });
 
+exports.sweepRoomPresence = onSchedule("every 1 minutes", async () => {
+  const nowMs = Date.now();
+  const roomsSnap = await db
+    .collection(ROOMS_COLLECTION)
+    .where("status", "in", ["waiting", "playing"])
+    .limit(200)
+    .get();
+
+  const roomsToNudge = [];
+
+  for (const docSnap of roomsSnap.docs) {
+    const roomId = docSnap.id;
+    try {
+      const result = await db.runTransaction(async (tx) => {
+        const freshSnap = await tx.get(docSnap.ref);
+        if (!freshSnap.exists) return { changed: false };
+
+        const room = freshSnap.data() || {};
+        const playerUids = Array.from({ length: 4 }, (_, idx) => String((room.playerUids || [])[idx] || ""));
+        if (!playerUids.some(Boolean)) return { changed: false };
+
+        const currentPresence = room.roomPresenceMs && typeof room.roomPresenceMs === "object"
+          ? { ...room.roomPresenceMs }
+          : {};
+        const playerNames = Array.from({ length: 4 }, (_, idx) => String((room.playerNames || [])[idx] || ""));
+        const seats = { ...getRoomSeats(room) };
+        const takeoverSeats = getBotTakeoverSeatSet(room);
+        const graceUntil = room.botGraceUntilMs && typeof room.botGraceUntilMs === "object"
+          ? { ...room.botGraceUntilMs }
+          : {};
+        const blockedRejoinUids = Array.from(getBlockedRejoinSet(room));
+
+        let removedAny = false;
+        let changed = false;
+
+        for (let seat = 0; seat < 4; seat += 1) {
+          const seatUid = String(playerUids[seat] || "").trim();
+          if (!seatUid) continue;
+
+          const lastSeen = safeSignedInt(currentPresence[seatUid]);
+          if (lastSeen <= 0) continue;
+
+          const offlineForMs = nowMs - lastSeen;
+          if (offlineForMs < ROOM_DISCONNECT_TAKEOVER_MS) continue;
+
+          if (!takeoverSeats.has(seat)) {
+            takeoverSeats.add(seat);
+            graceUntil[String(seat)] = lastSeen + ROOM_DISCONNECT_GRACE_MS;
+            changed = true;
+          }
+
+          const seatGraceUntil = safeSignedInt(graceUntil[String(seat)]);
+          if (seatGraceUntil > 0 && nowMs > seatGraceUntil) {
+            removedAny = true;
+            changed = true;
+            playerUids[seat] = "";
+            playerNames[seat] = String(room.status || "") === "playing" ? botSeatLabel(seat) : "";
+            delete seats[seatUid];
+            delete currentPresence[seatUid];
+            takeoverSeats.delete(seat);
+            delete graceUntil[String(seat)];
+            if (!blockedRejoinUids.includes(seatUid)) {
+              blockedRejoinUids.push(seatUid);
+            }
+          }
+        }
+
+        if (!changed && !removedAny) return { changed: false };
+
+        const updates = {
+          roomPresenceMs: currentPresence,
+          botTakeoverSeats: Array.from(takeoverSeats),
+          updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+        };
+
+        if (Object.keys(graceUntil).length > 0) {
+          updates.botGraceUntilMs = graceUntil;
+        } else {
+          updates.botGraceUntilMs = admin.firestore.FieldValue.delete();
+        }
+
+        if (removedAny) {
+          const humans = playerUids.filter(Boolean).length;
+          updates.playerUids = playerUids;
+          updates.playerNames = playerNames;
+          updates.seats = seats;
+          updates.humanCount = humans;
+          updates.botCount = Math.max(0, 4 - humans);
+          updates.blockedRejoinUids = blockedRejoinUids;
+          updates.playerEmails = admin.firestore.FieldValue.delete();
+        }
+
+        const effectiveRoom = {
+          ...room,
+          playerUids: updates.playerUids || room.playerUids,
+          playerNames: updates.playerNames || room.playerNames,
+          seats: updates.seats || room.seats,
+          botTakeoverSeats: updates.botTakeoverSeats,
+        };
+
+        const shouldNudgeBots = String(room.status || "") === "playing"
+          && room.startRevealPending !== true
+          && Number.isFinite(safeInt(room.currentPlayer))
+          && !isSeatHuman(effectiveRoom, safeInt(room.currentPlayer));
+
+        tx.update(docSnap.ref, updates);
+        return { changed: true, shouldNudgeBots };
+      });
+
+      if (result?.shouldNudgeBots === true) {
+        roomsToNudge.push(roomId);
+      }
+    } catch (error) {
+      console.warn("[SWEEP_PRESENCE]", roomId, error?.message || error);
+    }
+  }
+
+  for (const targetRoomId of roomsToNudge) {
+    await processPendingBotTurns(targetRoomId);
+  }
+});
+
 async function getSettingsSnapshotData() {
   const data = await readRawPublicAppSettings();
   return normalizePublicAppSettings(data);
