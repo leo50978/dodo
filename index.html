@@ -299,6 +299,135 @@
           pointer-events: none !important;
         }
       }
+
+      .welcome-modal {
+        position: fixed;
+        inset: 0;
+        z-index: 4200;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        padding: 24px 16px max(24px, env(safe-area-inset-bottom));
+      }
+
+      .welcome-modal.hidden {
+        display: none;
+      }
+
+      .welcome-modal__backdrop {
+        position: absolute;
+        inset: 0;
+        background: rgba(18, 24, 38, 0.62);
+        backdrop-filter: blur(6px);
+      }
+
+      .welcome-modal__card {
+        position: relative;
+        width: min(520px, 92vw);
+        border-radius: 24px;
+        border: 1px solid rgba(255, 255, 255, 0.16);
+        background: rgba(63, 71, 102, 0.92);
+        padding: 22px 20px 20px;
+        box-shadow: 16px 18px 40px rgba(18, 24, 38, 0.45), -10px -10px 24px rgba(110, 126, 165, 0.16);
+        color: #fff;
+      }
+
+      .welcome-modal__badge {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        border-radius: 999px;
+        border: 1px solid rgba(245, 124, 0, 0.4);
+        background: rgba(245, 124, 0, 0.14);
+        padding: 6px 12px;
+        font-size: 12px;
+        font-weight: 600;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+        color: #ffd5a3;
+      }
+
+      .welcome-modal__title {
+        margin: 14px 0 8px;
+        font-size: clamp(1.3rem, 4.2vw, 1.8rem);
+        line-height: 1.2;
+        font-weight: 700;
+      }
+
+      .welcome-modal__text {
+        margin: 0 0 12px;
+        font-size: 0.98rem;
+        line-height: 1.55;
+        color: rgba(255, 255, 255, 0.88);
+      }
+
+      .welcome-modal__text strong {
+        color: #fff;
+        font-weight: 700;
+      }
+
+      .welcome-modal__cta {
+        margin-top: 16px;
+        display: flex;
+        flex-direction: column;
+        gap: 10px;
+      }
+
+      .welcome-modal__btn {
+        display: inline-flex;
+        min-height: 46px;
+        align-items: center;
+        justify-content: center;
+        border-radius: 14px;
+        background: #f57c00;
+        color: #fff;
+        font-weight: 600;
+        text-decoration: none;
+        box-shadow: 8px 8px 18px rgba(163, 82, 27, 0.4), -6px -6px 14px rgba(255, 175, 102, 0.14);
+      }
+
+      .welcome-modal__ghost {
+        display: inline-flex;
+        min-height: 44px;
+        align-items: center;
+        justify-content: center;
+        border-radius: 14px;
+        border: 1px solid rgba(255, 255, 255, 0.2);
+        background: rgba(255, 255, 255, 0.06);
+        color: #fff;
+        font-weight: 600;
+      }
+
+      .welcome-modal__close {
+        position: absolute;
+        top: 14px;
+        right: 14px;
+        height: 34px;
+        width: 34px;
+        border-radius: 50%;
+        border: 1px solid rgba(255, 255, 255, 0.24);
+        background: rgba(15, 23, 42, 0.35);
+        color: #fff;
+        font-size: 18px;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+      }
+
+      @media (min-width: 720px) {
+        .welcome-modal__card {
+          padding: 26px 26px 24px;
+        }
+
+        .welcome-modal__cta {
+          flex-direction: row;
+        }
+
+        .welcome-modal__btn,
+        .welcome-modal__ghost {
+          flex: 1;
+        }
+      }
     </style>
   </head>
   <body class="m-0 p-0">
@@ -338,7 +467,63 @@
         </section>
       </main>
     </div>
+    <div id="welcomeDepositModal" class="welcome-modal hidden" role="dialog" aria-modal="true">
+      <div class="welcome-modal__backdrop" data-close></div>
+      <div class="welcome-modal__card" aria-labelledby="welcomeDepositTitle">
+        <button class="welcome-modal__close" type="button" aria-label="Fermer" data-close>×</button>
+        <div class="welcome-modal__badge">Bienvenue</div>
+        <h2 id="welcomeDepositTitle" class="welcome-modal__title">
+          Reçois 25&nbsp;Gdes de bonus de bienvenue
+        </h2>
+        <p class="welcome-modal__text">
+          Pour obtenir ton bonus, suis simplement les étapes de dépôt. C’est rapide et guidé.
+        </p>
+        <p class="welcome-modal__text">
+          Écris à l’assistance sur WhatsApp au <strong>+509&nbsp;4175&nbsp;2992</strong> pour commencer.
+          Tu recevras une image d’identification et des instructions claires pour recevoir ton argent.
+        </p>
+        <div class="welcome-modal__cta">
+          <a class="welcome-modal__btn" href="https://wa.me/50941752992" target="_blank" rel="noopener">
+            Écrire sur WhatsApp
+          </a>
+          <button class="welcome-modal__ghost" type="button" data-close>J’ai compris</button>
+        </div>
+      </div>
+    </div>
     <script src="https://cdn.tailwindcss.com"></script>
     <script type="module" src="./home.js"></script>
+    <script>
+      (() => {
+        const storageKey = "dl_welcome_deposit_v1";
+        const modal = document.getElementById("welcomeDepositModal");
+        if (!modal) return;
+        const closeButtons = modal.querySelectorAll("[data-close]");
+        const showModal = () => {
+          modal.classList.remove("hidden");
+          modal.setAttribute("aria-hidden", "false");
+        };
+        const hideModal = () => {
+          modal.classList.add("hidden");
+          modal.setAttribute("aria-hidden", "true");
+        };
+        let alreadySeen = false;
+        try {
+          alreadySeen = localStorage.getItem(storageKey) === "1";
+        } catch (err) {
+          alreadySeen = false;
+        }
+        if (!alreadySeen) {
+          try {
+            localStorage.setItem(storageKey, "1");
+          } catch (err) {
+            /* ignore */
+          }
+          showModal();
+        } else {
+          modal.setAttribute("aria-hidden", "true");
+        }
+        closeButtons.forEach((btn) => btn.addEventListener("click", hideModal));
+      })();
+    </script>
   </body>
 </html>
