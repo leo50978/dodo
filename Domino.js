@@ -110,8 +110,12 @@ DominoThree.prototype = Object.assign( Object.create(ObjetoCanvas.prototype) , {
 
         if (this.Context && typeof(this.Context.setPixelRatio) === "function") {
             var dpr = (typeof(window.devicePixelRatio) === "number" && window.devicePixelRatio > 0) ? window.devicePixelRatio : 1;
-            var maxDpr = (this.EsMovilVisual === true) ? 1.15 : 2;
+            var maxDpr = (this.EsMovilVisual === true) ? 1.55 : 2;
             this.Context.setPixelRatio(Math.min(dpr, maxDpr));
+        }
+
+        if (typeof(this.ActualizarCalidadTexturas) === "function") {
+            this.ActualizarCalidadTexturas();
         }
     },
     // FunciÃ³n que se llama al hacer scroll en el documento    
@@ -177,6 +181,24 @@ DominoThree.prototype = Object.assign( Object.create(ObjetoCanvas.prototype) , {
     DragActiva      : false,
     DragInfo        : { idx : -1, rama : "", ox : 0, oz : 0 },
 //    Opciones        : new Domino_Opciones(),
+    ActualizarCalidadTexturas : function() {
+        if (!this.Context || !this.Context.capabilities || !Texturas || !Array.isArray(Texturas.Textura)) return;
+
+        var maxAnisotropy = 1;
+        if (typeof(this.Context.capabilities.getMaxAnisotropy) === "function") {
+            maxAnisotropy = Math.max(1, this.Context.capabilities.getMaxAnisotropy());
+        }
+        var targetAnisotropy = (this.EsMovilVisual === true) ? Math.min(maxAnisotropy, 4) : Math.min(maxAnisotropy, 8);
+
+        for (var i = 0; i < Texturas.Textura.length; i++) {
+            if (!Texturas.Textura[i]) continue;
+            Texturas.Textura[i].magFilter = THREE.LinearFilter;
+            Texturas.Textura[i].minFilter = THREE.LinearMipmapLinearFilter;
+            Texturas.Textura[i].generateMipmaps = true;
+            Texturas.Textura[i].anisotropy = targetAnisotropy;
+            Texturas.Textura[i].needsUpdate = true;
+        }
+    },
     
     // FunciÃ³n que inicia el ejemplo
     Iniciar         : function() {       
