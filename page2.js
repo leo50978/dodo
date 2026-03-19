@@ -11,9 +11,12 @@ import { auth, db, collection, query, orderBy, limit, onSnapshot, doc, setDoc, s
 const CHAT_COLLECTION = "globalChannelMessages";
 const SUPPORT_THREADS_COLLECTION = "supportThreads";
 const AUTH_SUCCESS_NOTICE_STORAGE_KEY = "domino_auth_success_notice_v1";
+const TOURNAMENT_INTRO_SEEN_STORAGE_KEY = "domino_tournament_intro_seen_v1";
 const DEFAULT_STAKE_REWARD_MULTIPLIER = 3;
 const PAGE2_BOOTSTRAP_MIN_MS = 650;
 const PAGE2_BOOTSTRAP_TIMEOUT_MS = 2600;
+const PAGE2_HERO_IMAGES = Object.freeze(["hero.jpg", "hero1.jpg", "hero2.jpg"]);
+const PAGE2_HERO_ROTATION_MS = 10000;
 const DEFAULT_GAME_STAKE_OPTIONS = Object.freeze([
   Object.freeze({ id: "stake_100", stakeDoes: 100, rewardDoes: 300, enabled: true, sortOrder: 10 }),
   Object.freeze({ id: "stake_500", stakeDoes: 500, rewardDoes: 1500, enabled: false, sortOrder: 20 }),
@@ -25,15 +28,15 @@ let page2ChatSeenUnsub = null;
 let page2SupportThreadUnsub = null;
 let page2PresenceVisibilityBound = false;
 let page2PresenceUser = null;
+let page2PresenceTick = null;
 const profileBootstrapInFlightByUid = new Map();
 let page2BootstrapRunId = 0;
-let profileModulePromise = null;
 let soldeModulePromise = null;
 let xchangeModulePromise = null;
-let profileUiReadyRunId = 0;
 let soldeUiReadyRunId = 0;
-let profileUiReadyPromise = null;
 let soldeUiReadyPromise = null;
+let page2HeroRotationTimer = null;
+const PAGE2_PRESENCE_PING_MS = 60 * 1000;
 
 async function runPage2Animations() {
   try {
@@ -58,13 +61,6 @@ async function runPage2Animations() {
   } catch (error) {
     console.warn("[PAGE2] animation runtime unavailable", error);
   }
-}
-
-async function loadProfileModule() {
-  if (!profileModulePromise) {
-    profileModulePromise = import("./profil.js");
-  }
-  return profileModulePromise;
 }
 
 async function loadSoldeModule() {
@@ -99,18 +95,24 @@ function scheduleNonCriticalTask(runId, task, delayMs = 240) {
   window.setTimeout(execute, Math.max(80, Number(delayMs) || 240));
 }
 
-async function ensureProfileUiReady(triggerSelector = "#p2Profile") {
-  if (profileUiReadyRunId === page2BootstrapRunId && profileUiReadyPromise) {
-    return profileUiReadyPromise;
+function openProfilePage() {
+  showGlobalLoading("Ouverture du profil...");
+  window.location.href = "./profil.html";
+}
+
+function hasSeenTournamentIntro() {
+  try {
+    return localStorage.getItem(TOURNAMENT_INTRO_SEEN_STORAGE_KEY) === "1";
+  } catch (_) {
+    return false;
   }
-  profileUiReadyRunId = page2BootstrapRunId;
-  profileUiReadyPromise = loadProfileModule().then((profileModule) => {
-    profileModule.mountProfileModal({ triggerSelector });
-    const trigger = document.querySelector(triggerSelector);
-    if (trigger) trigger.dataset.modalBootstrapReady = "1";
-    return profileModule;
-  });
-  return profileUiReadyPromise;
+}
+
+function markTournamentIntroSeen() {
+  try {
+    localStorage.setItem(TOURNAMENT_INTRO_SEEN_STORAGE_KEY, "1");
+  } catch (_) {
+  }
 }
 
 async function ensureSoldeUiReady(triggerSelector = "#soldBadge") {
@@ -156,6 +158,40 @@ function bindDeferredModalTrigger(trigger, ensureReady, loadingMessage) {
 
 function getPage2Shell() {
   return document.getElementById("domino-app-shell") || document.body;
+}
+
+function stopPage2HeroRotation() {
+  if (!page2HeroRotationTimer) return;
+  window.clearInterval(page2HeroRotationTimer);
+  page2HeroRotationTimer = null;
+}
+
+function preloadPage2HeroImages() {
+  PAGE2_HERO_IMAGES.forEach((src) => {
+    const img = new Image();
+    img.src = src;
+  });
+}
+
+function initPage2HeroRotation() {
+  const heroImage = document.getElementById("page2HeroImage");
+  stopPage2HeroRotation();
+  if (!heroImage) return;
+
+  preloadPage2HeroImages();
+  let activeIndex = 0;
+  heroImage.src = PAGE2_HERO_IMAGES[activeIndex];
+
+  if (PAGE2_HERO_IMAGES.length <= 1) return;
+
+  page2HeroRotationTimer = window.setInterval(() => {
+    heroImage.style.opacity = "0";
+    window.setTimeout(() => {
+      activeIndex = (activeIndex + 1) % PAGE2_HERO_IMAGES.length;
+      heroImage.src = PAGE2_HERO_IMAGES[activeIndex];
+      heroImage.style.opacity = "1";
+    }, 320);
+  }, PAGE2_HERO_ROTATION_MS);
 }
 
 function waitForMinimumDelay(ms = PAGE2_BOOTSTRAP_MIN_MS) {
@@ -325,6 +361,27 @@ async function touchClientPresence(user) {
   }
 }
 
+function stopPage2PresenceHeartbeat() {
+  if (page2PresenceTick) {
+    clearInterval(page2PresenceTick);
+    page2PresenceTick = null;
+  }
+}
+
+function startPage2PresenceHeartbeat(user) {
+  const uid = String(user?.uid || "");
+  if (!uid) {
+    stopPage2PresenceHeartbeat();
+    return;
+  }
+  stopPage2PresenceHeartbeat();
+  touchClientPresence(user);
+  page2PresenceTick = setInterval(() => {
+    if (document.visibilityState !== "visible") return;
+    touchClientPresence(page2PresenceUser || user);
+  }, PAGE2_PRESENCE_PING_MS);
+}
+
 function ensureClientReferralBootstrap(user) {
   const uid = String(user?.uid || "");
   if (!uid) return Promise.resolve(null);
@@ -458,6 +515,7 @@ function initAgentSupportAlert(user) {
 
 export function renderPage2(user, options = {}) {
   stopPage2ChatWatchers();
+  stopPage2HeroRotation();
   const pageShell = getPage2Shell();
   const runId = ++page2BootstrapRunId;
   page2PresenceUser = user || null;
@@ -468,7 +526,9 @@ export function renderPage2(user, options = {}) {
   const isAuthenticated = Boolean(incomingUid);
 
   if (hasConfirmedAuth) {
-    touchClientPresence(page2PresenceUser);
+    startPage2PresenceHeartbeat(page2PresenceUser);
+  } else {
+    stopPage2PresenceHeartbeat();
   }
 
   const headerActions = isAuthenticated
@@ -489,15 +549,15 @@ export function renderPage2(user, options = {}) {
     `;
 
   pageShell.innerHTML = `
-    <div id="page2Root" class="min-h-[100dvh] bg-[#3F4766] px-0 pt-0 pb-[max(2rem,env(safe-area-inset-bottom))] text-white font-['Poppins'] overflow-x-hidden">
-      <div class="w-full">
-        <section class="relative h-[80dvh] min-h-[420px] w-full overflow-hidden rounded-none">
-          <img src="hero.jpg" alt="Hero" width="600" height="600" fetchpriority="high" decoding="async" class="h-full w-full object-cover" />
-          <div class="absolute inset-0 bg-[#3F4766]/55 backdrop-blur-[1px]"></div>
-          <header class="fixed inset-x-0 top-3 z-40 px-3 sm:top-4 sm:px-5">
+    <div id="page2Root" class="h-[100dvh] bg-[#3F4766] px-0 pt-0 text-white font-['Poppins'] overflow-hidden">
+      <div class="flex h-full w-full flex-col overflow-hidden">
+        <section class="relative min-h-0 flex-1 w-full overflow-hidden rounded-none bg-[#3F4766]">
+          <img id="page2HeroImage" src="hero.jpg" alt="Hero" width="600" height="600" fetchpriority="high" decoding="async" class="h-full w-full object-contain" style="opacity:1;transition:opacity 700ms ease;object-position:center;" />
+          <div class="absolute inset-0"></div>
+          <header class="fixed inset-x-0 top-0 z-40 px-3 sm:top-0 sm:px-5">
             <div class="mx-auto flex w-full max-w-[1080px] items-center justify-between px-1 py-1 sm:px-2 sm:py-1.5">
               <div class="flex items-center">
-                <img id="p2Logo" src="./logo.png" alt="Logo" width="500" height="500" decoding="async" class="h-auto w-[128px] max-w-full object-contain sm:w-[148px]" />
+                <img id="p2Logo" src="./logo.png" alt="Logo" width="500" height="500" decoding="async" class="h-auto w-[96px] max-w-full object-contain sm:w-[148px]" />
                 <span id="p2LogoFallback" class="hidden text-2xl font-semibold tracking-tight text-white/95">Dominoes</span>
               </div>
               <div class="flex items-center gap-2 sm:gap-3">
@@ -505,24 +565,15 @@ export function renderPage2(user, options = {}) {
               </div>
             </div>
           </header>
-          <div class="absolute inset-0 flex items-end p-6 sm:p-8">
-            <div class="rounded-2xl border border-white/15 bg-[#3F4766]/55 px-6 py-5 shadow-[10px_10px_26px_rgba(18,24,38,0.45),-8px_-8px_20px_rgba(110,126,165,0.15)] backdrop-blur-md">
-              <h1 class="text-[34px] font-bold leading-none tracking-tight sm:text-[42px] lg:text-[56px]">Dominoes</h1>
-              <p class="mt-3 text-sm text-white/80 sm:text-base">Dominoes Lakay.</p>
-            </div>
-          </div>
         </section>
 
-        <section class="mt-8 flex justify-center px-6">
-          <div class="flex w-[70vw] max-w-[780px] flex-col items-center gap-3">
+        <section class="flex shrink-0 justify-center px-6 pb-[max(1rem,env(safe-area-inset-bottom))] pt-4 sm:pt-6">
+          <div class="flex w-full max-w-[780px] flex-col items-center gap-3">
             <button id="startGameBtn" type="button" class="h-14 w-full rounded-[18px] border border-[#ffb26e] bg-[#F57C00] px-8 text-base font-semibold text-white shadow-[9px_9px_20px_rgba(155,78,25,0.45),-7px_-7px_16px_rgba(255,173,96,0.2)] transition hover:-translate-y-0.5">
                 LANCER UNE PARTIE
             </button>
             <button id="tournamentBtn" type="button" class="h-12 w-full rounded-[16px] border border-white/25 bg-white/10 px-8 text-sm font-semibold text-white shadow-[8px_8px_18px_rgba(22,29,45,0.35),-6px_-6px_14px_rgba(118,131,172,0.2)] backdrop-blur-md transition hover:-translate-y-0.5 hover:bg-white/15">
               Tournois
-            </button>
-            <button id="gameRulesBtn" type="button" class="h-12 w-full rounded-[16px] border border-white/25 bg-white/10 px-8 text-sm font-semibold text-white shadow-[8px_8px_18px_rgba(22,29,45,0.35),-6px_-6px_14px_rgba(118,131,172,0.2)] backdrop-blur-md transition hover:-translate-y-0.5 hover:bg-white/15">
-              Les règles
             </button>
           </div>
         </section>
@@ -544,54 +595,34 @@ export function renderPage2(user, options = {}) {
   }
 
   pageShell.insertAdjacentHTML("beforeend", `
-    <div id="rulesModalOverlay" class="fixed inset-0 z-[3400] hidden items-center justify-center bg-black/45 p-4 backdrop-blur-sm">
-      <div id="rulesModalPanel" class="w-full max-w-2xl max-h-[85vh] overflow-y-auto rounded-3xl border border-white/20 bg-[#3F4766]/60 p-5 text-white shadow-[14px_14px_34px_rgba(16,23,40,0.5),-10px_-10px_24px_rgba(112,126,165,0.2)] backdrop-blur-xl sm:p-6">
-        <div class="flex items-center justify-between">
-          <h3 class="text-xl font-bold">🎮 RÈGLEMENT DU JEU</h3>
-          <button id="rulesModalClose" type="button" class="grid h-10 w-10 place-items-center rounded-full border border-white/20 bg-white/10 text-white">
-            <i class="fa-solid fa-xmark"></i>
-          </button>
+    <div id="tournamentIntroOverlay" class="fixed inset-0 z-[3445] hidden items-end justify-center bg-[#12192b]/60 p-0 backdrop-blur-sm sm:items-center sm:p-4">
+      <div id="tournamentIntroPanel" class="w-full rounded-t-[30px] border border-white/15 bg-[linear-gradient(180deg,rgba(82,94,132,0.98),rgba(55,65,95,0.98))] px-5 pb-[max(1.25rem,env(safe-area-inset-bottom))] pt-5 text-white shadow-[0_-16px_38px_rgba(12,18,31,0.42)] sm:max-w-xl sm:rounded-[30px] sm:border-white/20 sm:px-6 sm:pb-6 sm:pt-6 sm:shadow-[14px_14px_34px_rgba(16,23,40,0.5),-10px_-10px_24px_rgba(112,126,165,0.2)]">
+        <div class="mx-auto mb-4 flex h-11 w-11 items-center justify-center rounded-2xl border border-[#ffd3aa]/35 bg-[#F57C00]/20 text-[#ffd9b8] shadow-[inset_4px_4px_10px_rgba(20,28,45,0.42),inset_-4px_-4px_10px_rgba(123,137,180,0.18)] sm:mx-0 sm:mb-5 sm:h-12 sm:w-12">
+          <i class="fa-solid fa-trophy text-lg"></i>
         </div>
-
-        <div class="mt-4 space-y-4 text-sm text-white/90 sm:text-base">
-          <div>
-            <p class="font-semibold text-white">💰 Dépôt & Conversion</p>
-            <p class="mt-1">Le dépôt minimum est de 25 Gdes.</p>
-            <p>25 Gdes = 500 Does (monnaie virtuelle du jeu).</p>
-            <p>Les Does sont utilisés exclusivement pour participer aux parties.</p>
-          </div>
-
-          <div>
-            <p class="font-semibold text-white">🎯 Lancer une partie</p>
-            <p class="mt-1">Avant d'entrer en salle, tu choisis une mise parmi les options disponibles.</p>
-            <p>Le montant choisi est automatiquement déduit de ton solde au moment de l'inscription.</p>
-            <p>Une salle regroupe uniquement des joueurs ayant choisi la même mise.</p>
-            <p>La partie démarre dès que les 4 places sont remplies.</p>
-          </div>
-
-          <div>
-            <p class="font-semibold text-white">🏆 Gains</p>
-            <p class="mt-1">Il y a un seul gagnant par partie.</p>
-            <p>Le gagnant reçoit 3 fois la mise de la salle.</p>
-            <p>Exemple: 100 Does misés donnent 300 Does au gagnant, 500 donnent 1500.</p>
-            <p>Les autres participants perdent uniquement la mise engagée.</p>
-          </div>
-
-          <div>
-            <p class="font-semibold text-white">🀄 Comment jouer</p>
-            <p class="mt-1">Pour poser un domino, clique simplement sur la pièce que tu veux jouer.</p>
-            <p>Si cette pièce peut être jouée par deux côtés, clique directement sur la valeur que tu veux utiliser.</p>
-            <p>Exemple: avec un domino 6-3, clique sur 6 ou sur 3 selon le côté choisi.</p>
-          </div>
-
-          <div>
-            <p class="font-semibold text-white">📌 Conditions générales</p>
-            <p class="mt-1">Tu peux rejoindre autant de parties que ton solde te le permet.</p>
-            <p>Seules les mises activées par la plateforme sont visibles et jouables.</p>
-            <p>Toute tentative de fraude entraîne la suspension du compte.</p>
-            <p>La participation au jeu implique l’acceptation complète du règlement.</p>
-          </div>
+        <h3 class="text-[1.35rem] font-bold leading-tight sm:text-[1.55rem]">Bienvenue dans les tournois</h3>
+        <p class="mt-2 text-sm leading-6 text-white/82 sm:text-[15px]">
+          Quand tu cliques sur <span class="font-semibold text-white">Tournois</span>, un tournoi se lance automatiquement pour toi. Tous les joueurs qui cliquent dans la même période rejoignent ce tournoi.
+        </p>
+        <div class="mt-4 space-y-3 rounded-[24px] border border-white/12 bg-white/8 p-4 shadow-[inset_4px_4px_10px_rgba(20,28,45,0.28),inset_-4px_-4px_10px_rgba(123,137,180,0.08)]">
+          <p class="text-sm leading-6 text-white/88">
+            Pour gagner, tu dois finir <span class="font-semibold text-white">premier</span> avec le plus de victoires.
+          </p>
+          <p class="text-sm leading-6 text-white/88">
+            Si tu gagnes, <span class="font-semibold text-white">10 000 Does</span> seront ajoutés à ton compte et tu pourras les retirer quand tu veux.
+          </p>
+          <p class="text-sm leading-6 text-white/88">
+            Pour protéger les joueurs, les usernames sont cachés et seul leur <span class="font-semibold text-white">ID</span> est affiché. C’est valable pour toi aussi, mais tu verras toujours ta place dans le classement.
+          </p>
         </div>
+        <div class="mt-4 rounded-[24px] border border-[#ffb26e]/22 bg-[#F57C00]/10 p-4">
+          <p class="text-sm leading-6 text-white/90">
+            Chaque tournoi dure <span class="font-semibold text-white">15 minutes</span>. Tu as droit à <span class="font-semibold text-white">3 tournois par jour</span>. Ces règles servent à mieux réguler le volume des tournois vu le nombre de joueurs.
+          </p>
+        </div>
+        <button id="tournamentIntroContinueBtn" type="button" class="mt-5 h-12 w-full rounded-[18px] border border-[#ffb26e] bg-[#F57C00] text-sm font-semibold text-white shadow-[9px_9px_20px_rgba(155,78,25,0.45),-7px_-7px_16px_rgba(255,173,96,0.2)] transition hover:-translate-y-0.5 sm:mt-6 sm:h-12 sm:text-[15px]">
+          Continuer
+        </button>
       </div>
     </div>
   `);
@@ -688,6 +719,7 @@ export function renderPage2(user, options = {}) {
   }
 
   void runPage2Animations();
+  initPage2HeroRotation();
 
   const logo = document.getElementById("p2Logo");
   const logoFallback = document.getElementById("p2LogoFallback");
@@ -695,10 +727,9 @@ export function renderPage2(user, options = {}) {
   const profileBtn = document.getElementById("p2Profile");
   const soldBadgeBtn = document.getElementById("soldBadge");
   const startGameBtn = document.getElementById("startGameBtn");
-  const rulesBtn = document.getElementById("gameRulesBtn");
-  const rulesOverlay = document.getElementById("rulesModalOverlay");
-  const rulesPanel = document.getElementById("rulesModalPanel");
-  const rulesClose = document.getElementById("rulesModalClose");
+  const tournamentIntroOverlay = document.getElementById("tournamentIntroOverlay");
+  const tournamentIntroPanel = document.getElementById("tournamentIntroPanel");
+  const tournamentIntroContinueBtn = document.getElementById("tournamentIntroContinueBtn");
   const doesRequiredOverlay = document.getElementById("doesRequiredOverlay");
   const doesRequiredOpenProfile = document.getElementById("doesRequiredOpenProfile");
   const doesRequiredClose = document.getElementById("doesRequiredClose");
@@ -730,28 +761,17 @@ export function renderPage2(user, options = {}) {
     soldBadgeBtn.setAttribute("aria-disabled", "true");
     soldBadgeBtn.classList.add("pointer-events-none", "opacity-70", "cursor-wait");
   }
-
-  const closeRules = () => {
-    if (!rulesOverlay) return;
-    rulesOverlay.classList.add("hidden");
-    rulesOverlay.classList.remove("flex");
-    document.body.classList.remove("overflow-hidden");
-  };
-  const openRules = () => {
-    if (!rulesOverlay) return;
-    rulesOverlay.classList.remove("hidden");
-    rulesOverlay.classList.add("flex");
-    document.body.classList.add("overflow-hidden");
-  };
-  if (rulesBtn) rulesBtn.addEventListener("click", openRules);
-  if (rulesClose) rulesClose.addEventListener("click", closeRules);
-  if (rulesOverlay) {
-    rulesOverlay.addEventListener("click", (ev) => {
-      if (ev.target === rulesOverlay) closeRules();
+  if (profileBtn) {
+    profileBtn.addEventListener("click", () => {
+      if (isOptimisticAuth) {
+        showGlobalLoading("Finalisation de la session...");
+        window.setTimeout(() => {
+          hideGlobalLoading();
+        }, 1600);
+        return;
+      }
+      openProfilePage();
     });
-  }
-  if (rulesPanel) {
-    rulesPanel.addEventListener("click", (ev) => ev.stopPropagation());
   }
 
   const openStakeSelection = () => {
@@ -776,6 +796,25 @@ export function renderPage2(user, options = {}) {
     if (!stakeUnavailableOverlay) return;
     stakeUnavailableOverlay.classList.add("hidden");
     stakeUnavailableOverlay.classList.remove("flex");
+  };
+
+  const openTournamentIntro = () => {
+    if (!tournamentIntroOverlay) return;
+    tournamentIntroOverlay.classList.remove("hidden");
+    tournamentIntroOverlay.classList.add("flex");
+    document.body.classList.add("overflow-hidden");
+  };
+
+  const closeTournamentIntro = () => {
+    if (!tournamentIntroOverlay) return;
+    tournamentIntroOverlay.classList.add("hidden");
+    tournamentIntroOverlay.classList.remove("flex");
+    document.body.classList.remove("overflow-hidden");
+  };
+
+  const continueToTournament = () => {
+    showGlobalLoading("Ouverture du tournoi...");
+    window.location.href = "./tournois.html";
   };
 
   let currentStakeOptions = normalizeGameStakeOptions();
@@ -865,9 +904,29 @@ export function renderPage2(user, options = {}) {
 
   if (tournamentBtn) {
     tournamentBtn.addEventListener("click", () => {
-      window.location.href = "./tournois.html";
+      if (hasSeenTournamentIntro()) {
+        continueToTournament();
+        return;
+      }
+      openTournamentIntro();
     });
   }
+
+  tournamentIntroContinueBtn?.addEventListener("click", () => {
+    markTournamentIntroSeen();
+    closeTournamentIntro();
+    continueToTournament();
+  });
+
+  tournamentIntroOverlay?.addEventListener("click", (ev) => {
+    if (ev.target === tournamentIntroOverlay) {
+      closeTournamentIntro();
+    }
+  });
+
+  tournamentIntroPanel?.addEventListener("click", (ev) => {
+    ev.stopPropagation();
+  });
 
   if (stakeOptionsGrid) {
     stakeOptionsGrid.addEventListener("click", async (event) => {
@@ -909,8 +968,7 @@ export function renderPage2(user, options = {}) {
     doesRequiredOpenProfile.addEventListener("click", () => {
       doesRequiredOverlay?.classList.add("hidden");
       doesRequiredOverlay?.classList.remove("flex");
-      const p = document.getElementById("p2Profile");
-      if (p) p.click();
+      openProfilePage();
     });
   }
   if (doesRequiredOverlay) {
@@ -922,7 +980,6 @@ export function renderPage2(user, options = {}) {
     });
   }
 
-  bindDeferredModalTrigger(profileBtn, () => ensureProfileUiReady("#p2Profile"), "Ouverture du profil...");
   bindDeferredModalTrigger(soldBadgeBtn, () => ensureSoldeUiReady("#soldBadge"), "Chargement du solde...");
 
   const effectiveUser = hasConfirmedAuth ? user : null;
@@ -931,9 +988,6 @@ export function renderPage2(user, options = {}) {
     initDiscussionFab(effectiveUser);
     initAgentSupportAlert(effectiveUser);
   }, 460);
-  if (hasConfirmedAuth) {
-    scheduleNonCriticalTask(runId, () => ensureProfileUiReady("#p2Profile"), 320);
-  }
   void runPage2BootstrapFlow({
     runId,
     user,

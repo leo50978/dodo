@@ -436,16 +436,17 @@ function refreshBalanceFromCaches() {
   const reservedWithdrawals = cachedWithdrawals
     .filter((o) => o.status !== "rejected")
     .reduce((sum, o) => sum + computeReservedWithdrawalAmount(o), 0);
+  const rawBaseBalance = approvedDeposits - reservedWithdrawals;
   if (BALANCE_DEBUG) {
     console.log("[BALANCE_DEBUG][SOLDE] refreshBalanceFromCaches", {
       approvedDeposits,
       reservedWithdrawals,
-      computedBase: Math.max(0, approvedDeposits - reservedWithdrawals),
+      computedBase: rawBaseBalance,
       ordersCount: cachedOrders.length,
       withdrawalsCount: cachedWithdrawals.length,
     });
   }
-  updateSoldBadge(Math.max(0, approvedDeposits - reservedWithdrawals));
+  updateSoldBadge(rawBaseBalance);
 }
 
 function ensureSoldeModal() {

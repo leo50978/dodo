@@ -94,20 +94,21 @@
       }
 
       body {
-        overflow-x: hidden;
+        overflow: hidden;
       }
 
       .home-shell {
-        min-height: 100dvh;
+        height: 100dvh;
         background: #3f4766;
         color: #fff;
         font-family: "Poppins", system-ui, sans-serif;
+        overflow: hidden;
       }
 
       .home-shell__hero {
         position: relative;
         display: flex;
-        min-height: 78dvh;
+        height: 100dvh;
         align-items: flex-end;
         overflow: hidden;
       }
@@ -118,21 +119,39 @@
         inset: 0;
       }
 
-      .home-shell__media img {
+      .home-shell__media-track {
+        position: relative;
+        height: 100%;
+        width: 100%;
+      }
+
+      .home-shell__hero-slide {
+        position: absolute;
+        inset: 0;
+        opacity: 0;
+        transition: opacity 0.9s ease;
+      }
+
+      .home-shell__hero-slide.is-active {
+        opacity: 1;
+      }
+
+      .home-shell__hero-slide img {
         display: block;
         height: 100%;
         width: 100%;
-        object-fit: cover;
+        object-fit: contain;
+        object-position: center;
       }
 
       .home-shell__shade {
-        background: rgba(63, 71, 102, 0.56);
+        background: transparent;
       }
 
       .home-shell__top {
-        position: absolute;
+        position: fixed;
         inset-inline: 0;
-        top: max(12px, env(safe-area-inset-top));
+        top: 0;
         z-index: 2;
         padding: 0 16px;
       }
@@ -210,6 +229,10 @@
 
         .home-shell__top-inner {
           gap: 12px;
+        }
+
+        .home-shell__logo {
+          width: min(112px, 26vw);
         }
 
         .home-shell__header-cta {
@@ -302,15 +325,37 @@
     <div id="domino-app-shell">
       <main class="home-shell">
         <section class="home-shell__hero">
-          <div class="home-shell__media">
-            <img
-              src="/hero.jpg"
-              alt="Interface Dominoes Lakay"
-              width="600"
-              height="600"
-              fetchpriority="high"
-              decoding="async"
-            />
+          <div class="home-shell__media" data-home-hero-media>
+            <div class="home-shell__media-track" data-home-hero-track>
+              <div class="home-shell__hero-slide is-active" data-home-hero-slide>
+                <img
+                  src="/hero.jpg"
+                  alt="Interface Dominoes Lakay"
+                  width="600"
+                  height="600"
+                  fetchpriority="high"
+                  decoding="async"
+                />
+              </div>
+              <div class="home-shell__hero-slide" data-home-hero-slide>
+                <img
+                  src="/hero1.jpg"
+                  alt="Interface Dominoes Lakay hero 1"
+                  width="600"
+                  height="600"
+                  decoding="async"
+                />
+              </div>
+              <div class="home-shell__hero-slide" data-home-hero-slide>
+                <img
+                  src="/hero2.jpg"
+                  alt="Interface Dominoes Lakay hero 2"
+                  width="600"
+                  height="600"
+                  decoding="async"
+                />
+              </div>
+            </div>
           </div>
           <div class="home-shell__shade"></div>
           <header class="home-shell__top">
@@ -326,12 +371,6 @@
               <a class="home-shell__header-cta" href="./auth.html">Connexion / Inscription</a>
             </div>
           </header>
-          <div class="home-shell__content">
-            <div class="home-shell__card">
-              <h1>Dominoes</h1>
-              <p>Dominoes Lakay.</p>
-            </div>
-          </div>
         </section>
       </main>
     </div>

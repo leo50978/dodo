@@ -264,7 +264,7 @@ DominoThree.prototype = Object.assign( Object.create(ObjetoCanvas.prototype) , {
         for (var i = 0; i < Texturas.Textura.length; i++) {
             if (!Texturas.Textura[i]) continue;
             Texturas.Textura[i].magFilter = THREE.LinearFilter;
-            Texturas.Textura[i].minFilter = THREE.LinearMipmapLinearFilter;
+            Texturas.Textura[i].minFilter = THREE.LinearMipMapLinearFilter || THREE.LinearFilter;
             Texturas.Textura[i].generateMipmaps = true;
             Texturas.Textura[i].anisotropy = targetAnisotropy;
             Texturas.Textura[i].needsUpdate = true;

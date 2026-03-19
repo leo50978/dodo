@@ -99,20 +99,21 @@
       }
 
       body {
-        overflow-x: hidden;
+        overflow: hidden;
       }
 
       .home-shell {
-        min-height: 100dvh;
+        height: 100dvh;
         background: #3f4766;
         color: #fff;
         font-family: "Poppins", system-ui, sans-serif;
+        overflow: hidden;
       }
 
       .home-shell__hero {
         position: relative;
         display: flex;
-        min-height: 78dvh;
+        height: 100dvh;
         align-items: flex-end;
         overflow: hidden;
       }
@@ -123,21 +124,39 @@
         inset: 0;
       }
 
-      .home-shell__media img {
+      .home-shell__media-track {
+        position: relative;
+        height: 100%;
+        width: 100%;
+      }
+
+      .home-shell__hero-slide {
+        position: absolute;
+        inset: 0;
+        opacity: 0;
+        transition: opacity 0.9s ease;
+      }
+
+      .home-shell__hero-slide.is-active {
+        opacity: 1;
+      }
+
+      .home-shell__hero-slide img {
         display: block;
         height: 100%;
         width: 100%;
-        object-fit: cover;
+        object-fit: contain;
+        object-position: center;
       }
 
       .home-shell__shade {
-        background: rgba(63, 71, 102, 0.56);
+        background: transparent;
       }
 
       .home-shell__top {
-        position: absolute;
+        position: fixed;
         inset-inline: 0;
-        top: max(12px, env(safe-area-inset-top));
+        top: 0;
         z-index: 2;
         padding: 0 16px;
       }
@@ -215,6 +234,10 @@
 
         .home-shell__top-inner {
           gap: 12px;
+        }
+
+        .home-shell__logo {
+          width: min(112px, 26vw);
         }
 
         .home-shell__header-cta {
@@ -434,15 +457,37 @@
     <div id="domino-app-shell">
       <main class="home-shell">
         <section class="home-shell__hero">
-          <div class="home-shell__media">
-            <img
-              src="/hero.jpg"
-              alt="Interface Dominoes Lakay"
-              width="600"
-              height="600"
-              fetchpriority="high"
-              decoding="async"
-            />
+          <div class="home-shell__media" data-home-hero-media>
+            <div class="home-shell__media-track" data-home-hero-track>
+              <div class="home-shell__hero-slide is-active" data-home-hero-slide>
+                <img
+                  src="/hero.jpg"
+                  alt="Interface Dominoes Lakay"
+                  width="600"
+                  height="600"
+                  fetchpriority="high"
+                  decoding="async"
+                />
+              </div>
+              <div class="home-shell__hero-slide" data-home-hero-slide>
+                <img
+                  src="/hero1.jpg"
+                  alt="Interface Dominoes Lakay hero 1"
+                  width="600"
+                  height="600"
+                  decoding="async"
+                />
+              </div>
+              <div class="home-shell__hero-slide" data-home-hero-slide>
+                <img
+                  src="/hero2.jpg"
+                  alt="Interface Dominoes Lakay hero 2"
+                  width="600"
+                  height="600"
+                  decoding="async"
+                />
+              </div>
+            </div>
           </div>
           <div class="home-shell__shade"></div>
           <header class="home-shell__top">
@@ -458,12 +503,6 @@
               <a class="home-shell__header-cta" href="./auth.html">Connexion / Inscription</a>
             </div>
           </header>
-          <div class="home-shell__content">
-            <div class="home-shell__card">
-              <h1>Dominoes</h1>
-              <p>Dominoes Lakay.</p>
-            </div>
-          </div>
         </section>
       </main>
     </div>
@@ -471,22 +510,19 @@
       <div class="welcome-modal__backdrop" data-close></div>
       <div class="welcome-modal__card" aria-labelledby="welcomeDepositTitle">
         <button class="welcome-modal__close" type="button" aria-label="Fermer" data-close>×</button>
-        <div class="welcome-modal__badge">Bienvenue</div>
-        <h2 id="welcomeDepositTitle" class="welcome-modal__title">
-          Reçois 25&nbsp;Gdes de bonus de bienvenue
-        </h2>
-        <p class="welcome-modal__text">
-          Pour obtenir ton bonus, suis simplement les étapes de dépôt. C’est rapide et guidé.
-        </p>
-        <p class="welcome-modal__text">
-          Écris à l’assistance sur WhatsApp au <strong>+509&nbsp;4175&nbsp;2992</strong> pour commencer.
-          Tu recevras une image d’identification et des instructions claires pour recevoir ton argent.
-        </p>
+        <div id="welcomeDepositBadge" class="welcome-modal__badge">Bienvenue</div>
+        <h2 id="welcomeDepositTitle" class="welcome-modal__title"></h2>
+        <div id="welcomeDepositBody"></div>
         <div class="welcome-modal__cta">
-          <a class="welcome-modal__btn" href="https://wa.me/50941752992" target="_blank" rel="noopener">
-            Écrire sur WhatsApp
+          <a
+            id="welcomeDepositPrimary"
+            class="welcome-modal__btn hidden"
+            href="https://wa.me/50941752992"
+            target="_blank"
+            rel="noopener"
+          >
           </a>
-          <button class="welcome-modal__ghost" type="button" data-close>J’ai compris</button>
+          <button id="welcomeDepositSecondary" class="welcome-modal__ghost" type="button"></button>
         </div>
       </div>
     </div>
@@ -494,10 +530,51 @@
     <script type="module" src="./home.js"></script>
     <script>
       (() => {
-        const storageKey = "dl_welcome_deposit_v1";
+        const storageKey = "dl_welcome_deposit_flow_v2";
         const modal = document.getElementById("welcomeDepositModal");
         if (!modal) return;
         const closeButtons = modal.querySelectorAll("[data-close]");
+        const badgeEl = document.getElementById("welcomeDepositBadge");
+        const titleEl = document.getElementById("welcomeDepositTitle");
+        const bodyEl = document.getElementById("welcomeDepositBody");
+        const primaryBtn = document.getElementById("welcomeDepositPrimary");
+        const secondaryBtn = document.getElementById("welcomeDepositSecondary");
+
+        const steps = [
+          {
+            badge: "Bienvenue",
+            title: "Reçois 25 Gdes de bonus de bienvenue",
+            paragraphs: [
+              "Pour obtenir ton bonus, suis simplement les étapes de dépôt. C’est rapide et guidé.",
+              "Écris à l’assistance sur WhatsApp au +509 4175 2992 pour commencer. Tu recevras une image d’identification et des instructions claires pour recevoir ton argent.",
+            ],
+            primary: {
+              label: "Écrire sur WhatsApp",
+              href: "https://wa.me/50941752992",
+            },
+            secondaryLabel: "Suivant",
+          },
+          {
+            badge: "Parrainage",
+            title: "Invite un ami et gagne une partie gratuite",
+            paragraphs: [
+              "Si tu invites un ami et que cet ami fait un dépôt sous ton code, tu gagnes une partie gratuite.",
+              "Ton code de parrainage est disponible dans ton profil. Partage-le à tes amis pour profiter de cet avantage.",
+            ],
+            secondaryLabel: "Suivant",
+          },
+          {
+            badge: "Tournois",
+            title: "Tournois: 3 parties par jour",
+            paragraphs: [
+              "Chaque utilisateur peut jouer seulement 3 tournois par jour.",
+              "Une fois les 3 parties utilisées, un compte à rebours s’affiche jusqu’au prochain reset. Le vainqueur du tournoi gagne 1000 Gdes.",
+            ],
+            secondaryLabel: "J’ai compris",
+          },
+        ];
+
+        let activeStepIndex = 0;
         const showModal = () => {
           modal.classList.remove("hidden");
           modal.setAttribute("aria-hidden", "false");
@@ -505,6 +582,40 @@
         const hideModal = () => {
           modal.classList.add("hidden");
           modal.setAttribute("aria-hidden", "true");
+        };
+        const renderStep = () => {
+          const step = steps[activeStepIndex];
+          if (!step || !badgeEl || !titleEl || !bodyEl || !secondaryBtn) return;
+
+          badgeEl.textContent = step.badge || "Bienvenue";
+          titleEl.textContent = step.title || "";
+          bodyEl.innerHTML = "";
+          (step.paragraphs || []).forEach((text) => {
+            const paragraph = document.createElement("p");
+            paragraph.className = "welcome-modal__text";
+            paragraph.textContent = text;
+            bodyEl.appendChild(paragraph);
+          });
+
+          if (primaryBtn && step.primary?.label && step.primary?.href) {
+            primaryBtn.textContent = step.primary.label;
+            primaryBtn.href = step.primary.href;
+            primaryBtn.classList.remove("hidden");
+          } else if (primaryBtn) {
+            primaryBtn.textContent = "";
+            primaryBtn.removeAttribute("href");
+            primaryBtn.classList.add("hidden");
+          }
+
+          secondaryBtn.textContent = step.secondaryLabel || "J’ai compris";
+        };
+        const goNext = () => {
+          if (activeStepIndex < steps.length - 1) {
+            activeStepIndex += 1;
+            renderStep();
+            return;
+          }
+          hideModal();
         };
         let alreadySeen = false;
         try {
@@ -518,11 +629,13 @@
           } catch (err) {
             /* ignore */
           }
+          renderStep();
           showModal();
         } else {
           modal.setAttribute("aria-hidden", "true");
         }
         closeButtons.forEach((btn) => btn.addEventListener("click", hideModal));
+        if (secondaryBtn) secondaryBtn.addEventListener("click", goNext);
       })();
     </script>
   </body>

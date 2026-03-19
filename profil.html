@@ -1,0 +1,484 @@
+<!doctype html>
+<html lang="fr">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval' 'wasm-unsafe-eval' https://www.gstatic.com https://apis.google.com https://cdn.tailwindcss.com https://cdnjs.cloudflare.com https://cdn.jsdelivr.net https://unpkg.com https://www.google.com https://www.recaptcha.net; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com https://cdnjs.cloudflare.com https://www.gstatic.com; font-src 'self' https://fonts.gstatic.com https://cdnjs.cloudflare.com data:; img-src 'self' data: https: blob:; connect-src 'self' data: blob: https://*.googleapis.com https://apis.google.com https://firestore.googleapis.com https://identitytoolkit.googleapis.com https://securetoken.googleapis.com https://firebaseinstallations.googleapis.com https://content-firebaseappcheck.googleapis.com https://www.gstatic.com https://www.google.com https://accounts.google.com https://does-2c234.firebaseapp.com https://does-2c234.web.app https://www.recaptcha.net https://us-central1-does-2c234.cloudfunctions.net https://*.cloudfunctions.net https://cdn.jsdelivr.net https://unpkg.com; frame-src https://www.google.com https://accounts.google.com https://apis.google.com https://www.gstatic.com https://does-2c234.firebaseapp.com https://does-2c234.web.app https://www.recaptcha.net; worker-src 'self' blob: https://cdn.jsdelivr.net https://unpkg.com; object-src 'none'; base-uri 'self'; form-action 'self'; upgrade-insecure-requests; block-all-mixed-content;"
+    />
+    <meta name="theme-color" content="#0b1020" />
+    <title>Profil | Dominoes Lakay</title>
+    <link rel="icon" type="image/png" href="/favicon-96x96.png" sizes="96x96" />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <link rel="shortcut icon" href="/favicon.ico" />
+    <link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png" />
+    <link rel="manifest" href="/site.webmanifest" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.2/css/all.min.css" />
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+      :root {
+        --profile-bg: #060b16;
+        --profile-surface: rgba(16, 24, 40, 0.54);
+        --profile-surface-strong: rgba(17, 24, 39, 0.76);
+        --profile-border: rgba(255, 255, 255, 0.14);
+        --profile-highlight: rgba(255, 255, 255, 0.28);
+        --profile-shadow: rgba(2, 6, 17, 0.56);
+      }
+
+      html,
+      body {
+        min-height: 100%;
+        margin: 0;
+        background: var(--profile-bg);
+        font-family: "Poppins", system-ui, sans-serif;
+      }
+
+      *,
+      *::before,
+      *::after {
+        box-sizing: border-box;
+      }
+
+      body {
+        overflow-x: hidden;
+      }
+
+      img {
+        max-width: 100%;
+      }
+
+      .profile-shell {
+        isolation: isolate;
+      }
+
+      .profile-shell__aurora {
+        background:
+          radial-gradient(circle at 18% 18%, rgba(255, 255, 255, 0.16), transparent 22%),
+          radial-gradient(circle at 82% 12%, rgba(245, 124, 0, 0.15), transparent 24%),
+          radial-gradient(circle at 50% 100%, rgba(76, 104, 170, 0.18), transparent 36%),
+          linear-gradient(180deg, rgba(15, 23, 42, 0.94), rgba(8, 13, 25, 1) 45%, rgba(5, 8, 16, 1));
+      }
+
+      .profile-liquid-panel,
+      .profile-liquid-soft,
+      .profile-liquid-button,
+      .profile-liquid-accent,
+      .profile-liquid-rule {
+        position: relative;
+        overflow: hidden;
+        border-color: var(--profile-border) !important;
+        backdrop-filter: blur(26px) saturate(165%) !important;
+        -webkit-backdrop-filter: blur(26px) saturate(165%) !important;
+      }
+
+      .profile-liquid-panel > *,
+      .profile-liquid-soft > *,
+      .profile-liquid-button > *,
+      .profile-liquid-accent > *,
+      .profile-liquid-rule > * {
+        position: relative;
+        z-index: 1;
+      }
+
+      .profile-liquid-panel::before,
+      .profile-liquid-soft::before,
+      .profile-liquid-button::before,
+      .profile-liquid-accent::before,
+      .profile-liquid-rule::before {
+        content: "";
+        position: absolute;
+        inset: 1px;
+        border-radius: inherit;
+        background: linear-gradient(180deg, rgba(255, 255, 255, 0.24), rgba(255, 255, 255, 0.08) 34%, rgba(255, 255, 255, 0.02));
+        opacity: 0.7;
+        pointer-events: none;
+      }
+
+      .profile-liquid-panel::after,
+      .profile-liquid-soft::after,
+      .profile-liquid-button::after,
+      .profile-liquid-accent::after,
+      .profile-liquid-rule::after {
+        content: "";
+        position: absolute;
+        right: -12%;
+        top: -24%;
+        width: 180px;
+        height: 180px;
+        border-radius: 999px;
+        background: radial-gradient(circle, rgba(255, 255, 255, 0.24), rgba(255, 255, 255, 0) 70%);
+        filter: blur(10px);
+        opacity: 0.55;
+        pointer-events: none;
+      }
+
+      .profile-liquid-panel {
+        background: linear-gradient(145deg, rgba(255, 255, 255, 0.14), rgba(17, 24, 39, 0.58) 42%, rgba(8, 12, 24, 0.82)) !important;
+        box-shadow:
+          20px 24px 50px var(--profile-shadow),
+          inset 1px 1px 0 rgba(255, 255, 255, 0.15),
+          inset -1px -1px 0 rgba(255, 255, 255, 0.04) !important;
+      }
+
+      .profile-liquid-soft {
+        background: linear-gradient(145deg, rgba(255, 255, 255, 0.11), rgba(17, 24, 39, 0.72) 55%, rgba(8, 12, 24, 0.88)) !important;
+        box-shadow:
+          14px 18px 36px rgba(2, 6, 17, 0.42),
+          inset 1px 1px 0 rgba(255, 255, 255, 0.11) !important;
+      }
+
+      .profile-liquid-accent {
+        background: linear-gradient(145deg, rgba(245, 124, 0, 0.24), rgba(26, 36, 55, 0.9) 68%) !important;
+        box-shadow:
+          16px 20px 36px rgba(2, 6, 17, 0.46),
+          inset 1px 1px 0 rgba(255, 214, 168, 0.18) !important;
+      }
+
+      .profile-liquid-rule {
+        background: linear-gradient(145deg, rgba(14, 20, 34, 0.94), rgba(10, 15, 28, 0.98)) !important;
+        box-shadow:
+          inset 1px 1px 0 rgba(255, 255, 255, 0.08),
+          12px 16px 30px rgba(2, 6, 17, 0.4) !important;
+      }
+
+      .profile-liquid-button {
+        background: linear-gradient(145deg, rgba(255, 255, 255, 0.12), rgba(17, 24, 39, 0.82) 70%) !important;
+        box-shadow:
+          12px 16px 30px rgba(2, 6, 17, 0.44),
+          inset 1px 1px 0 rgba(255, 255, 255, 0.1) !important;
+        transition:
+          transform 180ms ease,
+          background 180ms ease,
+          box-shadow 180ms ease;
+      }
+
+      .profile-liquid-button:hover {
+        transform: translateY(-1px);
+        background: linear-gradient(145deg, rgba(255, 255, 255, 0.16), rgba(23, 32, 51, 0.9) 72%) !important;
+        box-shadow:
+          16px 20px 36px rgba(2, 6, 17, 0.5),
+          inset 1px 1px 0 rgba(255, 255, 255, 0.12) !important;
+      }
+
+      .profile-liquid-icon {
+        background: linear-gradient(145deg, rgba(255, 255, 255, 0.14), rgba(27, 36, 55, 0.92)) !important;
+        box-shadow:
+          inset 1px 1px 0 rgba(255, 255, 255, 0.12),
+          10px 12px 24px rgba(2, 6, 17, 0.34) !important;
+      }
+
+      .profile-logo-glow {
+        filter: drop-shadow(0 10px 18px rgba(0, 0, 0, 0.35));
+      }
+
+      .profile-dynamic-text,
+      .profile-dynamic-value,
+      .profile-dynamic-inline,
+      .profile-dynamic-stat {
+        min-width: 0;
+        max-width: 100%;
+        overflow-wrap: anywhere;
+        word-break: break-word;
+      }
+
+      .profile-dynamic-value {
+        display: block;
+        line-height: 1.2;
+      }
+
+      .profile-dynamic-inline {
+        display: inline;
+      }
+
+      .profile-dynamic-stat {
+        font-variant-numeric: tabular-nums;
+      }
+
+      #profileEmail,
+      #profileReferralCode,
+      #profileReferralHint,
+      #profileWithdrawRuleHint,
+      #profileWithdrawRuleMeta,
+      #profileExchanged {
+        overflow-wrap: anywhere;
+        word-break: break-word;
+      }
+
+      @media (max-width: 640px) {
+        .profile-balance-mobile {
+          font-size: clamp(1rem, 5vw, 1.2rem) !important;
+        }
+
+        .profile-stat-mobile {
+          font-size: clamp(0.98rem, 4.8vw, 1.15rem) !important;
+        }
+      }
+    </style>
+  </head>
+  <body class="min-h-[100dvh] bg-[#0B1020] text-white">
+    <div class="profile-shell relative min-h-[100dvh] overflow-x-hidden">
+      <div class="profile-shell__aurora absolute inset-0"></div>
+
+      <div class="relative mx-auto flex min-h-[100dvh] w-full max-w-6xl flex-col px-4 pb-8 pt-[max(1rem,env(safe-area-inset-top))] sm:px-6 lg:px-8">
+        <header class="flex min-w-0 items-center justify-between gap-3 py-2">
+          <button id="profileBackBtn" type="button" class="profile-liquid-button inline-flex h-11 shrink-0 items-center gap-2 rounded-2xl border border-white/10 bg-[#111827]/84 px-4 text-sm font-semibold text-white shadow-[12px_12px_26px_rgba(3,7,18,0.55),-8px_-8px_18px_rgba(28,38,64,0.16)] backdrop-blur-md transition hover:bg-[#172033]">
+            <i class="fa-solid fa-arrow-left"></i>
+            Retour
+          </button>
+          <img src="./logo.png" alt="Dominoes Lakay" class="profile-logo-glow h-auto w-[104px] shrink object-contain sm:w-[150px]" />
+        </header>
+
+        <main class="mt-5 grid gap-5 lg:grid-cols-[minmax(0,1.2fr)_minmax(320px,0.8fr)] xl:gap-6">
+          <div class="flex flex-col gap-5">
+            <section class="profile-liquid-panel overflow-hidden rounded-[32px] border border-white/10 bg-[#0f172a]/88 shadow-[18px_18px_40px_rgba(2,6,17,0.58),-10px_-10px_24px_rgba(24,35,58,0.14)] backdrop-blur-xl">
+              <div class="bg-[linear-gradient(135deg,rgba(245,124,0,0.22),rgba(17,24,39,0.2)_58%,rgba(8,12,24,0.16))] px-5 pb-5 pt-6 sm:px-6 sm:pb-6">
+                <div class="flex items-start gap-4">
+                  <div class="profile-liquid-soft grid h-20 w-20 shrink-0 place-items-center rounded-[24px] border border-white/10 bg-[#111827]/80 shadow-[12px_12px_24px_rgba(2,6,17,0.5),-6px_-6px_14px_rgba(26,36,58,0.15)]">
+                    <i class="fa-regular fa-circle-user text-4xl text-white"></i>
+                  </div>
+                  <div class="min-w-0 flex-1">
+                    <p class="profile-liquid-soft inline-flex rounded-full border border-white/10 bg-[#111827]/72 px-3 py-1 text-[10px] font-semibold uppercase tracking-[0.2em] text-white/75">
+                      Mon compte
+                    </p>
+                    <h1 id="profileName" class="profile-dynamic-text mt-3 text-2xl font-bold text-white sm:text-3xl sm:truncate">Player</h1>
+                    <p id="profileEmail" class="profile-dynamic-text mt-1 text-sm text-white/75 sm:text-base sm:truncate">-</p>
+                  </div>
+                </div>
+              </div>
+            </section>
+
+            <section class="profile-liquid-panel rounded-[32px] border border-white/10 bg-[#0f172a]/88 p-5 shadow-[18px_18px_40px_rgba(2,6,17,0.58),-10px_-10px_24px_rgba(24,35,58,0.14)] backdrop-blur-xl sm:p-6">
+              <div class="flex min-w-0 flex-col items-start gap-3 sm:flex-row sm:items-center sm:justify-between">
+                <div>
+                  <p class="text-xs font-semibold uppercase tracking-[0.18em] text-white/65">Portefeuille</p>
+                  <h2 class="mt-1 text-xl font-bold text-white sm:text-2xl">Résumé financier</h2>
+                </div>
+                <div class="profile-liquid-accent w-full rounded-2xl border border-[#ffb26e]/25 bg-[#1b2437] px-3 py-2 text-left sm:w-auto sm:text-right">
+                  <p class="text-[10px] uppercase tracking-[0.18em] text-white/70">Disponible</p>
+                  <p id="profileBalance" class="profile-dynamic-value profile-dynamic-stat profile-balance-mobile mt-1 text-lg font-semibold text-white sm:text-2xl">-</p>
+                </div>
+              </div>
+
+              <div class="mt-4 grid gap-3 sm:grid-cols-2">
+                <div class="profile-liquid-soft rounded-2xl border border-white/10 bg-[#111827]/82 p-4">
+                  <p class="text-[11px] uppercase tracking-[0.14em] text-white/60">Retrait disponible</p>
+                  <p id="profileWithdrawAvailable" class="profile-dynamic-value profile-dynamic-stat profile-stat-mobile mt-2 text-lg font-semibold text-white sm:text-xl">-</p>
+                  <p class="mt-1 text-xs leading-5 text-white/62">Montant réellement retirable maintenant.</p>
+                </div>
+                <div class="profile-liquid-soft rounded-2xl border border-white/10 bg-[#111827]/82 p-4">
+                  <p class="text-[11px] uppercase tracking-[0.14em] text-white/60">Equivalent retraitable</p>
+                  <p id="profileWithdrawDoesEquivalent" class="profile-dynamic-value profile-dynamic-stat profile-stat-mobile mt-2 text-lg font-semibold text-white sm:text-xl">-</p>
+                  <p class="mt-1 text-xs leading-5 text-white/62">Lecture rapide en Does pour l’utilisateur.</p>
+                </div>
+                <div class="profile-liquid-soft rounded-2xl border border-white/10 bg-[#111827]/82 p-4 sm:col-span-2">
+                  <div class="flex items-center gap-3">
+                    <img src="./does.png" alt="Does" class="h-10 w-10 rounded-2xl object-cover" data-hide-on-error="1" />
+                    <div class="min-w-0">
+                      <p class="text-[11px] uppercase tracking-[0.14em] text-white/60">Crypto disponible</p>
+                      <p class="profile-dynamic-value profile-stat-mobile mt-1 text-lg font-semibold text-white sm:text-xl"><span id="profileDoesTotal" class="profile-dynamic-inline profile-dynamic-stat">0</span> Does</p>
+                    </div>
+                  </div>
+                  <p id="profileExchanged" class="profile-dynamic-text mt-3 text-xs leading-5 text-white/68">Échangé: 0 HTG</p>
+                </div>
+              </div>
+
+              <div class="profile-liquid-rule mt-4 rounded-2xl border border-white/10 bg-[#0b1222]/90 p-4">
+                <div class="flex items-center gap-2 text-white">
+                  <i class="fa-solid fa-shield-halved text-sm text-[#ffcb95]"></i>
+                  <p class="text-[11px] font-semibold uppercase tracking-[0.14em] text-white/65">Règle de retrait</p>
+                </div>
+                <p id="profileWithdrawRuleHint" class="profile-dynamic-text mt-2 text-sm leading-6 text-white/84">
+                  Vérification des règles de retrait...
+                </p>
+                <p id="profileWithdrawRuleMeta" class="profile-dynamic-text mt-2 text-xs leading-5 text-white/62"></p>
+              </div>
+            </section>
+
+            <section class="profile-liquid-panel rounded-[32px] border border-white/10 bg-[#0f172a]/88 p-5 shadow-[18px_18px_40px_rgba(2,6,17,0.58),-10px_-10px_24px_rgba(24,35,58,0.14)] backdrop-blur-xl sm:p-6">
+              <div class="flex min-w-0 flex-col items-start gap-3 sm:flex-row sm:items-center sm:justify-between">
+                <div>
+                  <p class="text-xs font-semibold uppercase tracking-[0.18em] text-white/65">Actions rapides</p>
+                  <h2 class="mt-1 text-xl font-bold text-white">Gérer ton compte</h2>
+                </div>
+                <p class="w-full max-w-none text-left text-xs leading-5 text-white/60 sm:max-w-[13rem] sm:text-right">
+                  Grandes zones tactiles pensées pour smartphone.
+                </p>
+              </div>
+
+              <div class="mt-4 grid gap-3">
+                <button id="profileDepositBtn" type="button" class="profile-liquid-button flex min-h-[56px] min-w-0 items-center justify-between gap-3 rounded-2xl border border-white/10 bg-[#111827]/82 px-4 py-4 text-left transition hover:bg-[#172033]">
+                  <span class="min-w-0 flex-1">
+                    <span class="block text-[11px] uppercase tracking-[0.14em] text-white/60">Dépôt</span>
+                    <span class="mt-1 block text-base font-semibold text-white">Ajouter de l'argent</span>
+                  </span>
+                  <span class="profile-liquid-icon grid h-11 w-11 shrink-0 place-items-center rounded-2xl bg-[#1b2437] text-white">
+                    <i class="fa-solid fa-wallet"></i>
+                  </span>
+                </button>
+
+                <button id="profileWithdrawBtn" type="button" class="profile-liquid-button flex min-h-[56px] min-w-0 items-center justify-between gap-3 rounded-2xl border border-white/10 bg-[#111827]/82 px-4 py-4 text-left transition hover:bg-[#172033]">
+                  <span class="min-w-0 flex-1">
+                    <span class="block text-[11px] uppercase tracking-[0.14em] text-white/60">Retrait</span>
+                    <span class="mt-1 block text-base font-semibold text-white">Retrait</span>
+                  </span>
+                  <span class="profile-liquid-icon grid h-11 w-11 shrink-0 place-items-center rounded-2xl bg-[#1b2437] text-white">
+                    <i class="fa-solid fa-money-bill-transfer"></i>
+                  </span>
+                </button>
+
+                <button id="profileXchangeBtn" type="button" class="profile-liquid-button flex min-h-[56px] min-w-0 items-center justify-between gap-3 rounded-2xl border border-white/10 bg-[#111827]/82 px-4 py-4 text-left transition hover:bg-[#172033]">
+                  <span class="min-w-0 flex-1">
+                    <span class="block text-[11px] uppercase tracking-[0.14em] text-white/60">Conversion</span>
+                    <span class="mt-1 inline-flex max-w-full flex-wrap items-center gap-2 text-base font-semibold text-white">
+                      <img src="./does.png" alt="Does" class="h-5 w-5 rounded-full object-cover" data-hide-on-error="1" />
+                      Xchange en Does
+                    </span>
+                  </span>
+                  <span class="profile-liquid-icon grid h-11 w-11 shrink-0 place-items-center rounded-2xl bg-[#1b2437] text-white">
+                    <i class="fa-solid fa-coins"></i>
+                  </span>
+                </button>
+              </div>
+            </section>
+          </div>
+
+          <div class="flex flex-col gap-5">
+            <section class="profile-liquid-panel rounded-[32px] border border-white/10 bg-[#0f172a]/88 p-5 shadow-[18px_18px_40px_rgba(2,6,17,0.58),-10px_-10px_24px_rgba(24,35,58,0.14)] backdrop-blur-xl sm:p-6">
+              <div class="flex min-w-0 flex-col items-start gap-3 sm:flex-row sm:items-center sm:justify-between">
+                <div>
+                  <p class="text-xs font-semibold uppercase tracking-[0.18em] text-white/65">Parrainage</p>
+                  <h2 class="mt-1 text-xl font-bold text-white">Invite tes amis</h2>
+                </div>
+                <button id="profileCopyReferralCode" type="button" class="profile-liquid-button w-full rounded-xl border border-white/10 bg-[#111827]/82 px-3 py-2 text-xs font-semibold text-white/90 transition hover:bg-[#172033] sm:w-auto">
+                  Copier code
+                </button>
+              </div>
+
+              <div class="profile-liquid-soft mt-4 rounded-2xl border border-white/10 bg-[#111827]/82 p-4">
+                <p class="text-[11px] uppercase tracking-[0.14em] text-white/60">Code parrainage</p>
+                <div class="mt-3 flex min-w-0 flex-col items-start gap-3 sm:flex-row sm:items-center sm:justify-between">
+                  <span id="profileReferralCode" class="profile-dynamic-text profile-dynamic-stat w-full min-w-0 break-all text-lg font-semibold text-white sm:truncate">-</span>
+                  <button id="profileCopyReferralLink" type="button" class="profile-liquid-button w-full rounded-xl border border-white/10 bg-[#1b2437] px-3 py-2 text-xs font-semibold text-white/90 transition hover:bg-[#24304a] sm:w-auto">
+                    Copier lien
+                  </button>
+                </div>
+                <p id="profileReferralHint" class="mt-3 text-xs leading-5 text-white/70">Partage ton code ou ton lien pour parrainer.</p>
+              </div>
+
+              <div class="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-2">
+                <div class="profile-liquid-soft rounded-2xl border border-white/10 bg-[#111827]/82 p-4">
+                  <p class="text-[11px] uppercase tracking-[0.14em] text-white/60">Inscriptions</p>
+                  <p id="profileReferralSignups" class="profile-dynamic-value profile-dynamic-stat mt-2 text-2xl font-bold text-white">0</p>
+                </div>
+                <div class="profile-liquid-soft rounded-2xl border border-white/10 bg-[#111827]/82 p-4">
+                  <p class="text-[11px] uppercase tracking-[0.14em] text-white/60">Dépôts</p>
+                  <p id="profileReferralDeposits" class="profile-dynamic-value profile-dynamic-stat mt-2 text-2xl font-bold text-white">0</p>
+                </div>
+              </div>
+
+              <div class="mt-4 grid gap-3">
+                <button id="profileReferralRulesBtn" type="button" class="profile-liquid-button h-12 w-full rounded-2xl border border-white/10 bg-[#111827]/82 text-sm font-semibold text-white transition hover:bg-[#172033]">
+                  Règles parrainage
+                </button>
+                <button id="profileGeneralRulesBtn" type="button" class="profile-liquid-button h-12 w-full rounded-2xl border border-white/10 bg-[#111827]/82 text-sm font-semibold text-white transition hover:bg-[#172033]">
+                  Règles générales
+                </button>
+              </div>
+            </section>
+
+            <section class="profile-liquid-panel rounded-[32px] border border-white/10 bg-[#0f172a]/88 p-5 shadow-[18px_18px_40px_rgba(2,6,17,0.58),-10px_-10px_24px_rgba(24,35,58,0.14)] backdrop-blur-xl sm:p-6">
+              <p class="text-xs font-semibold uppercase tracking-[0.18em] text-white/65">Compte</p>
+              <h2 class="mt-1 text-xl font-bold text-white">Session</h2>
+              <p class="mt-3 text-sm leading-6 text-white/78">
+                Cette zone regroupe les actions secondaires. Le cœur du profil reste en haut pour être lisible immédiatement sur mobile.
+              </p>
+              <button id="profileLogoutBtn" type="button" class="mt-5 h-12 w-full rounded-2xl border border-[#ffb26e] bg-[#F57C00] text-sm font-semibold tracking-wide text-white shadow-[8px_8px_18px_rgba(163,82,27,0.45),-6px_-6px_14px_rgba(255,175,102,0.22)] transition hover:-translate-y-0.5">
+                Déconnexion
+              </button>
+            </section>
+          </div>
+        </main>
+      </div>
+    </div>
+
+    <div id="profileReferralRulesOverlay" class="fixed inset-0 z-[3050] hidden items-center justify-center bg-black/55 p-4 backdrop-blur-sm">
+      <div id="profileReferralRulesPanel" class="w-full max-w-lg rounded-3xl border border-white/20 bg-[#3F4766]/80 p-5 text-white shadow-[14px_14px_34px_rgba(16,23,40,0.5),-10px_-10px_24px_rgba(112,126,165,0.2)] backdrop-blur-xl sm:p-6">
+        <div class="flex min-w-0 items-center justify-between gap-3">
+          <h3 class="text-lg font-bold">Règles parrainage</h3>
+          <button id="profileReferralRulesClose" type="button" class="grid h-9 w-9 place-items-center rounded-full border border-white/20 bg-white/10 text-white">
+            <i class="fa-solid fa-xmark"></i>
+          </button>
+        </div>
+
+        <div class="mt-4 space-y-2 text-sm text-white/90">
+          <p>1. Partage ton lien ou ton code promo avec tes amis.</p>
+          <p>2. Ton ami crée son compte avec ton lien ou ton code.</p>
+          <p>3. Tu reçois un bonus uniquement sur son premier dépôt approuvé.</p>
+          <p>4. Bonus: <span class="font-semibold text-white">4 Does par 1 HTG déposé</span>.</p>
+          <p>Exemples: 25 HTG = 100 Does, 50 HTG = 200 Does, 100 HTG = 400 Does.</p>
+          <p>Le bonus n'est versé qu'une seule fois par filleul.</p>
+        </div>
+      </div>
+    </div>
+
+    <div id="profileGeneralRulesOverlay" class="fixed inset-0 z-[3050] hidden items-center justify-center bg-black/55 p-4 backdrop-blur-sm">
+      <div id="profileGeneralRulesPanel" class="w-full max-w-2xl max-h-[85vh] overflow-y-auto rounded-3xl border border-white/20 bg-[#3F4766]/80 p-5 text-white shadow-[14px_14px_34px_rgba(16,23,40,0.5),-10px_-10px_24px_rgba(112,126,165,0.2)] backdrop-blur-xl sm:p-6">
+        <div class="flex min-w-0 items-center justify-between gap-3">
+          <h3 class="text-lg font-bold sm:text-xl">Règles générales</h3>
+          <button id="profileGeneralRulesClose" type="button" class="grid h-9 w-9 place-items-center rounded-full border border-white/20 bg-white/10 text-white">
+            <i class="fa-solid fa-xmark"></i>
+          </button>
+        </div>
+
+        <div class="mt-4 space-y-4 text-sm text-white/90 sm:text-base">
+          <div>
+            <p class="font-semibold text-white">Dépôt et conversion</p>
+            <p class="mt-1">Le dépôt minimum est de 25 Gdes.</p>
+            <p>25 Gdes = 500 Does, la monnaie virtuelle du jeu.</p>
+            <p>Les Does sont utilisés exclusivement pour participer aux parties.</p>
+          </div>
+
+          <div>
+            <p class="font-semibold text-white">Lancer une partie</p>
+            <p class="mt-1">Avant d'entrer en salle, tu choisis une mise parmi les options disponibles.</p>
+            <p>Le montant choisi est automatiquement déduit de ton solde au moment de l'inscription.</p>
+            <p>Une salle regroupe uniquement des joueurs ayant choisi la même mise.</p>
+            <p>La partie démarre dès que les 4 places sont remplies.</p>
+          </div>
+
+          <div>
+            <p class="font-semibold text-white">Gains</p>
+            <p class="mt-1">Il y a un seul gagnant par partie.</p>
+            <p>Le gagnant reçoit 3 fois la mise de la salle.</p>
+            <p>Exemple: 100 Does misés donnent 300 Does au gagnant, 500 donnent 1500.</p>
+            <p>Les autres participants perdent uniquement la mise engagée.</p>
+          </div>
+
+          <div>
+            <p class="font-semibold text-white">Comment jouer</p>
+            <p class="mt-1">Pour poser un domino, clique simplement sur la pièce que tu veux jouer.</p>
+            <p>Si cette pièce peut être jouée par deux côtés, clique directement sur la valeur que tu veux utiliser.</p>
+            <p>Exemple: avec un domino 6-3, clique sur 6 ou sur 3 selon le côté choisi.</p>
+          </div>
+
+          <div>
+            <p class="font-semibold text-white">Conditions générales</p>
+            <p class="mt-1">Tu peux rejoindre autant de parties que ton solde te le permet.</p>
+            <p>Seules les mises activées par la plateforme sont visibles et jouables.</p>
+            <p>Toute tentative de fraude entraîne la suspension du compte.</p>
+            <p>La participation au jeu implique l’acceptation complète du règlement.</p>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <script type="module">
+      import { mountProfilePage } from "./profil.js";
+      mountProfilePage();
+    </script>
+  </body>
+</html>

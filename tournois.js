@@ -5,93 +5,85 @@ import {
 } from "./firebase-init.js";
 
 const POLL_MS = 10 * 1000;
+const MATCHING_DELAY_MS = 10 * 1000;
+const ACTIVE_TOURNAMENT_STORAGE_KEY = "dlk_active_tournament_session_v2";
 
 const dom = {
-  refreshBtn: document.getElementById("refreshBtn"),
   pageMessage: document.getElementById("pageMessage"),
+  loaderPanel: document.getElementById("loaderPanel"),
+  loaderMeta: document.getElementById("loaderMeta"),
+  loaderQuota: document.getElementById("loaderQuota"),
   signedOutPanel: document.getElementById("signedOutPanel"),
-  dashboard: document.getElementById("dashboard"),
-  sessionsGrid: document.getElementById("sessionsGrid"),
-  sessionLabel: document.getElementById("sessionLabel"),
-  timerText: document.getElementById("timerText"),
-  sessionStatusWrap: document.getElementById("sessionStatusWrap"),
-  sessionStatusText: document.getElementById("sessionStatusText"),
-  userWinsHero: document.getElementById("userWinsHero"),
+  leaderboardPanel: document.getElementById("leaderboardPanel"),
   leaderboardMeta: document.getElementById("leaderboardMeta"),
+  sessionBadge: document.getElementById("sessionBadge"),
+  countdownChip: document.getElementById("countdownChip"),
+  countdownText: document.getElementById("countdownText"),
   leaderboardState: document.getElementById("leaderboardState"),
   leaderTable: document.getElementById("leaderTable"),
-  winnerBanner: document.getElementById("winnerBanner"),
-  winnerText: document.getElementById("winnerText"),
-  replayBtn: document.getElementById("replayBtn"),
-  userBadge: document.getElementById("userBadge"),
-  userWinsValue: document.getElementById("userWinsValue"),
-  userRankValue: document.getElementById("userRankValue"),
-  userStatus: document.getElementById("userStatus"),
+  exitTournamentBtn: document.getElementById("exitTournamentBtn"),
+  exitConfirmModal: document.getElementById("exitConfirmModal"),
+  exitConfirmStayBtn: document.getElementById("exitConfirmStayBtn"),
+  exitConfirmLeaveBtn: document.getElementById("exitConfirmLeaveBtn"),
+  winnerModal: document.getElementById("winnerModal"),
+  winnerModalName: document.getElementById("winnerModalName"),
+  winnerModalReward: document.getElementById("winnerModalReward"),
+  winnerReplayBtn: document.getElementById("winnerReplayBtn"),
+  winnerBackBtn: document.getElementById("winnerBackBtn"),
 };
 
 const ensureSessionsFn = httpsCallable(firebaseFunctions, "ensureUserTournamentSessions");
 const selectSessionFn = httpsCallable(firebaseFunctions, "selectUserTournament");
+const abandonTournamentFn = httpsCallable(firebaseFunctions, "abandonUserTournament");
 const stateFn = httpsCallable(firebaseFunctions, "getUserTournamentState");
 
 let currentUser = null;
 let sessions = [];
 let currentSessionId = "";
 let pollHandle = null;
-let refreshBusy = false;
+let loaderHandle = null;
+let loaderTickHandle = null;
+let loaderStartedAt = 0;
+let refreshToken = 0;
+let countdownHandle = null;
+let currentCountdownTargetMs = 0;
+let currentCountdownMode = "";
+let shownWinnerModalSessionId = "";
 
 function hashId(uid = "") {
   let hash = 0;
-  for (let i = 0; i < uid.length; i += 1) {
-    hash = ((hash << 5) - hash) + uid.charCodeAt(i);
+  const safeUid = String(uid || "");
+  for (let i = 0; i < safeUid.length; i += 1) {
+    hash = ((hash << 5) - hash) + safeUid.charCodeAt(i);
     hash |= 0;
   }
-  return `ID-${Math.abs(hash).toString(36).slice(0, 6).toUpperCase()}`;
+  return `ID-${Math.abs(hash).toString(36).slice(0, 6).toUpperCase().padEnd(6, "0")}`;
 }
 
-function formatTimer(ms) {
-  const totalSec = Math.max(0, Math.floor(Number(ms || 0) / 1000));
-  const minutes = Math.floor(totalSec / 60).toString().padStart(2, "0");
-  const seconds = (totalSec % 60).toString().padStart(2, "0");
-  return `${minutes}:${seconds}`;
+function activeTournamentStorageKey(uid = "") {
+  return `${ACTIVE_TOURNAMENT_STORAGE_KEY}:${String(uid || "").trim()}`;
 }
 
-function formatDateTime(ms) {
-  const value = Number(ms || 0);
-  if (!Number.isFinite(value) || value <= 0) return "--";
-  return new Intl.DateTimeFormat("fr-FR", {
-    day: "2-digit",
-    month: "short",
-    hour: "2-digit",
-    minute: "2-digit",
-  }).format(new Date(value));
-}
-
-function safeSessionStatus(session) {
-  if (!session) return "active";
-  if (String(session.status || "").toLowerCase() === "ended") return "ended";
-  if (Number(session.endMs || 0) > 0 && Number(session.endMs) <= Date.now()) return "ended";
-  return "active";
-}
-
-function setPageMessage(text = "", type = "info") {
-  if (!dom.pageMessage) return;
-  const content = String(text || "").trim();
-  if (!content) {
-    dom.pageMessage.hidden = true;
-    dom.pageMessage.textContent = "";
-    dom.pageMessage.classList.remove("error");
-    return;
+function getStoredTournamentSession(uid = "") {
+  const safeUid = String(uid || "").trim();
+  if (!safeUid) return "";
+  try {
+    return String(localStorage.getItem(activeTournamentStorageKey(safeUid)) || "").trim();
+  } catch (_) {
+    return "";
   }
-  dom.pageMessage.hidden = false;
-  dom.pageMessage.textContent = content;
-  dom.pageMessage.classList.toggle("error", type === "error");
 }
 
-function setRefreshBusy(isBusy) {
-  refreshBusy = isBusy === true;
-  if (!dom.refreshBtn) return;
-  dom.refreshBtn.disabled = refreshBusy;
-  dom.refreshBtn.textContent = refreshBusy ? "Chargement..." : "Actualiser";
+function setStoredTournamentSession(uid = "", sessionId = "") {
+  const safeUid = String(uid || "").trim();
+  if (!safeUid) return;
+  try {
+    const key = activeTournamentStorageKey(safeUid);
+    const value = String(sessionId || "").trim();
+    if (value) localStorage.setItem(key, value);
+    else localStorage.removeItem(key);
+  } catch (_) {
+  }
 }
 
 function stopPolling() {
@@ -101,6 +93,29 @@ function stopPolling() {
   }
 }
 
+function stopCountdown() {
+  if (countdownHandle) {
+    window.clearInterval(countdownHandle);
+    countdownHandle = null;
+  }
+  currentCountdownTargetMs = 0;
+  currentCountdownMode = "";
+  if (dom.countdownChip) dom.countdownChip.hidden = true;
+}
+
+function hideWinnerModal() {
+  if (dom.winnerModal) dom.winnerModal.hidden = true;
+}
+
+function showExitConfirmModal() {
+  hideWinnerModal();
+  if (dom.exitConfirmModal) dom.exitConfirmModal.hidden = false;
+}
+
+function hideExitConfirmModal() {
+  if (dom.exitConfirmModal) dom.exitConfirmModal.hidden = true;
+}
+
 function startPolling() {
   stopPolling();
   pollHandle = window.setInterval(() => {
@@ -108,24 +123,59 @@ function startPolling() {
   }, POLL_MS);
 }
 
-function showSignedOutState() {
-  stopPolling();
-  sessions = [];
-  currentSessionId = "";
-  if (dom.signedOutPanel) dom.signedOutPanel.hidden = false;
-  if (dom.dashboard) dom.dashboard.hidden = true;
-  if (dom.sessionLabel) dom.sessionLabel.textContent = "Connexion requise";
-  if (dom.timerText) dom.timerText.textContent = "--:--";
-  renderStatusPill("Invite", "ended");
-  if (dom.userWinsHero) dom.userWinsHero.textContent = "0";
-  renderEmptyLeaderboard("Connectez-vous pour charger vos slots de tournoi.");
-  updateUserPanel(null, 0, null);
-  setPageMessage("");
+function stopLoader() {
+  if (loaderHandle) {
+    window.clearTimeout(loaderHandle);
+    loaderHandle = null;
+  }
+  if (loaderTickHandle) {
+    window.clearInterval(loaderTickHandle);
+    loaderTickHandle = null;
+  }
+  loaderStartedAt = 0;
+  if (dom.loaderQuota) {
+    dom.loaderQuota.hidden = true;
+    dom.loaderQuota.textContent = "";
+  }
 }
 
-function showDashboardState() {
-  if (dom.signedOutPanel) dom.signedOutPanel.hidden = true;
-  if (dom.dashboard) dom.dashboard.hidden = false;
+function setPageMessage(text = "", type = "info") {
+  if (!dom.pageMessage) return;
+  const safeText = String(text || "").trim();
+  if (!safeText) {
+    dom.pageMessage.hidden = true;
+    dom.pageMessage.textContent = "";
+    dom.pageMessage.classList.remove("error");
+    return;
+  }
+  dom.pageMessage.hidden = false;
+  dom.pageMessage.textContent = safeText;
+  dom.pageMessage.classList.toggle("error", type === "error");
+}
+
+function showOnly(section) {
+  if (dom.loaderPanel) dom.loaderPanel.hidden = section !== "loader";
+  if (dom.signedOutPanel) dom.signedOutPanel.hidden = section !== "signedOut";
+  if (dom.leaderboardPanel) dom.leaderboardPanel.hidden = section !== "leaderboard";
+}
+
+function formatTimer(ms) {
+  const totalSec = Math.max(0, Math.ceil(Number(ms || 0) / 1000));
+  return `${totalSec}s`;
+}
+
+function formatCountdown(ms) {
+  const totalSec = Math.max(0, Math.ceil(Number(ms || 0) / 1000));
+  const minutes = Math.floor(totalSec / 60);
+  const seconds = totalSec % 60;
+  return `${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}`;
+}
+
+function safeSessionStatus(session) {
+  if (!session) return "active";
+  if (String(session.status || "").toLowerCase() === "ended") return "ended";
+  if (Number(session.endMs || 0) > 0 && Number(session.endMs) <= Date.now()) return "ended";
+  return "active";
 }
 
 function normalizeSessions(rawSessions) {
@@ -137,197 +187,117 @@ function normalizeSessions(rawSessions) {
       endMs: Number(session?.endMs || 0),
       status: String(session?.status || "active"),
     }))
-    .filter((session) => session.sessionId)
-    .sort((left, right) => left.slotNumber - right.slotNumber);
+    .filter((session) => session.sessionId);
 }
 
-function mergeSessionState(sessionState) {
-  if (!sessionState?.sessionId) return;
-  const sessionId = String(sessionState.sessionId);
-  const normalized = {
-    sessionId,
-    slotNumber: Number(sessionState.slotNumber || 0),
-    startMs: Number(sessionState.startMs || 0),
-    endMs: Number(sessionState.endMs || 0),
-    status: String(sessionState.status || "active"),
-  };
-  const idx = sessions.findIndex((entry) => entry.sessionId === sessionId);
-  if (idx >= 0) {
-    sessions[idx] = { ...sessions[idx], ...normalized };
-  } else {
-    sessions = [...sessions, normalized].sort((left, right) => left.slotNumber - right.slotNumber);
-  }
-}
-
-function participantLabel(entry, currentUid = currentUser?.uid || "") {
-  if (!entry) return "Participant inconnu";
+function participantLabel(entry) {
+  if (!entry) return "Participant";
   const rawId = String(entry.id || "").trim();
-  if (entry.isUser || rawId === currentUid) {
-    const email = currentUser?.email || rawId || "Vous";
-    return `Vous • ${email} (${hashId(currentUid || rawId)})`;
-  }
-  if (entry.isBot) {
-    return `${rawId || "BOT"} • bot du tournoi`;
-  }
-  return rawId || hashId(rawId);
+  if (entry.isUser || rawId === String(currentUser?.uid || "")) return "Vous";
+  if (entry.isBot) return hashId(rawId || `bot-${Math.random()}`);
+  return rawId || "Joueur";
 }
 
-function renderStatusPill(label, status = "active") {
-  if (!dom.sessionStatusWrap) return;
-  dom.sessionStatusWrap.innerHTML = "";
-  const pill = document.createElement("span");
-  pill.className = `status-pill ${status === "ended" ? "ended" : "active"}`;
-  pill.textContent = label;
-  dom.sessionStatusWrap.appendChild(pill);
-  dom.sessionStatusText = pill;
+function participantLabelFromId(id = "") {
+  const rawId = String(id || "").trim();
+  if (!rawId) return "Inconnu";
+  if (rawId === String(currentUser?.uid || "")) return "Vous";
+  if (rawId.startsWith("BOT-")) return hashId(rawId);
+  return rawId;
 }
 
-function renderSessions() {
-  if (!dom.sessionsGrid) return;
-  dom.sessionsGrid.innerHTML = "";
+function statusFromEntry(entry) {
+  const activityStatus = String(entry?.activityStatus || "").trim().toLowerCase();
+  return activityStatus === "playing"
+    ? { label: "En train de jouer", className: "presence-playing" }
+    : { label: "En ligne", className: "presence-live" };
+}
 
-  if (!sessions.length) {
-    const empty = document.createElement("div");
-    empty.className = "empty-state";
-    empty.textContent = "Aucun slot actif n'a ete trouve pour ce compte.";
-    dom.sessionsGrid.appendChild(empty);
+function renderPresence(detailNode, status) {
+  if (!detailNode || !status) return;
+  detailNode.textContent = "";
+  detailNode.className = status.className;
+  const visual = document.createElement("span");
+  visual.className = status.className === "presence-playing" ? "presence-loader" : "presence-dot";
+  visual.setAttribute("aria-hidden", "true");
+  const text = document.createElement("span");
+  text.textContent = status.label;
+  detailNode.appendChild(visual);
+  detailNode.appendChild(text);
+}
+
+function updateCountdown() {
+  if (!dom.countdownText || !dom.countdownChip) return;
+  if (!currentCountdownTargetMs) {
+    dom.countdownChip.hidden = true;
     return;
   }
-
-  sessions.forEach((session) => {
-    const isSelected = session.sessionId === currentSessionId;
-    const status = safeSessionStatus(session);
-    const card = document.createElement("button");
-    card.type = "button";
-    card.className = `slot-card${isSelected ? " selected" : ""}${status === "ended" ? " ended" : ""}`;
-
-    const top = document.createElement("div");
-    top.className = "slot-top";
-
-    const title = document.createElement("div");
-    title.className = "slot-title";
-    title.textContent = `Slot ${session.slotNumber || "?"}`;
-
-    const badge = document.createElement("span");
-    badge.className = `status-pill ${status === "ended" ? "ended" : "active"}`;
-    badge.textContent = status === "ended" ? "Termine" : "Actif";
-
-    top.appendChild(title);
-    top.appendChild(badge);
-
-    const meta = document.createElement("div");
-    meta.className = "slot-meta";
-    meta.textContent = status === "ended"
-      ? `Termine le ${formatDateTime(session.endMs)}`
-      : `Fin prevue le ${formatDateTime(session.endMs)} • ${formatTimer(Math.max(0, session.endMs - Date.now()))}`;
-
-    card.appendChild(top);
-    card.appendChild(meta);
-    card.addEventListener("click", () => {
-      void chooseSession(session.sessionId);
-    });
-    dom.sessionsGrid.appendChild(card);
-  });
-}
-
-function renderSummary(session, userWins = 0) {
-  const slotNumber = Number(session?.slotNumber || 0);
-  const status = safeSessionStatus(session);
-  if (dom.sessionLabel) {
-    dom.sessionLabel.textContent = slotNumber > 0 ? `Slot ${slotNumber}` : "Session en attente";
-  }
-  if (dom.timerText) {
-    dom.timerText.textContent = status === "ended"
-      ? "Termine"
-      : formatTimer(Math.max(0, Number(session?.endMs || 0) - Date.now()));
-  }
-  renderStatusPill(status === "ended" ? "Tournoi termine" : "Tournoi actif", status);
-  if (dom.userWinsHero) {
-    dom.userWinsHero.textContent = String(userWins);
-  }
-}
-
-function renderWinner(winnerId = "", leaderboard = []) {
-  if (!dom.winnerBanner || !dom.winnerText) return;
-  const winner = leaderboard.find((entry) => String(entry.id || "") === String(winnerId || "").trim());
-  const winnerLabel = winner ? participantLabel(winner) : (winnerId || "");
-  if (!winnerLabel) {
-    dom.winnerBanner.hidden = true;
-    dom.winnerText.textContent = "";
+  const remainingMs = Math.max(0, currentCountdownTargetMs - Date.now());
+  dom.countdownChip.hidden = false;
+  if (currentCountdownMode === "quota") {
+    dom.countdownText.textContent = remainingMs > 0
+      ? `Nouveau tournoi dans ${formatCountdown(remainingMs)}`
+      : "Nouveau tournoi disponible";
     return;
   }
-  dom.winnerBanner.hidden = false;
-  dom.winnerText.textContent = winnerLabel;
+  dom.countdownText.textContent = remainingMs > 0
+    ? `Fin dans ${formatCountdown(remainingMs)}`
+    : "Tournoi terminé";
+}
+
+function startSessionCountdown(endMs) {
+  stopCountdown();
+  currentCountdownMode = "session";
+  currentCountdownTargetMs = Number(endMs || 0);
+  updateCountdown();
+  if (!currentCountdownTargetMs) return;
+  countdownHandle = window.setInterval(() => {
+    updateCountdown();
+  }, 1000);
+}
+
+function startQuotaCountdown(resetMs) {
+  stopCountdown();
+  currentCountdownMode = "quota";
+  currentCountdownTargetMs = Number(resetMs || 0);
+  updateCountdown();
+  if (!currentCountdownTargetMs) return;
+  countdownHandle = window.setInterval(() => {
+    updateCountdown();
+  }, 1000);
 }
 
 function renderEmptyLeaderboard(text) {
   if (dom.leaderboardState) {
     dom.leaderboardState.hidden = false;
-    dom.leaderboardState.textContent = text;
+    dom.leaderboardState.textContent = String(text || "");
   }
   if (dom.leaderTable) {
     dom.leaderTable.hidden = true;
     dom.leaderTable.innerHTML = "";
   }
-  if (dom.winnerBanner) dom.winnerBanner.hidden = true;
 }
 
-function updateUserPanel(rank, userWins, session) {
-  const currentUid = currentUser?.uid || "";
-  if (dom.userBadge) {
-    if (currentUid) {
-      dom.userBadge.hidden = false;
-      dom.userBadge.textContent = `${currentUser?.email || "Compte"} • ${hashId(currentUid)}`;
-    } else {
-      dom.userBadge.hidden = true;
-      dom.userBadge.textContent = "";
-    }
-  }
-
-  if (dom.userWinsValue) dom.userWinsValue.textContent = String(userWins || 0);
-  if (dom.userRankValue) dom.userRankValue.textContent = rank ? `#${rank}` : "--";
-
-  if (!dom.userStatus) return;
-  if (!currentUid) {
-    dom.userStatus.textContent = "Connectez-vous puis choisissez un slot pour suivre votre progression.";
-    dom.userStatus.classList.remove("error");
-    return;
-  }
-
-  const status = safeSessionStatus(session);
-  if (rank) {
-    dom.userStatus.textContent = status === "ended"
-      ? `Session terminee. Vous avez fini #${rank} avec ${userWins} victoire(s).`
-      : `Vous etes actuellement #${rank} avec ${userWins} victoire(s) sur ce slot.`;
-  } else {
-    dom.userStatus.textContent = status === "ended"
-      ? `Session terminee avec ${userWins} victoire(s).`
-      : `Vous avez ${userWins} victoire(s). Continuez a jouer pour grimper dans le classement.`;
-  }
-}
-
-function renderLeaderboard(entries, userWins, session) {
+function renderLeaderboard(entries, session) {
   const rows = Array.isArray(entries) ? entries : [];
-  const sessionStatus = safeSessionStatus(session);
-
   if (!rows.length) {
-    renderEmptyLeaderboard("Le classement de ce slot est vide pour le moment.");
-    updateUserPanel(null, userWins, session);
+    renderEmptyLeaderboard("Le classement de ce tournoi n'est pas encore disponible.");
     return;
   }
 
-  if (dom.leaderboardState) dom.leaderboardState.hidden = true;
+  if (dom.leaderboardState) {
+    dom.leaderboardState.hidden = true;
+    dom.leaderboardState.textContent = "";
+  }
   if (dom.leaderTable) {
     dom.leaderTable.hidden = false;
     dom.leaderTable.innerHTML = "";
   }
 
-  let myRank = null;
   rows.forEach((entry, index) => {
     const row = document.createElement("article");
     const isMe = entry.isUser || String(entry.id || "") === String(currentUser?.uid || "");
-    row.className = `leader-row${isMe ? " me" : ""}${entry.isChampion ? " champion" : ""}`;
-    if (isMe) myRank = index + 1;
+    row.className = `leader-row${isMe ? " me" : ""}`;
 
     const rank = document.createElement("div");
     rank.className = "rank-chip";
@@ -338,9 +308,8 @@ function renderLeaderboard(entries, userWins, session) {
     const strong = document.createElement("strong");
     strong.textContent = participantLabel(entry);
     const detail = document.createElement("span");
-    detail.textContent = entry.isChampion
-      ? "Champion favori du slot"
-      : (entry.isBot ? "Bot du classement" : "Votre score reel");
+    const status = statusFromEntry(entry);
+    renderPresence(detail, status);
     name.appendChild(strong);
     name.appendChild(detail);
 
@@ -354,116 +323,280 @@ function renderLeaderboard(entries, userWins, session) {
     dom.leaderTable?.appendChild(row);
   });
 
-  if (dom.leaderboardMeta) {
-    dom.leaderboardMeta.textContent = sessionStatus === "ended"
-      ? "Session terminee. Le classement final reste visible ci-dessous."
-      : "Le classement se met a jour automatiquement toutes les 10 secondes pendant la session.";
+  if (dom.sessionBadge) {
+    dom.sessionBadge.textContent = safeSessionStatus(session) === "ended"
+      ? "Tournoi terminé"
+      : "Tournoi actif";
   }
 
-  updateUserPanel(myRank, userWins, session);
+  startSessionCountdown(session?.endMs);
+
+  if (dom.leaderboardMeta) {
+    dom.leaderboardMeta.textContent = safeSessionStatus(session) === "ended"
+      ? "Classement final du tournoi."
+      : "Le classement se met à jour automatiquement pendant le tournoi.";
+  }
+}
+
+function maybeShowWinnerModal(session) {
+  const safeSessionId = String(session?.sessionId || "").trim();
+  if (!safeSessionId || safeSessionStatus(session) !== "ended") return;
+  if (shownWinnerModalSessionId === safeSessionId) return;
+
+  const winnerId = String(session?.winnerId || "").trim();
+  const winnerName = participantLabelFromId(winnerId);
+  const rewardGranted = session?.rewardGranted === true && winnerId === String(currentUser?.uid || "");
+  const rewardAmount = Number(session?.rewardAmountDoes || 0);
+
+  if (dom.winnerModalName) {
+    dom.winnerModalName.textContent = winnerName;
+  }
+
+  if (dom.winnerModalReward) {
+    if (rewardGranted && rewardAmount > 0) {
+      dom.winnerModalReward.textContent = `${rewardAmount.toLocaleString("fr-FR")} Does ont été ajoutés à ton compte.`;
+    } else if (rewardAmount > 0) {
+      dom.winnerModalReward.textContent = `Le tournoi est terminé. Le vainqueur remporte ${rewardAmount.toLocaleString("fr-FR")} Does.`;
+    } else {
+      dom.winnerModalReward.textContent = "Le tournoi est terminé.";
+    }
+  }
+
+  if (dom.winnerModal) {
+    dom.winnerModal.hidden = false;
+  }
+  shownWinnerModalSessionId = safeSessionId;
 }
 
 async function ensureSessions() {
   const response = await ensureSessionsFn({});
   const data = response?.data || {};
   sessions = normalizeSessions(data.sessions);
-  currentSessionId = String(data.currentSessionId || currentSessionId || sessions[0]?.sessionId || "").trim();
-  renderSessions();
-  return currentSessionId;
+  return {
+    sessions,
+    currentSessionId: String(data.currentSessionId || "").trim(),
+    quota: data.quota && typeof data.quota === "object" ? data.quota : {},
+    canPlay: data.canPlay === true,
+    hasActiveSession: data.hasActiveSession === true,
+    isLocked: data.isLocked === true,
+    playsUsedToday: Number(data.playsUsedToday || 0),
+    playsRemainingToday: Number(data.playsRemainingToday || 0),
+    dailyLimit: Number(data.dailyLimit || 3),
+    nextResetMs: Number(data.nextResetMs || 0),
+  };
 }
 
-async function chooseSession(sessionId) {
-  const nextSessionId = String(sessionId || "").trim();
-  if (!nextSessionId) return;
-  try {
-    await selectSessionFn({ sessionId: nextSessionId });
-    currentSessionId = nextSessionId;
-    renderSessions();
-    await loadState();
-    startPolling();
-  } catch (error) {
-    console.error("[TOURNOIS] select session error", error);
-    setPageMessage("Impossible de charger ce slot maintenant. Reessayez.", "error");
+function findUsableSessionId(preferredSessionId = "") {
+  const preferred = String(preferredSessionId || "").trim();
+  if (preferred && sessions.some((session) => session.sessionId === preferred && safeSessionStatus(session) !== "ended")) {
+    return preferred;
   }
+  const activeSession = sessions.find((session) => safeSessionStatus(session) !== "ended");
+  return String(activeSession?.sessionId || sessions[0]?.sessionId || "").trim();
+}
+
+async function selectTournamentSession(sessionId) {
+  const nextSessionId = String(sessionId || "").trim();
+  if (!nextSessionId) return "";
+  await selectSessionFn({ sessionId: nextSessionId });
+  currentSessionId = nextSessionId;
+  setStoredTournamentSession(currentUser?.uid, nextSessionId);
+  return nextSessionId;
 }
 
 async function loadState({ silent = false } = {}) {
-  if (!currentUser) {
-    showSignedOutState();
-    return;
-  }
-  if (!currentSessionId) {
-    renderEmptyLeaderboard("Selectionnez un slot pour afficher son classement.");
-    renderSummary(null, 0);
-    updateUserPanel(null, 0, null);
-    return;
-  }
+  if (!currentUser || !currentSessionId) return;
 
   try {
     const response = await stateFn({ sessionId: currentSessionId });
     const data = response?.data || {};
     const session = data.session || {};
     const leaderboard = Array.isArray(data.leaderboard) ? data.leaderboard : [];
-    const userWins = Number(data.userWins || 0);
-
-    mergeSessionState(session);
-    renderSessions();
-    renderSummary(session, userWins);
-    renderLeaderboard(leaderboard, userWins, session);
-    renderWinner(safeSessionStatus(session) === "ended" ? session.winnerId || leaderboard[0]?.id || "" : "", leaderboard);
+    showOnly("leaderboard");
+    renderLeaderboard(leaderboard, session);
+    maybeShowWinnerModal(session);
     setPageMessage("");
   } catch (error) {
     console.error("[TOURNOIS] load state error", error);
     if (!silent) {
-      renderEmptyLeaderboard("Le classement n'a pas pu etre charge pour le moment.");
-      setPageMessage("Impossible de recuperer l'etat du tournoi. Verifiez votre connexion puis reessayez.", "error");
+      showOnly("leaderboard");
+      renderEmptyLeaderboard("Impossible de charger le classement pour le moment.");
+      setPageMessage("Le tournoi n'a pas pu être chargé. Réessaie dans un instant.", "error");
     }
   }
 }
 
-async function refreshPage() {
-  if (refreshBusy) return;
-  setRefreshBusy(true);
+function renderLoaderCountdown() {
+  if (!dom.loaderMeta || !loaderStartedAt) return;
+  const remainingMs = Math.max(0, MATCHING_DELAY_MS - (Date.now() - loaderStartedAt));
+  dom.loaderMeta.textContent = `${formatTimer(remainingMs)} restantes`;
+}
+
+function renderLoaderQuota(quota = {}) {
+  if (!dom.loaderQuota) return;
+
+  const dailyLimit = Math.max(1, Number(quota?.dailyLimit || 3));
+  const remaining = Math.max(0, Number(quota?.playsRemainingToday || 0));
+  const used = Math.max(0, Number(quota?.playsUsedToday || 0));
+
+  dom.loaderQuota.hidden = false;
+  if (remaining <= 0) {
+    dom.loaderQuota.textContent = `Apres ce tournoi, il ne te reste plus de tournoi aujourd'hui (${used}/${dailyLimit} utilises).`;
+    return;
+  }
+
+  dom.loaderQuota.textContent = `Apres ce lancement, il te restera ${remaining} tournoi(s) sur ${dailyLimit} aujourd'hui.`;
+}
+
+function startMatchingLoader(quota, onDone) {
+  stopLoader();
+  loaderStartedAt = Date.now();
+  showOnly("loader");
+  renderLoaderCountdown();
+  renderLoaderQuota(quota);
+  loaderTickHandle = window.setInterval(() => {
+    renderLoaderCountdown();
+  }, 250);
+  loaderHandle = window.setTimeout(() => {
+    stopLoader();
+    void onDone();
+  }, MATCHING_DELAY_MS);
+}
+
+async function enterTournamentFlow() {
+  const myToken = ++refreshToken;
+  stopPolling();
+  stopLoader();
+  hideWinnerModal();
+
   try {
-    showDashboardState();
-    await ensureSessions();
-    if (currentSessionId) {
+    const result = await ensureSessions();
+    if (myToken !== refreshToken) return;
+
+    if (result.isLocked && !result.hasActiveSession) {
+      currentSessionId = "";
+      showOnly("leaderboard");
+      if (dom.sessionBadge) dom.sessionBadge.textContent = "Limite du jour atteinte";
+      if (dom.leaderboardMeta) {
+        dom.leaderboardMeta.textContent = `Tu as utilisé ${result.dailyLimit} tournoi(s) sur ${result.dailyLimit} aujourd'hui.`;
+      }
+      renderEmptyLeaderboard("Tu as deja utilise tes 3 tournois du jour. Reviens a la reinitialisation pour rejouer.");
+      setPageMessage("Limite atteinte: 3 tournois maximum par jour pour ce compte.", "error");
+      startQuotaCountdown(result.nextResetMs);
+      return;
+    }
+
+    const storedSessionId = getStoredTournamentSession(currentUser?.uid);
+    const activeSessionId = findUsableSessionId(storedSessionId || result.currentSessionId);
+
+    if (!activeSessionId) {
+      showOnly("leaderboard");
+      renderEmptyLeaderboard("Aucun tournoi n'est disponible pour le moment.");
+      setPageMessage("Aucun tournoi actif n'a été trouvé pour ce compte.", "error");
+      return;
+    }
+
+    if (storedSessionId && storedSessionId === activeSessionId) {
+      currentSessionId = activeSessionId;
       await loadState();
       startPolling();
-    } else {
-      renderEmptyLeaderboard("Aucun slot disponible pour le moment.");
-      renderSummary(null, 0);
-      updateUserPanel(null, 0, null);
+      return;
     }
+
+    startMatchingLoader(result, async () => {
+      if (myToken !== refreshToken) return;
+      try {
+        await selectTournamentSession(activeSessionId);
+        if (myToken !== refreshToken) return;
+        await loadState();
+        startPolling();
+      } catch (error) {
+        console.error("[TOURNOIS] select session error", error);
+        showOnly("leaderboard");
+        renderEmptyLeaderboard("Le tournoi n'a pas pu être rejoint.");
+        setPageMessage("Impossible de rejoindre ce tournoi maintenant.", "error");
+      }
+    });
   } catch (error) {
-    console.error("[TOURNOIS] refresh error", error);
-    renderEmptyLeaderboard("Les slots de tournoi n'ont pas pu etre recuperes.");
-    setPageMessage("Impossible de charger vos tournois maintenant. Reessayez dans un instant.", "error");
-  } finally {
-    setRefreshBusy(false);
+    console.error("[TOURNOIS] ensure sessions error", error);
+    showOnly("leaderboard");
+    renderEmptyLeaderboard("Impossible de charger le tournoi.");
+    setPageMessage("Le tournoi n'a pas pu être préparé pour le moment.", "error");
   }
+}
+
+function showSignedOutState() {
+  ++refreshToken;
+  stopPolling();
+  stopLoader();
+  stopCountdown();
+  hideWinnerModal();
+  hideExitConfirmModal();
+  currentSessionId = "";
+  sessions = [];
+  shownWinnerModalSessionId = "";
+  setPageMessage("");
+  showOnly("signedOut");
+}
+
+async function exitTournament() {
+  const sessionIdToAbandon = String(currentSessionId || getStoredTournamentSession(currentUser?.uid) || "").trim();
+  setStoredTournamentSession(currentUser?.uid, "");
+  ++refreshToken;
+  stopPolling();
+  stopLoader();
+  stopCountdown();
+  hideWinnerModal();
+  hideExitConfirmModal();
+  currentSessionId = "";
+  if (sessionIdToAbandon) {
+    try {
+      await abandonTournamentFn({ sessionId: sessionIdToAbandon });
+    } catch (error) {
+      console.error("[TOURNOIS] abandon session error", error);
+    }
+  }
+  window.location.href = "./inedex.html";
+}
+
+function replayTournament() {
+  setStoredTournamentSession(currentUser?.uid, "");
+  stopPolling();
+  stopLoader();
+  stopCountdown();
+  hideWinnerModal();
+  hideExitConfirmModal();
+  currentSessionId = "";
+  shownWinnerModalSessionId = "";
+  void enterTournamentFlow();
 }
 
 function bindUi() {
-  dom.refreshBtn?.addEventListener("click", () => {
-    void refreshPage();
+  dom.exitTournamentBtn?.addEventListener("click", () => {
+    showExitConfirmModal();
   });
-
-  dom.replayBtn?.addEventListener("click", () => {
-    void refreshPage();
-    window.scrollTo({ top: 0, behavior: "smooth" });
+  dom.exitConfirmStayBtn?.addEventListener("click", () => {
+    hideExitConfirmModal();
+  });
+  dom.exitConfirmLeaveBtn?.addEventListener("click", () => {
+    void exitTournament();
+  });
+  dom.winnerReplayBtn?.addEventListener("click", () => {
+    replayTournament();
+  });
+  dom.winnerBackBtn?.addEventListener("click", () => {
+    void exitTournament();
   });
 }
 
 function initAuth() {
   auth.onAuthStateChanged((user) => {
-    currentUser = user;
+    currentUser = user || null;
     if (!user) {
       showSignedOutState();
       return;
     }
-    showDashboardState();
-    void refreshPage();
+    void enterTournamentFlow();
   });
 }
 

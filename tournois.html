@@ -2,400 +2,279 @@
 <html lang="fr">
 <head>
   <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Tournois | Dominoes Lakay</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+  <title>Tournoi | Dominoes Lakay</title>
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;700&family=DM+Sans:wght@400;500;700&display=swap" rel="stylesheet" />
   <style>
     :root {
-      --bg-1: #08111f;
-      --bg-2: #13233d;
-      --panel: rgba(8, 17, 31, 0.72);
-      --panel-soft: rgba(255, 255, 255, 0.06);
-      --border: rgba(255, 255, 255, 0.1);
-      --text: #edf4ff;
-      --muted: #9cb1d1;
-      --accent: #6fe0ff;
-      --accent-strong: #27c3ff;
-      --warm: #ffb56f;
-      --success: #79f3b6;
-      --danger: #ff8398;
-      --shadow: 0 18px 48px rgba(0, 0, 0, 0.38);
+      --bg: #3f4766;
+      --panel: rgba(255, 255, 255, 0.09);
+      --panel-strong: rgba(255, 255, 255, 0.13);
+      --border: rgba(255, 255, 255, 0.12);
+      --text: #f4f7ff;
+      --muted: rgba(244, 247, 255, 0.7);
+      --accent: #f57c00;
+      --accent-soft: rgba(245, 124, 0, 0.16);
+      --me: rgba(111, 224, 255, 0.18);
+      --shadow: 0 18px 46px rgba(16, 23, 40, 0.32);
     }
 
     * { box-sizing: border-box; }
 
-    body {
+    html, body {
       margin: 0;
-      min-height: 100vh;
-      font-family: "DM Sans", system-ui, sans-serif;
-      color: var(--text);
+      min-height: 100%;
       background:
-        radial-gradient(circle at top left, rgba(111, 224, 255, 0.18), transparent 28%),
-        radial-gradient(circle at top right, rgba(255, 181, 111, 0.14), transparent 22%),
-        linear-gradient(155deg, var(--bg-1) 0%, #0a1529 42%, var(--bg-2) 100%);
+        radial-gradient(circle at top, rgba(255, 255, 255, 0.1), transparent 32%),
+        linear-gradient(180deg, #56617f 0%, #3f4766 42%, #2f3751 100%);
+      color: var(--text);
+      font-family: "DM Sans", system-ui, sans-serif;
     }
 
-    a { color: inherit; text-decoration: none; }
-    button { font: inherit; }
+    body {
+      overflow-x: hidden;
+    }
+
+    button {
+      font: inherit;
+    }
 
     .page {
-      width: min(1180px, calc(100vw - 32px));
+      width: min(100%, 760px);
+      min-height: 100dvh;
       margin: 0 auto;
-      padding: 24px 0 40px;
-    }
-
-    .panel {
-      background: var(--panel);
-      border: 1px solid var(--border);
-      border-radius: 24px;
-      box-shadow: var(--shadow);
-      backdrop-filter: blur(18px);
+      padding: max(14px, env(safe-area-inset-top)) 14px max(20px, env(safe-area-inset-bottom));
     }
 
     .topbar {
       display: flex;
       align-items: center;
       justify-content: space-between;
-      gap: 16px;
-      padding: 14px 18px;
-      margin-bottom: 18px;
-    }
-
-    .topbar-actions {
-      display: flex;
-      align-items: center;
       gap: 10px;
-      flex-wrap: wrap;
+      margin-bottom: 14px;
     }
 
-    .nav-link,
-    .ghost-btn,
-    .primary-btn,
-    .slot-card {
-      border: 1px solid var(--border);
-      border-radius: 16px;
-      transition: transform 140ms ease, background 140ms ease, border-color 140ms ease, box-shadow 140ms ease;
-    }
-
-    .nav-link,
-    .ghost-btn,
-    .primary-btn {
-      display: inline-flex;
-      align-items: center;
-      justify-content: center;
-      gap: 10px;
-      min-height: 46px;
-      padding: 0 16px;
-      cursor: pointer;
-    }
-
-    .nav-link,
-    .ghost-btn {
-      background: rgba(255, 255, 255, 0.05);
-      color: var(--text);
-    }
-
-    .primary-btn {
-      background: linear-gradient(135deg, var(--accent) 0%, #7cf4d2 100%);
-      color: #07131f;
-      border-color: rgba(111, 224, 255, 0.5);
-      font-weight: 700;
-      box-shadow: 0 14px 28px rgba(39, 195, 255, 0.22);
-    }
-
-    .nav-link:hover,
-    .ghost-btn:hover,
-    .primary-btn:hover,
-    .slot-card:hover {
-      transform: translateY(-1px);
-    }
-
-    .hero {
-      display: grid;
-      grid-template-columns: 1.5fr 1fr;
-      gap: 18px;
-      padding: 24px;
-      margin-bottom: 18px;
-      overflow: hidden;
-      position: relative;
-    }
-
-    .hero::after {
-      content: "";
-      position: absolute;
-      inset: auto -10% -38% auto;
-      width: 340px;
-      height: 340px;
-      border-radius: 999px;
-      background: radial-gradient(circle, rgba(111, 224, 255, 0.22), transparent 68%);
-      pointer-events: none;
-    }
-
-    .eyebrow {
-      margin: 0 0 8px;
-      color: var(--accent);
-      font-size: 12px;
-      font-weight: 700;
-      letter-spacing: 0.2em;
-      text-transform: uppercase;
-    }
-
-    .hero h1,
-    .section-title,
-    .metric-value,
-    .stat-value {
-      font-family: "Space Grotesk", system-ui, sans-serif;
-    }
-
-    .hero h1 {
+    .topbar-title {
       margin: 0;
-      max-width: 12ch;
-      font-size: clamp(2rem, 4vw, 3.5rem);
-      line-height: 0.95;
-    }
-
-    .hero-copy {
-      max-width: 60ch;
-      color: var(--muted);
-      font-size: 1rem;
-      line-height: 1.65;
-      margin: 16px 0 0;
-    }
-
-    .hero-metrics {
-      display: grid;
-      gap: 12px;
-      align-content: start;
-    }
-
-    .metric-card {
-      background: var(--panel-soft);
-      border: 1px solid var(--border);
-      border-radius: 20px;
-      padding: 16px;
-    }
-
-    .metric-label {
-      display: block;
-      color: var(--muted);
-      font-size: 13px;
-      margin-bottom: 6px;
-    }
-
-    .metric-value {
-      font-size: clamp(1.2rem, 2vw, 2rem);
+      font-family: "Space Grotesk", system-ui, sans-serif;
+      font-size: clamp(1.15rem, 4vw, 1.55rem);
       font-weight: 700;
       letter-spacing: -0.03em;
     }
 
-    .status-pill {
+    .btn {
+      min-height: 46px;
+      padding: 0 15px;
+      border-radius: 16px;
+      border: 1px solid var(--border);
+      color: var(--text);
+      background: rgba(255, 255, 255, 0.08);
+      box-shadow: var(--shadow);
       display: inline-flex;
       align-items: center;
+      justify-content: center;
       gap: 8px;
-      padding: 7px 12px;
-      border-radius: 999px;
-      font-size: 13px;
-      font-weight: 700;
-      letter-spacing: 0.02em;
+      cursor: pointer;
+      transition: transform 140ms ease, background 140ms ease;
+      text-decoration: none;
     }
 
-    .status-pill.active {
-      background: rgba(121, 243, 182, 0.14);
-      color: var(--success);
+    .btn:hover {
+      transform: translateY(-1px);
     }
 
-    .status-pill.ended {
-      background: rgba(255, 131, 152, 0.14);
-      color: var(--danger);
+    .btn-danger {
+      background: var(--accent-soft);
+      border-color: rgba(245, 124, 0, 0.34);
+      color: #ffd8b5;
     }
 
-    .message {
-      margin-top: 14px;
-      padding: 12px 14px;
-      border-radius: 16px;
-      border: 1px solid rgba(255, 255, 255, 0.08);
-      background: rgba(255, 255, 255, 0.05);
-      color: var(--muted);
-      line-height: 1.5;
+    .panel {
+      position: relative;
+      overflow: hidden;
+      border-radius: 28px;
+      border: 1px solid var(--border);
+      background: var(--panel);
+      box-shadow: var(--shadow);
+      backdrop-filter: blur(18px);
     }
 
-    .message.error {
-      border-color: rgba(255, 131, 152, 0.28);
-      background: rgba(255, 131, 152, 0.1);
-      color: #ffd3dc;
+    .panel::before {
+      content: "";
+      position: absolute;
+      inset: 0;
+      background: linear-gradient(180deg, rgba(255, 255, 255, 0.04), transparent 40%);
+      pointer-events: none;
     }
 
-    .dashboard {
-      display: grid;
-      gap: 18px;
+    .loader-panel,
+    .signed-out-panel,
+    .leaderboard-panel {
+      position: relative;
+      padding: 20px;
     }
 
-    .signed-out {
-      padding: 24px;
-    }
-
-    .signed-out h2 {
-      margin: 0 0 8px;
-      font-family: "Space Grotesk", system-ui, sans-serif;
-      font-size: 2rem;
-    }
-
-    .signed-out p {
-      margin: 0;
-      max-width: 56ch;
-      color: var(--muted);
-      line-height: 1.65;
-    }
-
-    .signed-out-actions {
+    .loader-panel,
+    .signed-out-panel {
+      min-height: calc(100dvh - 110px);
       display: flex;
-      gap: 12px;
-      flex-wrap: wrap;
-      margin-top: 18px;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      text-align: center;
     }
 
-    .slots-panel {
-      padding: 18px;
+    .loader-ring {
+      width: 74px;
+      height: 74px;
+      border-radius: 999px;
+      border: 6px solid rgba(255, 255, 255, 0.1);
+      border-top-color: var(--accent);
+      animation: spin 1s linear infinite;
     }
 
-    .section-head {
+    @keyframes spin {
+      from { transform: rotate(0deg); }
+      to { transform: rotate(360deg); }
+    }
+
+    .loader-title,
+    .signed-out-title {
+      margin: 18px 0 8px;
+      font-family: "Space Grotesk", system-ui, sans-serif;
+      font-size: clamp(1.45rem, 5vw, 2rem);
+      line-height: 1;
+    }
+
+    .loader-copy,
+    .signed-out-copy,
+    .board-copy {
+      margin: 0;
+      max-width: 34rem;
+      color: var(--muted);
+      line-height: 1.6;
+    }
+
+    .loader-meta {
+      margin-top: 14px;
+      padding: 10px 14px;
+      border-radius: 999px;
+      background: rgba(255, 255, 255, 0.08);
+      color: var(--muted);
+      font-size: 0.95rem;
+      font-weight: 600;
+    }
+
+    .loader-quota {
+      margin-top: 10px;
+      padding: 10px 14px;
+      border-radius: 18px;
+      border: 1px solid rgba(255, 255, 255, 0.1);
+      background: rgba(255, 255, 255, 0.06);
+      color: #fff3dc;
+      font-size: 0.95rem;
+      font-weight: 700;
+      line-height: 1.45;
+    }
+
+    .board-head {
       display: flex;
       align-items: flex-start;
       justify-content: space-between;
       gap: 12px;
-      margin-bottom: 14px;
+      margin-bottom: 18px;
     }
 
-    .section-title {
-      margin: 0;
-      font-size: 1.35rem;
-      font-weight: 700;
+    .board-head-main {
+      min-width: 0;
     }
 
-    .section-copy {
-      margin: 6px 0 0;
-      color: var(--muted);
-      line-height: 1.55;
-    }
-
-    .sessions-grid {
+    .board-head-side {
       display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
-      gap: 12px;
-    }
-
-    .slot-card {
-      background: rgba(255, 255, 255, 0.04);
-      padding: 16px;
-      cursor: pointer;
-      text-align: left;
-      color: var(--text);
-    }
-
-    .slot-card.selected {
-      border-color: rgba(111, 224, 255, 0.72);
-      background: linear-gradient(180deg, rgba(111, 224, 255, 0.14), rgba(255, 255, 255, 0.04));
-      box-shadow: inset 0 0 0 1px rgba(111, 224, 255, 0.16);
-    }
-
-    .slot-card.ended {
-      opacity: 0.78;
-    }
-
-    .slot-top {
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
       gap: 8px;
-      margin-bottom: 14px;
+      justify-items: end;
     }
 
-    .slot-title {
+    .board-title {
+      margin: 0;
       font-family: "Space Grotesk", system-ui, sans-serif;
-      font-size: 1.05rem;
-      font-weight: 700;
+      font-size: clamp(1.35rem, 4vw, 1.9rem);
+      letter-spacing: -0.03em;
     }
 
-    .slot-meta {
-      color: var(--muted);
-      font-size: 13px;
-      line-height: 1.5;
-    }
-
-    .content-grid {
-      display: grid;
-      grid-template-columns: minmax(0, 1.65fr) minmax(300px, 0.9fr);
-      gap: 18px;
-      align-items: start;
-    }
-
-    .leaderboard-panel,
-    .sidebar-panel {
-      padding: 18px;
-    }
-
-    .winner-banner {
-      display: flex;
+    .board-badge {
+      display: inline-flex;
       align-items: center;
-      justify-content: space-between;
-      gap: 12px;
-      padding: 14px 16px;
-      border-radius: 18px;
-      margin-bottom: 16px;
-      background: rgba(255, 181, 111, 0.14);
-      border: 1px solid rgba(255, 181, 111, 0.32);
-    }
-
-    .winner-banner strong {
-      color: var(--warm);
-      font-family: "Space Grotesk", system-ui, sans-serif;
-      font-size: 1.15rem;
-    }
-
-    .leaderboard-meta {
-      margin: 0 0 16px;
+      justify-content: center;
+      min-height: 38px;
+      padding: 0 14px;
+      border-radius: 999px;
+      border: 1px solid rgba(255, 255, 255, 0.14);
+      background: rgba(255, 255, 255, 0.08);
       color: var(--muted);
-      line-height: 1.55;
+      font-size: 0.92rem;
+      font-weight: 700;
+      white-space: nowrap;
     }
 
-    .leader-table {
+    .countdown-chip {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      min-height: 38px;
+      padding: 0 14px;
+      border-radius: 999px;
+      border: 1px solid rgba(255, 255, 255, 0.14);
+      background: rgba(8, 12, 24, 0.22);
+      color: #fff4da;
+      font-size: 0.92rem;
+      font-weight: 700;
+      white-space: nowrap;
+    }
+
+    .countdown-dot {
+      width: 9px;
+      height: 9px;
+      border-radius: 999px;
+      background: #ffb347;
+      box-shadow: 0 0 0 0 rgba(255, 179, 71, 0.52);
+      animation: livePulse 1.6s ease-out infinite;
+      flex: 0 0 auto;
+    }
+
+    .leaderboard-list {
       display: grid;
       gap: 10px;
     }
 
     .leader-row {
       display: grid;
-      grid-template-columns: 70px minmax(0, 1fr) auto;
+      grid-template-columns: 58px minmax(0, 1fr) auto;
+      gap: 12px;
       align-items: center;
-      gap: 14px;
-      padding: 14px 16px;
-      border-radius: 18px;
-      background: rgba(255, 255, 255, 0.04);
-      border: 1px solid rgba(255, 255, 255, 0.06);
+      padding: 14px;
+      border-radius: 20px;
+      border: 1px solid rgba(255, 255, 255, 0.08);
+      background: rgba(255, 255, 255, 0.05);
     }
 
     .leader-row.me {
-      border-color: rgba(111, 224, 255, 0.52);
-      background: rgba(111, 224, 255, 0.1);
-    }
-
-    .leader-row.champion {
-      border-color: rgba(255, 181, 111, 0.42);
+      background: var(--me);
+      border-color: rgba(111, 224, 255, 0.32);
     }
 
     .rank-chip {
+      min-height: 42px;
+      border-radius: 999px;
       display: inline-flex;
       align-items: center;
       justify-content: center;
-      min-width: 52px;
-      padding: 8px 10px;
-      border-radius: 999px;
-      background: rgba(255, 255, 255, 0.06);
-      color: var(--muted);
+      background: var(--panel-strong);
+      color: var(--text);
       font-weight: 700;
-      font-size: 13px;
+      font-size: 0.95rem;
     }
 
     .leader-name {
@@ -405,262 +284,301 @@
     .leader-name strong {
       display: block;
       font-size: 1rem;
+      line-height: 1.35;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
     }
 
     .leader-name span {
       display: block;
       margin-top: 3px;
       color: var(--muted);
-      font-size: 13px;
+      font-size: 0.86rem;
+      white-space: nowrap;
       overflow: hidden;
       text-overflow: ellipsis;
-      white-space: nowrap;
+    }
+
+    .presence-live,
+    .presence-playing {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      font-weight: 700;
+    }
+
+    .presence-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 999px;
+      flex: 0 0 auto;
+      background: currentColor;
+    }
+
+    .presence-loader {
+      width: 12px;
+      height: 12px;
+      border-radius: 999px;
+      flex: 0 0 auto;
+      border: 2px solid rgba(255, 131, 152, 0.24);
+      border-top-color: currentColor;
+      animation: spin 0.85s linear infinite;
+    }
+
+    .presence-live {
+      color: #79f3b6;
+    }
+
+    .presence-live .presence-dot {
+      box-shadow: 0 0 0 0 rgba(121, 243, 182, 0.5);
+      animation: livePulse 1.6s ease-out infinite;
+    }
+
+    .presence-playing {
+      color: #ff8398;
+    }
+
+    @keyframes livePulse {
+      0% {
+        transform: scale(1);
+        box-shadow: 0 0 0 0 rgba(121, 243, 182, 0.42);
+      }
+      70% {
+        transform: scale(1.12);
+        box-shadow: 0 0 0 10px rgba(121, 243, 182, 0);
+      }
+      100% {
+        transform: scale(1);
+        box-shadow: 0 0 0 0 rgba(121, 243, 182, 0);
+      }
     }
 
     .leader-score {
       font-family: "Space Grotesk", system-ui, sans-serif;
-      font-size: 1.15rem;
+      font-size: 1.08rem;
       font-weight: 700;
-      color: var(--warm);
+      color: #ffd2ab;
       white-space: nowrap;
     }
 
-    .empty-state {
-      padding: 20px;
+    .empty-state,
+    .page-message {
+      padding: 16px;
       border-radius: 18px;
-      border: 1px dashed rgba(255, 255, 255, 0.14);
+      border: 1px solid rgba(255, 255, 255, 0.08);
+      background: rgba(255, 255, 255, 0.05);
       color: var(--muted);
       line-height: 1.6;
-      background: rgba(255, 255, 255, 0.03);
     }
 
-    .profile-badge {
-      display: inline-flex;
-      align-items: center;
-      gap: 8px;
+    .page-message {
       margin-bottom: 14px;
-      padding: 10px 14px;
-      border-radius: 999px;
-      background: rgba(111, 224, 255, 0.12);
-      color: var(--accent);
-      border: 1px solid rgba(111, 224, 255, 0.28);
-      font-weight: 700;
     }
 
-    .stats-grid {
+    .page-message.error {
+      border-color: rgba(255, 131, 152, 0.24);
+      background: rgba(255, 131, 152, 0.12);
+      color: #ffd4dd;
+    }
+
+    .modal-backdrop {
+      position: fixed;
+      inset: 0;
+      z-index: 40;
       display: grid;
-      gap: 12px;
-      margin-bottom: 14px;
+      place-items: center;
+      padding: 18px;
+      background: rgba(7, 11, 20, 0.7);
+      backdrop-filter: blur(12px);
     }
 
-    .stat-card {
-      padding: 16px;
-      border-radius: 18px;
-      background: rgba(255, 255, 255, 0.04);
-      border: 1px solid rgba(255, 255, 255, 0.06);
+    .modal-card {
+      width: min(100%, 420px);
+      padding: 24px 20px 20px;
+      border-radius: 28px;
+      border: 1px solid rgba(255, 255, 255, 0.12);
+      background: linear-gradient(180deg, rgba(255, 255, 255, 0.12), rgba(255, 255, 255, 0.07));
+      box-shadow: 0 24px 56px rgba(10, 14, 24, 0.4);
+      text-align: center;
     }
 
-    .stat-label {
-      display: block;
+    .modal-trophy {
+      width: 74px;
+      height: 74px;
+      margin: 0 auto 14px;
+      border-radius: 999px;
+      display: grid;
+      place-items: center;
+      font-size: 2rem;
+      background: radial-gradient(circle at top, rgba(255, 233, 179, 0.95), rgba(245, 124, 0, 0.2));
+      box-shadow: 0 14px 34px rgba(245, 124, 0, 0.24);
+    }
+
+    .modal-title {
+      margin: 0 0 8px;
+      font-family: "Space Grotesk", system-ui, sans-serif;
+      font-size: clamp(1.4rem, 5vw, 1.85rem);
+      line-height: 1.05;
+    }
+
+    .modal-copy {
+      margin: 0;
       color: var(--muted);
-      font-size: 13px;
-      margin-bottom: 6px;
+      line-height: 1.65;
     }
 
-    .stat-value {
-      font-size: 1.8rem;
-      font-weight: 700;
+    .modal-winner {
+      margin: 14px auto 10px;
+      padding: 12px 16px;
+      width: fit-content;
+      max-width: 100%;
+      border-radius: 999px;
+      background: rgba(255, 255, 255, 0.08);
+      border: 1px solid rgba(255, 255, 255, 0.14);
+      font-weight: 800;
+      color: #fff3dc;
     }
 
-    .note-card {
-      padding: 16px;
-      border-radius: 18px;
-      background: linear-gradient(180deg, rgba(255, 181, 111, 0.1), rgba(255, 255, 255, 0.04));
-      border: 1px solid rgba(255, 181, 111, 0.18);
-      color: var(--muted);
-      line-height: 1.6;
+    .modal-actions {
+      display: grid;
+      gap: 10px;
+      margin-top: 18px;
     }
 
-    .note-card strong {
-      color: var(--text);
+    .modal-warning {
+      width: 74px;
+      height: 74px;
+      margin: 0 auto 14px;
+      border-radius: 999px;
+      display: grid;
+      place-items: center;
+      font-size: 2rem;
+      background: radial-gradient(circle at top, rgba(255, 214, 148, 0.92), rgba(255, 131, 152, 0.18));
+      box-shadow: 0 14px 34px rgba(255, 131, 152, 0.18);
+    }
+
+    .btn-primary {
+      background: rgba(121, 243, 182, 0.14);
+      border-color: rgba(121, 243, 182, 0.34);
+      color: #e7fff2;
     }
 
     [hidden] {
       display: none !important;
     }
 
-    @media (max-width: 980px) {
-      .hero,
-      .content-grid {
-        grid-template-columns: 1fr;
-      }
-    }
-
-    @media (max-width: 640px) {
-      .page {
-        width: min(100vw - 20px, 100%);
-        padding: 14px 0 28px;
-      }
-
-      .topbar,
-      .hero,
-      .slots-panel,
-      .leaderboard-panel,
-      .sidebar-panel,
-      .signed-out {
-        border-radius: 20px;
-      }
-
+    @media (max-width: 520px) {
       .topbar {
-        align-items: stretch;
-        flex-direction: column;
+        gap: 8px;
       }
 
-      .topbar-actions {
-        width: 100%;
+      .topbar-title {
+        font-size: 1rem;
       }
 
-      .nav-link,
-      .ghost-btn,
-      .primary-btn {
-        width: 100%;
-      }
-
-      .sessions-grid {
-        grid-template-columns: 1fr;
+      .btn {
+        min-height: 44px;
+        padding: 0 12px;
+        border-radius: 14px;
+        font-size: 0.92rem;
       }
 
       .leader-row {
-        grid-template-columns: 58px minmax(0, 1fr);
+        grid-template-columns: 52px minmax(0, 1fr);
       }
 
       .leader-score {
-        grid-column: span 2;
+        grid-column: 2;
+        justify-self: start;
       }
 
-      .winner-banner {
+      .board-head {
         flex-direction: column;
-        align-items: flex-start;
+      }
+
+      .board-head-side {
+        width: 100%;
+        justify-items: start;
+      }
+
+      .modal-card {
+        padding: 22px 16px 16px;
       }
     }
   </style>
 </head>
 <body>
   <main class="page">
-    <header class="topbar panel">
-      <a class="nav-link" href="./index.html">Retour a l'accueil</a>
-      <div class="topbar-actions">
-        <button class="ghost-btn" id="refreshBtn" type="button">Actualiser</button>
-      </div>
+    <header class="topbar">
+      <a class="btn" href="./inedex.html" id="backBtn">Retour</a>
+      <h1 class="topbar-title">Tournoi</h1>
+      <button class="btn btn-danger" id="exitTournamentBtn" type="button">Quitter le tournoi</button>
     </header>
 
-    <section class="hero panel">
-      <div>
-        <p class="eyebrow">Tournois prives</p>
-        <h1>Vos classements sur des sessions de 15 minutes.</h1>
-        <p class="hero-copy">
-          Cette page suit vos vraies victoires de parties terminees pendant la fenetre du slot choisi,
-          puis les compare a des bots du tournoi. Selectionnez un slot et suivez votre rang en direct.
-        </p>
-        <div id="pageMessage" class="message" hidden></div>
-      </div>
+    <div id="pageMessage" class="page-message" hidden></div>
 
-      <div class="hero-metrics">
-        <article class="metric-card">
-          <span class="metric-label">Session active</span>
-          <div class="metric-value" id="sessionLabel">En attente</div>
-        </article>
-        <article class="metric-card">
-          <span class="metric-label">Temps restant</span>
-          <div class="metric-value" id="timerText">--:--</div>
-        </article>
-        <article class="metric-card">
-          <span class="metric-label">Etat</span>
-          <div id="sessionStatusWrap">
-            <span class="status-pill active" id="sessionStatusText">A charger</span>
-          </div>
-        </article>
-        <article class="metric-card">
-          <span class="metric-label">Mes victoires dans ce slot</span>
-          <div class="metric-value" id="userWinsHero">0</div>
-        </article>
-      </div>
-    </section>
-
-    <section class="panel signed-out" id="signedOutPanel" hidden>
-      <h2>Connectez-vous pour voir vos tournois.</h2>
-      <p>
-        Les slots de tournoi sont personnels et sont relies a votre compte. Une fois connecte,
-        la page charge automatiquement vos sessions privees actives et votre classement.
+    <section id="loaderPanel" class="panel loader-panel" hidden>
+      <div class="loader-ring" aria-hidden="true"></div>
+      <h2 class="loader-title">Recherche des joueurs actifs</h2>
+      <p class="loader-copy">
+        Le tournoi se prépare. Nous cherchons les joueurs actifs et mettons le classement en place.
       </p>
-      <div class="signed-out-actions">
-        <a class="primary-btn" href="./index.html">Ouvrir l'accueil</a>
-        <a class="ghost-btn" href="./auth.html">Se connecter</a>
-      </div>
+      <div id="loaderMeta" class="loader-meta">10s restantes</div>
+      <div id="loaderQuota" class="loader-quota" hidden></div>
     </section>
 
-    <section class="dashboard" id="dashboard" hidden>
-      <section class="panel slots-panel">
-        <div class="section-head">
-          <div>
-            <h2 class="section-title">Choisissez un slot</h2>
-            <p class="section-copy">
-              Chaque compte dispose de 5 tournois prives actifs. Cliquez sur un slot pour charger son classement.
-            </p>
+    <section id="signedOutPanel" class="panel signed-out-panel" hidden>
+      <h2 class="signed-out-title">Connexion requise</h2>
+      <p class="signed-out-copy">
+        Connecte-toi d'abord pour accéder à ton tournoi et voir le classement.
+      </p>
+    </section>
+
+    <section id="leaderboardPanel" class="panel leaderboard-panel" hidden>
+      <div class="board-head">
+        <div class="board-head-main">
+          <h2 class="board-title">Classement du tournoi</h2>
+          <p id="leaderboardMeta" class="board-copy">Le classement se met à jour automatiquement.</p>
+        </div>
+        <div class="board-head-side">
+          <div id="sessionBadge" class="board-badge">Session active</div>
+          <div id="countdownChip" class="countdown-chip">
+            <span class="countdown-dot" aria-hidden="true"></span>
+            <span id="countdownText">Fin dans 15:00</span>
           </div>
         </div>
-        <div class="sessions-grid" id="sessionsGrid"></div>
-      </section>
+      </div>
 
-      <div class="content-grid">
-        <section class="panel leaderboard-panel">
-          <div class="section-head">
-            <div>
-              <h2 class="section-title">Classement du tournoi</h2>
-              <p class="section-copy" id="leaderboardMeta">
-                Le classement se met a jour automatiquement toutes les 10 secondes.
-              </p>
-            </div>
-          </div>
+      <div id="leaderboardState" class="empty-state" hidden></div>
+      <div id="leaderTable" class="leaderboard-list" hidden></div>
+    </section>
 
-          <div class="winner-banner" id="winnerBanner" hidden>
-            <div>
-              <div class="metric-label">Vainqueur de la session</div>
-              <strong id="winnerText"></strong>
-            </div>
-            <button class="ghost-btn" id="replayBtn" type="button">Charger un autre slot</button>
-          </div>
+    <section id="winnerModal" class="modal-backdrop" hidden>
+      <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="winnerModalTitle">
+        <div class="modal-trophy" aria-hidden="true">🏆</div>
+        <h2 id="winnerModalTitle" class="modal-title">Tournoi terminé</h2>
+        <p class="modal-copy">Le gagnant de ce tournoi est :</p>
+        <div id="winnerModalName" class="modal-winner">Vous</div>
+        <p id="winnerModalReward" class="modal-copy">10 000 Does ont été ajoutés au compte du gagnant.</p>
+        <div class="modal-actions">
+          <button id="winnerReplayBtn" class="btn btn-primary" type="button">Rejouer un tournoi</button>
+          <button id="winnerBackBtn" class="btn" type="button">Retour</button>
+        </div>
+      </div>
+    </section>
 
-          <div class="empty-state" id="leaderboardState">
-            Chargez un slot pour afficher le classement detaille du tournoi.
-          </div>
-          <div class="leader-table" id="leaderTable" hidden></div>
-        </section>
-
-        <aside class="panel sidebar-panel">
-          <div class="profile-badge" id="userBadge" hidden></div>
-
-          <div class="stats-grid">
-            <article class="stat-card">
-              <span class="stat-label">Victoires comptabilisées</span>
-              <div class="stat-value" id="userWinsValue">0</div>
-            </article>
-            <article class="stat-card">
-              <span class="stat-label">Rang actuel</span>
-              <div class="stat-value" id="userRankValue">--</div>
-            </article>
-          </div>
-
-          <div class="message" id="userStatus">
-            Connectez-vous puis choisissez un slot pour suivre votre progression.
-          </div>
-
-          <div class="note-card">
-            <strong>Repere utile:</strong>
-            le classement de cette page n'ouvre pas une partie speciale. Il reutilise vos vraies victoires
-            sur les parties normales terminees pendant la duree du slot choisi.
-          </div>
-        </aside>
+    <section id="exitConfirmModal" class="modal-backdrop" hidden>
+      <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="exitConfirmTitle">
+        <div class="modal-warning" aria-hidden="true">!</div>
+        <h2 id="exitConfirmTitle" class="modal-title">Quitter le tournoi ?</h2>
+        <p class="modal-copy">
+          Si tu quittes ce tournoi maintenant, tu l'abandonneras et tu retourneras à l'accueil.
+        </p>
+        <div class="modal-actions">
+          <button id="exitConfirmStayBtn" class="btn btn-primary" type="button">Rester dans le tournoi</button>
+          <button id="exitConfirmLeaveBtn" class="btn btn-danger" type="button">Oui, quitter</button>
+        </div>
       </div>
     </section>
   </main>

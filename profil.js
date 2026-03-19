@@ -1,11 +1,13 @@
 import { auth, logoutCurrentUser, watchAuthState } from "./auth.js";
 import { mountXchangeModal, getXchangeState } from "./xchange.js";
-import { mountRetraitModal } from "./retrait.js";
+import { mountRetraitModal, getWithdrawalRuleStatus } from "./retrait.js";
+import { mountSoldeModal, waitForBalanceHydration } from "./solde.js";
 import { db, doc, onSnapshot } from "./firebase-init.js";
 const BALANCE_DEBUG = true;
 let referralLoadToken = 0;
 let referralHintFreezeUntil = 0;
 let referralHintRestoreTimer = null;
+let withdrawalAvailabilityToken = 0;
 let profileClientUnsub = null;
 let profileRealtimeUid = "";
 let profileRealtimeRefreshTimer = null;
@@ -53,6 +55,13 @@ function formatAmount(value) {
   return new Intl.NumberFormat("fr-HT", {
     style: "currency",
     currency: "HTG",
+    maximumFractionDigits: 0,
+  }).format(amount);
+}
+
+function formatDoesAmount(value) {
+  const amount = Number(value || 0);
+  return new Intl.NumberFormat("fr-HT", {
     maximumFractionDigits: 0,
   }).format(amount);
 }
@@ -125,7 +134,7 @@ function ensureProfileModal() {
     <aside id="profileModalPanel" class="relative h-[88vh] w-[92vw] overflow-y-auto overscroll-contain rounded-3xl border border-white/20 bg-[#3F4766]/45 shadow-[14px_14px_34px_rgba(12,16,28,0.45),-10px_-10px_24px_rgba(98,113,151,0.18)] backdrop-blur-xl lg:h-screen lg:w-[50vw] lg:rounded-none lg:rounded-l-3xl" style="-webkit-overflow-scrolling: touch;">
       <div class="absolute inset-0 bg-gradient-to-b from-white/10 to-transparent"></div>
       <div class="relative flex h-full flex-col p-4 sm:p-6 lg:p-8">
-        <div class="flex items-center justify-between">
+        <div class="flex min-w-0 items-center justify-between gap-3">
           <div>
             <p class="text-xs uppercase tracking-[0.16em] text-white/70">Profile</p>
             <h2 class="mt-1 text-2xl font-bold text-white sm:text-3xl">Mon compte</h2>
@@ -141,26 +150,26 @@ function ensureProfileModal() {
             <p id="profileBalance" class="mt-2 text-sm text-white">-</p>
           </div>
           <div class="rounded-2xl border border-white/20 bg-white/10 p-4 shadow-[8px_8px_18px_rgba(19,25,40,0.34),-6px_-6px_14px_rgba(111,126,164,0.2)]">
-            <button id="profileDepositBtn" type="button" class="inline-flex w-full items-center justify-between rounded-xl border border-white/20 bg-white/10 px-3 py-2 text-sm font-semibold text-white shadow-[8px_8px_18px_rgba(19,25,40,0.34),-6px_-6px_14px_rgba(111,126,164,0.2)]">
-              <span class="inline-flex items-center gap-2">
+            <button id="profileDepositBtn" type="button" class="inline-flex w-full min-w-0 items-center justify-between gap-2 rounded-xl border border-white/20 bg-white/10 px-3 py-2 text-sm font-semibold text-white shadow-[8px_8px_18px_rgba(19,25,40,0.34),-6px_-6px_14px_rgba(111,126,164,0.2)]">
+              <span class="inline-flex min-w-0 flex-1 items-center gap-2">
                 <i class="fa-solid fa-plus text-[11px]"></i>
                 Faire un dépôt
               </span>
-              <i class="fa-solid fa-wallet text-xs text-white/80"></i>
+              <i class="fa-solid fa-wallet shrink-0 text-xs text-white/80"></i>
             </button>
-            <button id="profileXchangeBtn" type="button" class="mt-2 inline-flex w-full items-center justify-between rounded-xl border border-white/20 bg-white/10 px-3 py-2 text-sm font-semibold text-white shadow-[8px_8px_18px_rgba(19,25,40,0.34),-6px_-6px_14px_rgba(111,126,164,0.2)]">
-              <span class="inline-flex items-center gap-2">
+            <button id="profileXchangeBtn" type="button" class="mt-2 inline-flex w-full min-w-0 items-center justify-between gap-2 rounded-xl border border-white/20 bg-white/10 px-3 py-2 text-sm font-semibold text-white shadow-[8px_8px_18px_rgba(19,25,40,0.34),-6px_-6px_14px_rgba(111,126,164,0.2)]">
+              <span class="inline-flex min-w-0 flex-1 flex-wrap items-center gap-2">
                 <img src="./does.png" alt="Does" class="h-4 w-4 rounded-full object-cover" data-hide-on-error="1" />
                 Xchange en crypto
               </span>
-              <i class="fa-solid fa-coins text-xs text-white/80"></i>
+              <i class="fa-solid fa-coins shrink-0 text-xs text-white/80"></i>
             </button>
-            <button id="profileWithdrawBtn" type="button" class="mt-2 inline-flex w-full items-center justify-between rounded-xl border border-white/20 bg-white/10 px-3 py-2 text-sm font-semibold text-white shadow-[8px_8px_18px_rgba(19,25,40,0.34),-6px_-6px_14px_rgba(111,126,164,0.2)]">
-              <span class="inline-flex items-center gap-2">
+            <button id="profileWithdrawBtn" type="button" class="mt-2 inline-flex w-full min-w-0 items-center justify-between gap-2 rounded-xl border border-white/20 bg-white/10 px-3 py-2 text-sm font-semibold text-white shadow-[8px_8px_18px_rgba(19,25,40,0.34),-6px_-6px_14px_rgba(111,126,164,0.2)]">
+              <span class="inline-flex min-w-0 flex-1 items-center gap-2">
                 <i class="fa-solid fa-arrow-up-right-from-square text-[11px]"></i>
                 Faire un retrait
               </span>
-              <i class="fa-solid fa-money-bill-transfer text-xs text-white/80"></i>
+              <i class="fa-solid fa-money-bill-transfer shrink-0 text-xs text-white/80"></i>
             </button>
           </div>
         </div>
@@ -178,23 +187,23 @@ function ensureProfileModal() {
         </div>
 
         <div class="mt-4 rounded-2xl border border-white/20 bg-white/10 p-4 shadow-[8px_8px_18px_rgba(19,25,40,0.34),-6px_-6px_14px_rgba(111,126,164,0.2)]">
-          <div class="flex items-center justify-between gap-3">
+          <div class="flex min-w-0 flex-col items-start gap-3 sm:flex-row sm:items-center sm:justify-between">
             <p class="text-[11px] uppercase tracking-[0.14em] text-white/65">Parrainage</p>
-            <button id="profileCopyReferralCode" type="button" class="rounded-xl border border-white/20 bg-white/10 px-3 py-1.5 text-[11px] font-semibold text-white/90">
+            <button id="profileCopyReferralCode" type="button" class="w-full rounded-xl border border-white/20 bg-white/10 px-3 py-1.5 text-[11px] font-semibold text-white/90 sm:w-auto">
               Copier code
             </button>
           </div>
 
-          <div class="mt-2 flex items-center justify-between gap-2 rounded-xl border border-white/15 bg-white/10 px-3 py-2">
-            <p class="text-sm text-white/85">Code: <span id="profileReferralCode" class="font-semibold text-white">-</span></p>
-            <button id="profileCopyReferralLink" type="button" class="rounded-lg border border-white/20 bg-white/10 px-2.5 py-1.5 text-[11px] font-semibold text-white/90">
+          <div class="mt-2 flex min-w-0 flex-col items-start gap-2 rounded-xl border border-white/15 bg-white/10 px-3 py-2 sm:flex-row sm:items-center sm:justify-between">
+            <p class="w-full min-w-0 break-all text-sm text-white/85">Code: <span id="profileReferralCode" class="font-semibold text-white">-</span></p>
+            <button id="profileCopyReferralLink" type="button" class="w-full rounded-lg border border-white/20 bg-white/10 px-2.5 py-1.5 text-[11px] font-semibold text-white/90 sm:w-auto">
               Copier lien
             </button>
           </div>
 
           <p id="profileReferralHint" class="mt-2 text-xs text-white/70">Partage ton code ou ton lien pour parrainer.</p>
 
-          <div class="mt-3 grid grid-cols-2 gap-2">
+          <div class="mt-3 grid grid-cols-1 gap-2 sm:grid-cols-2">
             <div class="rounded-xl border border-white/15 bg-white/10 p-3">
               <p class="text-[11px] uppercase tracking-[0.12em] text-white/60">Inscriptions</p>
               <p id="profileReferralSignups" class="mt-1 text-lg font-semibold text-white">0</p>
@@ -228,7 +237,7 @@ function ensureProfileModal() {
 
     <div id="profileReferralRulesOverlay" class="fixed inset-0 z-[3050] hidden items-center justify-center bg-black/55 p-4 backdrop-blur-sm">
       <div id="profileReferralRulesPanel" class="w-full max-w-lg rounded-3xl border border-white/20 bg-[#3F4766]/80 p-5 text-white shadow-[14px_14px_34px_rgba(16,23,40,0.5),-10px_-10px_24px_rgba(112,126,165,0.2)] backdrop-blur-xl sm:p-6">
-        <div class="flex items-center justify-between">
+        <div class="flex min-w-0 items-center justify-between gap-3">
           <h3 class="text-lg font-bold">Règles parrainage</h3>
           <button id="profileReferralRulesClose" type="button" class="grid h-9 w-9 place-items-center rounded-full border border-white/20 bg-white/10 text-white">
             <i class="fa-solid fa-xmark"></i>
@@ -395,6 +404,70 @@ function showReferralCopyFeedback(message, success = true) {
   }, 1900);
 }
 
+async function updateWithdrawalAvailability(user, xState) {
+  const htgEl = document.getElementById("profileWithdrawAvailable");
+  const doesEl = document.getElementById("profileWithdrawDoesEquivalent");
+  const hintEl = document.getElementById("profileWithdrawRuleHint");
+  const metaEl = document.getElementById("profileWithdrawRuleMeta");
+  if (!htgEl && !doesEl && !hintEl && !metaEl) return;
+
+  const uid = String(user?.uid || auth.currentUser?.uid || "").trim();
+  const token = ++withdrawalAvailabilityToken;
+
+  if (!uid) {
+    if (htgEl) htgEl.textContent = "-";
+    if (doesEl) doesEl.textContent = "-";
+    if (hintEl) hintEl.textContent = "Connecte-toi pour voir ton retrait disponible.";
+    if (metaEl) metaEl.textContent = "";
+    return;
+  }
+
+  if (hintEl) hintEl.textContent = "Vérification des règles de retrait...";
+  if (metaEl) metaEl.textContent = "";
+
+  try {
+    const hydrated = await waitForBalanceHydration(uid, 2600);
+    if (token !== withdrawalAvailabilityToken) return;
+    if (BALANCE_DEBUG) {
+      console.log("[BALANCE_DEBUG][PROFILE] withdrawal hydration", {
+        uid,
+        hydrated,
+        __userBaseBalance: window.__userBaseBalance,
+        __userBalance: window.__userBalance,
+      });
+    }
+
+    const ruleStatus = await getWithdrawalRuleStatus(uid);
+    if (token !== withdrawalAvailabilityToken) return;
+
+    const withdrawableHtg = ruleStatus.canWithdraw ? Math.max(0, Number(xState?.availableGourdes || 0)) : 0;
+    const withdrawableDoes = Math.max(0, Math.floor(withdrawableHtg * Number(xState?.rate || 20)));
+
+    if (htgEl) htgEl.textContent = formatAmount(withdrawableHtg);
+    if (doesEl) doesEl.textContent = `${formatDoesAmount(withdrawableDoes)} Does`;
+
+    if (ruleStatus.canWithdraw) {
+      if (hintEl) hintEl.textContent = "Montant réellement retirable maintenant selon les règles actuelles.";
+      if (metaEl) metaEl.textContent = `Base retrait: ${formatAmount(withdrawableHtg)} | Taux: 1 HTG = ${Number(xState?.rate || 20)} Does`;
+      return;
+    }
+
+    if (hintEl) {
+      hintEl.textContent = `Retrait bloqué pour le moment: il reste ${formatAmount(ruleStatus.remainingToExchangeHtg)} à convertir en Does.`;
+    }
+    if (metaEl) {
+      metaEl.textContent = `Dépôts approuvés: ${formatAmount(ruleStatus.approvedDepositsHtg)} | Déjà converti: ${formatAmount(ruleStatus.convertedHtg)}`;
+    }
+  } catch (error) {
+    console.error("Erreur calcul disponibilité retrait profil:", error);
+    if (token !== withdrawalAvailabilityToken) return;
+    if (htgEl) htgEl.textContent = "-";
+    if (doesEl) doesEl.textContent = "-";
+    if (hintEl) hintEl.textContent = "Impossible de vérifier la disponibilité du retrait.";
+    if (metaEl) metaEl.textContent = "";
+  }
+}
+
 function updateProfileData(user) {
   const nameEl = document.getElementById("profileName");
   const emailEl = document.getElementById("profileEmail");
@@ -429,6 +502,7 @@ function updateProfileData(user) {
   if (balanceEl) balanceEl.textContent = formatAmount(xState.availableGourdes);
   if (doesEl) doesEl.textContent = String(xState.does || 0);
   if (exchangedEl) exchangedEl.textContent = `Échangé: ${xState.exchangedGourdes} HTG`;
+  void updateWithdrawalAvailability(user, xState);
   updateReferralData(user);
 }
 
@@ -526,6 +600,174 @@ export function mountProfileModal(options = {}) {
 
   mountXchangeModal({ triggerSelector: "#profileXchangeBtn" });
   mountRetraitModal({ triggerSelector: "#profileWithdrawBtn" });
+
+  ensureProfileRealtimeWatchers(auth.currentUser);
+  updateProfileData(auth.currentUser);
+}
+
+export function mountProfilePage(options = {}) {
+  const {
+    backSelector = "#profileBackBtn",
+    logoutRedirectUrl = "./auth.html",
+    fallbackBackUrl = "./inedex.html",
+  } = options;
+
+  const backBtn = document.querySelector(backSelector);
+  const logoutBtn = document.getElementById("profileLogoutBtn");
+  const referralRulesBtn = document.getElementById("profileReferralRulesBtn");
+  const referralRulesOverlay = document.getElementById("profileReferralRulesOverlay");
+  const referralRulesPanel = document.getElementById("profileReferralRulesPanel");
+  const referralRulesClose = document.getElementById("profileReferralRulesClose");
+  const generalRulesBtn = document.getElementById("profileGeneralRulesBtn");
+  const generalRulesOverlay = document.getElementById("profileGeneralRulesOverlay");
+  const generalRulesPanel = document.getElementById("profileGeneralRulesPanel");
+  const generalRulesClose = document.getElementById("profileGeneralRulesClose");
+  const copyReferralCodeBtn = document.getElementById("profileCopyReferralCode");
+  const copyReferralLinkBtn = document.getElementById("profileCopyReferralLink");
+
+  const closeOverlay = (overlay) => {
+    if (!overlay) return;
+    overlay.classList.add("hidden");
+    overlay.classList.remove("flex");
+    document.body.classList.remove("overflow-hidden");
+  };
+
+  const openOverlay = (overlay) => {
+    if (!overlay) return;
+    overlay.classList.remove("hidden");
+    overlay.classList.add("flex");
+    document.body.classList.add("overflow-hidden");
+  };
+
+  if (backBtn && backBtn.dataset.bound !== "1") {
+    backBtn.dataset.bound = "1";
+    backBtn.addEventListener("click", () => {
+      try {
+        const sameOriginReferrer = document.referrer && new URL(document.referrer).origin === window.location.origin;
+        if (sameOriginReferrer && window.history.length > 1) {
+          window.history.back();
+          return;
+        }
+      } catch (_) {}
+      window.location.href = fallbackBackUrl;
+    });
+  }
+
+  if (referralRulesPanel && referralRulesPanel.dataset.bound !== "1") {
+    referralRulesPanel.dataset.bound = "1";
+    referralRulesPanel.addEventListener("click", (ev) => ev.stopPropagation());
+  }
+
+  if (referralRulesOverlay && referralRulesOverlay.dataset.bound !== "1") {
+    referralRulesOverlay.dataset.bound = "1";
+    referralRulesOverlay.addEventListener("click", (ev) => {
+      if (ev.target === referralRulesOverlay) closeOverlay(referralRulesOverlay);
+    });
+  }
+
+  if (referralRulesClose && referralRulesClose.dataset.bound !== "1") {
+    referralRulesClose.dataset.bound = "1";
+    referralRulesClose.addEventListener("click", () => closeOverlay(referralRulesOverlay));
+  }
+
+  if (referralRulesBtn && referralRulesBtn.dataset.bound !== "1") {
+    referralRulesBtn.dataset.bound = "1";
+    referralRulesBtn.addEventListener("click", () => openOverlay(referralRulesOverlay));
+  }
+
+  if (generalRulesPanel && generalRulesPanel.dataset.bound !== "1") {
+    generalRulesPanel.dataset.bound = "1";
+    generalRulesPanel.addEventListener("click", (ev) => ev.stopPropagation());
+  }
+
+  if (generalRulesOverlay && generalRulesOverlay.dataset.bound !== "1") {
+    generalRulesOverlay.dataset.bound = "1";
+    generalRulesOverlay.addEventListener("click", (ev) => {
+      if (ev.target === generalRulesOverlay) closeOverlay(generalRulesOverlay);
+    });
+  }
+
+  if (generalRulesClose && generalRulesClose.dataset.bound !== "1") {
+    generalRulesClose.dataset.bound = "1";
+    generalRulesClose.addEventListener("click", () => closeOverlay(generalRulesOverlay));
+  }
+
+  if (generalRulesBtn && generalRulesBtn.dataset.bound !== "1") {
+    generalRulesBtn.dataset.bound = "1";
+    generalRulesBtn.addEventListener("click", () => openOverlay(generalRulesOverlay));
+  }
+
+  if (logoutBtn && logoutBtn.dataset.bound !== "1") {
+    logoutBtn.dataset.bound = "1";
+    logoutBtn.addEventListener("click", async () => {
+      try {
+        await logoutCurrentUser();
+        window.location.href = logoutRedirectUrl;
+      } catch (err) {
+        console.error("Logout error:", err);
+      }
+    });
+  }
+
+  const copyToClipboard = async (text) => {
+    const value = String(text || "").trim();
+    if (!value || value === "-") return false;
+    try {
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        await navigator.clipboard.writeText(value);
+        return true;
+      }
+    } catch (_) {}
+
+    try {
+      const area = document.createElement("textarea");
+      area.value = value;
+      area.style.position = "fixed";
+      area.style.opacity = "0";
+      document.body.appendChild(area);
+      area.select();
+      document.execCommand("copy");
+      document.body.removeChild(area);
+      return true;
+    } catch (_) {
+      return false;
+    }
+  };
+
+  if (copyReferralCodeBtn && copyReferralCodeBtn.dataset.bound !== "1") {
+    copyReferralCodeBtn.dataset.bound = "1";
+    copyReferralCodeBtn.addEventListener("click", async () => {
+      const code = document.getElementById("profileReferralCode")?.textContent || "";
+      const ok = await copyToClipboard(code);
+      showReferralCopyFeedback(ok ? "Code copié avec succès." : "Impossible de copier le code.", ok);
+    });
+  }
+
+  if (copyReferralLinkBtn && copyReferralLinkBtn.dataset.bound !== "1") {
+    copyReferralLinkBtn.dataset.bound = "1";
+    copyReferralLinkBtn.addEventListener("click", async () => {
+      const link = copyReferralLinkBtn.getAttribute("data-link") || "";
+      const ok = await copyToClipboard(link);
+      showReferralCopyFeedback(ok ? "Lien copié avec succès." : "Impossible de copier le lien.", ok);
+    });
+  }
+
+  mountSoldeModal({ triggerSelector: "#profileDepositBtn" });
+  mountXchangeModal({ triggerSelector: "#profileXchangeBtn" });
+  mountRetraitModal({ triggerSelector: "#profileWithdrawBtn" });
+
+  watchAuthState((user) => {
+    const activeUser = user || auth.currentUser || null;
+    ensureProfileRealtimeWatchers(activeUser);
+    updateProfileData(activeUser);
+  });
+
+  window.addEventListener("userBalanceUpdated", () => {
+    updateProfileData(auth.currentUser);
+  });
+  window.addEventListener("xchangeUpdated", () => {
+    updateProfileData(auth.currentUser);
+  });
 
   ensureProfileRealtimeWatchers(auth.currentUser);
   updateProfileData(auth.currentUser);

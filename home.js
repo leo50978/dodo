@@ -10,6 +10,8 @@ let page2ModulePromise = null;
 let pwaSupportModulePromise = null;
 const HOME_AUTH_BOOTSTRAP_TIMEOUT_MS = 900;
 const HOME_AUTH_SUCCESS_TIMEOUT_MS = 2600;
+const HOME_HERO_ROTATION_MS = 5000;
+let homeHeroRotationTimer = null;
 
 function homeDebug(event, data = {}) {
   try {
@@ -38,6 +40,35 @@ function readRecentAuthSuccessNotice() {
 
 function getHomeShell() {
   return document.getElementById("domino-app-shell") || document.body;
+}
+
+function stopHomeHeroRotation() {
+  if (!homeHeroRotationTimer) return;
+  window.clearInterval(homeHeroRotationTimer);
+  homeHeroRotationTimer = null;
+}
+
+function initHomeHeroRotation() {
+  const slides = Array.from(document.querySelectorAll("[data-home-hero-slide]"));
+  stopHomeHeroRotation();
+  if (slides.length === 0) return;
+
+  let activeIndex = slides.findIndex((slide) => slide.classList.contains("is-active"));
+  if (activeIndex < 0) activeIndex = 0;
+
+  const renderActiveSlide = () => {
+    slides.forEach((slide, index) => {
+      slide.classList.toggle("is-active", index === activeIndex);
+    });
+  };
+
+  renderActiveSlide();
+  if (slides.length === 1) return;
+
+  homeHeroRotationTimer = window.setInterval(() => {
+    activeIndex = (activeIndex + 1) % slides.length;
+    renderActiveSlide();
+  }, HOME_HERO_ROTATION_MS);
 }
 
 function ensureHomeLoadingOverlay() {
@@ -159,6 +190,7 @@ function clearHomeAuthBootstrapTimer() {
 homeDebug("bootstrap:start");
 schedulePwaSupportRegistration();
 warmPage2ModuleSoon();
+initHomeHeroRotation();
 const immediateUser = auth.currentUser || null;
 if (immediateUser?.uid) {
   homeDebug("bootstrap:currentUserImmediate", { uid: String(immediateUser.uid || "") });
