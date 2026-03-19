@@ -7,6 +7,7 @@ import {
   query,
   orderBy,
   onSnapshot,
+  onAuthStateChanged,
 } from "./firebase-init.js";
 import { orderClientActionSecure } from "./secure-functions.js";
 const BALANCE_DEBUG = true;
@@ -16,6 +17,8 @@ let stopWithdrawalsListener = null;
 let cachedOrders = [];
 let cachedWithdrawals = [];
 const MIN_DEPOSIT_HTG = 25;
+let soldeAuthUnsub = null;
+let soldeActiveUid = "";
 let balanceHydrationSession = {
   uid: "",
   ordersReady: false,
@@ -145,8 +148,6 @@ function openPaymentDepositDirectly(amount = 500) {
 
 function updateSoldBadge(balanceValue) {
   const badge = document.getElementById("soldBadge");
-  if (!badge) return;
-
   const baseBalance = Number(balanceValue || 0);
   const xState = getXchangeState(baseBalance, auth.currentUser?.uid);
   const availableBalance = Number(xState.availableGourdes || 0);
@@ -160,19 +161,22 @@ function updateSoldBadge(balanceValue) {
       availableBalance,
       prevUserBaseBalance: window.__userBaseBalance,
       prevUserBalance: window.__userBalance,
+      hasSoldBadge: !!badge,
     });
   }
 
-  if (availableBalance > 0) {
-    badge.innerHTML = `
-      <span class="inline-flex h-5 w-5 items-center justify-center rounded-full bg-white/20 text-[11px]">+</span>
-      <span>${formatAmount(availableBalance)}</span>
-    `;
-  } else {
-    badge.innerHTML = `
-      <span class="inline-flex h-5 w-5 items-center justify-center rounded-full bg-white/20 text-[11px]">+</span>
-      <span>Faire un dépôt</span>
-    `;
+  if (badge) {
+    if (availableBalance > 0) {
+      badge.innerHTML = `
+        <span class="inline-flex h-5 w-5 items-center justify-center rounded-full bg-white/20 text-[11px]">+</span>
+        <span>${formatAmount(availableBalance)}</span>
+      `;
+    } else {
+      badge.innerHTML = `
+        <span class="inline-flex h-5 w-5 items-center justify-center rounded-full bg-white/20 text-[11px]">+</span>
+        <span>Faire un dépôt</span>
+      `;
+    }
   }
 
   window.__userBaseBalance = baseBalance;
@@ -429,6 +433,39 @@ function attachWithdrawalsListener() {
   });
 }
 
+function detachSoldeRealtimeListeners() {
+  if (stopOrdersListener) {
+    stopOrdersListener();
+    stopOrdersListener = null;
+  }
+  if (stopWithdrawalsListener) {
+    stopWithdrawalsListener();
+    stopWithdrawalsListener = null;
+  }
+}
+
+function ensureSoldeAuthWatcher() {
+  if (soldeAuthUnsub) return;
+  soldeAuthUnsub = onAuthStateChanged(auth, (user) => {
+    const nextUid = String(user?.uid || "").trim();
+    if (!nextUid) {
+      soldeActiveUid = "";
+      cachedOrders = [];
+      cachedWithdrawals = [];
+      detachSoldeRealtimeListeners();
+      updateSoldBadge(0);
+      return;
+    }
+    if (nextUid === soldeActiveUid && stopOrdersListener && stopWithdrawalsListener) {
+      return;
+    }
+    soldeActiveUid = nextUid;
+    detachSoldeRealtimeListeners();
+    attachOrdersListener();
+    attachWithdrawalsListener();
+  });
+}
+
 function refreshBalanceFromCaches() {
   const approvedDeposits = cachedOrders
     .filter((o) => o.status === "approved")
@@ -596,6 +633,7 @@ export function mountSoldeModal(options = {}) {
   }
 
   updateSoldBadge(0);
+  ensureSoldeAuthWatcher();
   attachOrdersListener();
   attachWithdrawalsListener();
   window.addEventListener("xchangeUpdated", () => {

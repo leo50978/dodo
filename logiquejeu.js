@@ -122,6 +122,8 @@ let rehydrationRetryTimer = null;
 let startRevealAckInFlightId = "";
 let startRevealAckDoneId = "";
 let deckOrderSyncRoomId = "";
+let botTurnWakeTimer = null;
+let botTurnWakeKey = "";
 
 function makeClientActionId() {
   return `act_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 10)}`;
@@ -718,6 +720,14 @@ function clearTurnTimer() {
   }
 }
 
+function clearBotTurnWakeTimer() {
+  if (botTurnWakeTimer) {
+    clearTimeout(botTurnWakeTimer);
+    botTurnWakeTimer = null;
+  }
+  botTurnWakeKey = "";
+}
+
 async function touchPresence(reason = "") {
   const activeRoomId = String(roomId || "").trim();
   if (!activeRoomId || !auth.currentUser) return;
@@ -890,6 +900,7 @@ function clearSubs() {
   if (actionsUnsub) actionsUnsub();
   roomUnsub = null;
   actionsUnsub = null;
+  clearBotTurnWakeTimer();
   clearLaunchRetryTimer();
   clearRehydrationRetryTimer();
   clearRoomActionsReady(roomId);
@@ -981,6 +992,7 @@ function resetSessionState() {
   clearFinalizeGameTimer();
   clearLaunchRetryTimer();
   clearRehydrationRetryTimer();
+  clearBotTurnWakeTimer();
   setMatchLoading(false);
   roomId = null;
   seatIndex = -1;
@@ -1053,6 +1065,11 @@ async function ackRoomStartSeen(targetRoomId, reason = "") {
 
 function maybeNudgeServerForBotTurn(id, roomData) {
   if (!id || !roomData || String(roomData.status || "") !== "playing") return;
+  if (roomData.startRevealPending === true) {
+    botTurnNudgeKey = "";
+    clearBotTurnWakeTimer();
+    return;
+  }
   const currentPlayer = Number(roomData.currentPlayer);
   const turnActual = Number(roomData.turnActual);
   if (!Number.isFinite(currentPlayer) || !Number.isFinite(turnActual)) return;
@@ -1060,16 +1077,50 @@ function maybeNudgeServerForBotTurn(id, roomData) {
   const humanSeats = Array.isArray(window.GameSession?.humanSeats) ? window.GameSession.humanSeats : [];
   if (humanSeats.indexOf(currentPlayer) !== -1) {
     botTurnNudgeKey = "";
+    clearBotTurnWakeTimer();
     return;
   }
 
-  const key = `${id}:${Math.trunc(turnActual)}:${Math.trunc(currentPlayer)}`;
+  const lockUntilMs = Number(roomData.turnLockedUntilMs);
+  const safeLockUntilMs = Number.isFinite(lockUntilMs) ? Math.trunc(lockUntilMs) : 0;
+  const nowMs = Date.now();
+  const wakeKey = `${id}:${Math.trunc(turnActual)}:${Math.trunc(currentPlayer)}:${safeLockUntilMs}`;
+
+  if (safeLockUntilMs > nowMs + 40) {
+    if (botTurnWakeKey !== wakeKey || !botTurnWakeTimer) {
+      clearBotTurnWakeTimer();
+      botTurnWakeKey = wakeKey;
+      const waitMs = Math.max(80, (safeLockUntilMs - nowMs) + 80);
+      debugMatch("botTurn:wakeScheduled", {
+        currentPlayer: Math.trunc(currentPlayer),
+        turnActual: Math.trunc(turnActual),
+        turnLockedUntilMs: safeLockUntilMs,
+        waitMs,
+      });
+      botTurnWakeTimer = setTimeout(() => {
+        botTurnWakeTimer = null;
+        if (botTurnWakeKey !== wakeKey) return;
+        const liveRoom = lastRoomSnapshotData || null;
+        if (!liveRoom || String(roomId || "") !== String(id)) return;
+        if (String(liveRoom.status || "") !== "playing") return;
+        if (Number(liveRoom.currentPlayer) !== Math.trunc(currentPlayer)) return;
+        if (Number(liveRoom.turnActual) !== Math.trunc(turnActual)) return;
+        maybeNudgeServerForBotTurn(id, liveRoom);
+      }, waitMs);
+    }
+    botTurnNudgeKey = "";
+    return;
+  }
+
+  clearBotTurnWakeTimer();
+  const key = `${id}:${Math.trunc(turnActual)}:${Math.trunc(currentPlayer)}:${safeLockUntilMs}`;
   if (botTurnNudgeKey === key) return;
   botTurnNudgeKey = key;
 
   debugMatch("botTurn:nudge", {
     currentPlayer: Math.trunc(currentPlayer),
     turnActual: Math.trunc(turnActual),
+    turnLockedUntilMs: safeLockUntilMs,
   });
 
   startRoomIfNeeded(id).catch((err) => {
@@ -1953,6 +2004,7 @@ function watchRoom(id) {
       });
 
       if (data.status === "waiting") {
+        clearBotTurnWakeTimer();
         clearTurnTimer();
         setMatchLoading(true, "Connexion des joueurs en cours.");
         scheduleWaitingCountdown(id, data);
@@ -1960,6 +2012,7 @@ function watchRoom(id) {
       }
 
       if (data.status === "ended") {
+        clearBotTurnWakeTimer();
         markRoomActionsReady(id);
         clearFinalizeGameTimer();
         clearTurnTimer();
@@ -2014,6 +2067,7 @@ function watchRoom(id) {
       }
 
       if (data.status === "closing") {
+        clearBotTurnWakeTimer();
         markRoomActionsReady(id);
         clearFinalizeGameTimer();
         clearTurnTimer();
@@ -2024,6 +2078,7 @@ function watchRoom(id) {
       }
 
       if (data.status === "closed") {
+        clearBotTurnWakeTimer();
         markRoomActionsReady(id);
         clearFinalizeGameTimer();
         clearTurnTimer();

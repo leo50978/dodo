@@ -5,7 +5,12 @@ import {
   showGlobalLoading,
   hideGlobalLoading,
 } from "./loading-ui.js";
-import { getPublicGameStakeOptionsSecure, updateClientProfileSecure } from "./secure-functions.js";
+import {
+  getPublicGameStakeOptionsSecure,
+  updateClientProfileSecure,
+  getShareSitePromoStatusSecure,
+  recordShareSitePromoSecure,
+} from "./secure-functions.js";
 import { auth, db, collection, query, orderBy, limit, onSnapshot, doc, setDoc, serverTimestamp } from "./firebase-init.js";
 
 const CHAT_COLLECTION = "globalChannelMessages";
@@ -17,6 +22,11 @@ const PAGE2_BOOTSTRAP_MIN_MS = 650;
 const PAGE2_BOOTSTRAP_TIMEOUT_MS = 2600;
 const PAGE2_HERO_IMAGES = Object.freeze(["hero.jpg", "hero1.jpg", "hero2.jpg"]);
 const PAGE2_HERO_ROTATION_MS = 10000;
+const SHARE_SITE_PROMO_TARGET = 5;
+const SHARE_SITE_PROMO_REWARD_DOES = 100;
+const SHARE_SITE_PROMO_LINK = "https://dominoeslakay.com";
+const SHARE_SITE_PROMO_TITLE = "Dominoes Lakay";
+const SHARE_SITE_PROMO_TEXT = "Viens jouer au domino avec moi et gagne de l'argent. 25 Gdes gratuit comme prime d'inscription.";
 const DEFAULT_GAME_STAKE_OPTIONS = Object.freeze([
   Object.freeze({ id: "stake_100", stakeDoes: 100, rewardDoes: 300, enabled: true, sortOrder: 10 }),
   Object.freeze({ id: "stake_500", stakeDoes: 500, rewardDoes: 1500, enabled: false, sortOrder: 20 }),
@@ -36,6 +46,7 @@ let xchangeModulePromise = null;
 let soldeUiReadyRunId = 0;
 let soldeUiReadyPromise = null;
 let page2HeroRotationTimer = null;
+let page2SharePromoCountdownTimer = null;
 const PAGE2_PRESENCE_PING_MS = 60 * 1000;
 
 async function runPage2Animations() {
@@ -113,6 +124,96 @@ function markTournamentIntroSeen() {
     localStorage.setItem(TOURNAMENT_INTRO_SEEN_STORAGE_KEY, "1");
   } catch (_) {
   }
+}
+
+function makePromoActionId() {
+  return `share_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 9)}`;
+}
+
+function isShareAbortError(error) {
+  const name = String(error?.name || "").toLowerCase();
+  const code = String(error?.code || "").toLowerCase();
+  const message = String(error?.message || "").toLowerCase();
+  return name === "aborterror"
+    || code === "aborterror"
+    || message.includes("cancel")
+    || message.includes("annul");
+}
+
+function formatPromoCountdown(ms = 0) {
+  const totalMs = Math.max(0, Number(ms) || 0);
+  const totalSeconds = Math.ceil(totalMs / 1000);
+  const days = Math.floor(totalSeconds / 86400);
+  const hours = Math.floor((totalSeconds % 86400) / 3600);
+  const minutes = Math.floor((totalSeconds % 3600) / 60);
+
+  if (days > 0) {
+    return `${days}j ${String(hours).padStart(2, "0")}h`;
+  }
+  if (hours > 0) {
+    return `${hours}h ${String(minutes).padStart(2, "0")}m`;
+  }
+  return `${Math.max(0, minutes)}m`;
+}
+
+function isCompactSharePromoUi() {
+  return window.matchMedia("(max-width: 639px)").matches;
+}
+
+function buildShareSitePromoPayload() {
+  return {
+    title: SHARE_SITE_PROMO_TITLE,
+    text: SHARE_SITE_PROMO_TEXT,
+    url: SHARE_SITE_PROMO_LINK,
+  };
+}
+
+function buildShareSitePromoMessage() {
+  const payload = buildShareSitePromoPayload();
+  return `${payload.text} ${payload.url}`.trim();
+}
+
+function buildShareSitePromoTargets() {
+  const payload = buildShareSitePromoPayload();
+  const message = buildShareSitePromoMessage();
+  return Object.freeze([
+    {
+      id: "whatsapp",
+      label: "WhatsApp",
+      icon: "fa-brands fa-whatsapp",
+      url: `https://wa.me/?text=${encodeURIComponent(message)}`,
+    },
+    {
+      id: "facebook",
+      label: "Facebook",
+      icon: "fa-brands fa-facebook-f",
+      url: `https://www.facebook.com/sharer/sharer.php?u=${encodeURIComponent(payload.url)}`,
+    },
+    {
+      id: "x",
+      label: "X",
+      icon: "fa-brands fa-x-twitter",
+      url: `https://twitter.com/intent/tweet?text=${encodeURIComponent(payload.text)}&url=${encodeURIComponent(payload.url)}`,
+    },
+    {
+      id: "telegram",
+      label: "Telegram",
+      icon: "fa-brands fa-telegram",
+      url: `https://t.me/share/url?url=${encodeURIComponent(payload.url)}&text=${encodeURIComponent(payload.text)}`,
+    },
+  ]);
+}
+
+async function openShareSitePromoTarget(targetId = "") {
+  const target = buildShareSitePromoTargets().find((item) => item.id === String(targetId || "").trim()) || null;
+  if (!target) {
+    throw new Error("Canal de partage introuvable.");
+  }
+  const popup = window.open(target.url, "_blank", "noopener,noreferrer");
+  if (!popup) {
+    window.location.href = target.url;
+  }
+  return { source: target.id };
 }
 
 async function ensureSoldeUiReady(triggerSelector = "#soldBadge") {
@@ -516,6 +617,10 @@ function initAgentSupportAlert(user) {
 export function renderPage2(user, options = {}) {
   stopPage2ChatWatchers();
   stopPage2HeroRotation();
+  if (page2SharePromoCountdownTimer) {
+    window.clearInterval(page2SharePromoCountdownTimer);
+    page2SharePromoCountdownTimer = null;
+  }
   const pageShell = getPage2Shell();
   const runId = ++page2BootstrapRunId;
   page2PresenceUser = user || null;
@@ -575,6 +680,18 @@ export function renderPage2(user, options = {}) {
             <button id="tournamentBtn" type="button" class="h-12 w-full rounded-[16px] border border-white/25 bg-white/10 px-8 text-sm font-semibold text-white shadow-[8px_8px_18px_rgba(22,29,45,0.35),-6px_-6px_14px_rgba(118,131,172,0.2)] backdrop-blur-md transition hover:-translate-y-0.5 hover:bg-white/15">
               Tournois
             </button>
+            <button id="sharePromoBtn" type="button" class="flex min-h-[56px] w-full items-center justify-between gap-2 rounded-[16px] border border-white/25 bg-white/10 px-4 py-3 text-left text-white shadow-[8px_8px_18px_rgba(22,29,45,0.35),-6px_-6px_14px_rgba(118,131,172,0.2)] backdrop-blur-md transition hover:-translate-y-0.5 hover:bg-white/15 sm:gap-3 sm:px-5">
+              <span class="flex min-w-0 items-center gap-3">
+                <span class="grid h-10 w-10 shrink-0 place-items-center rounded-2xl border border-white/15 bg-white/10 text-[18px] text-white/90">
+                  <i class="fa-solid fa-share-nodes"></i>
+                </span>
+                <span class="min-w-0">
+                  <span id="sharePromoBtnTitle" class="block truncate text-[13px] font-semibold leading-tight text-white sm:text-sm">Partager et gagner 100 Does</span>
+                  <span id="sharePromoBtnMeta" class="hidden truncate text-xs text-white/68 sm:block">5 partages valides pour debloquer le bonus.</span>
+                </span>
+              </span>
+              <span id="sharePromoBtnBadge" class="shrink-0 rounded-full border border-[#ffb26e]/35 bg-[#F57C00]/16 px-2.5 py-1 text-[11px] font-semibold text-[#ffd5ae] sm:px-3">0/5</span>
+            </button>
           </div>
         </section>
       </div>
@@ -623,6 +740,53 @@ export function renderPage2(user, options = {}) {
         <button id="tournamentIntroContinueBtn" type="button" class="mt-5 h-12 w-full rounded-[18px] border border-[#ffb26e] bg-[#F57C00] text-sm font-semibold text-white shadow-[9px_9px_20px_rgba(155,78,25,0.45),-7px_-7px_16px_rgba(255,173,96,0.2)] transition hover:-translate-y-0.5 sm:mt-6 sm:h-12 sm:text-[15px]">
           Continuer
         </button>
+      </div>
+    </div>
+  `);
+
+  pageShell.insertAdjacentHTML("beforeend", `
+    <div id="sharePromoOverlay" class="fixed inset-0 z-[3455] hidden items-end justify-center bg-[#12192b]/65 px-[max(12px,env(safe-area-inset-left))] pb-[max(12px,env(safe-area-inset-bottom))] pt-[max(12px,env(safe-area-inset-top))] backdrop-blur-sm sm:items-center sm:px-4 sm:py-4">
+      <div id="sharePromoPanel" class="max-h-full w-full overflow-y-auto rounded-[28px] border border-white/15 bg-[linear-gradient(180deg,rgba(82,94,132,0.98),rgba(55,65,95,0.98))] px-4 pb-[max(1rem,env(safe-area-inset-bottom))] pt-4 text-white shadow-[0_-16px_38px_rgba(12,18,31,0.42)] sm:max-h-[min(88vh,760px)] sm:max-w-lg sm:rounded-[30px] sm:border-white/20 sm:px-6 sm:pb-6 sm:pt-6 sm:shadow-[14px_14px_34px_rgba(16,23,40,0.5),-10px_-10px_24px_rgba(112,126,165,0.2)]">
+        <div class="flex items-start justify-between gap-3">
+          <div class="min-w-0 pr-2">
+            <p class="text-xs font-semibold uppercase tracking-[0.24em] text-[#ffd4ab]/80">Bonus partage</p>
+            <h3 class="mt-2 text-[1.2rem] font-bold leading-tight sm:text-[1.55rem]">Partage le site et gagne 100 Does</h3>
+          </div>
+          <button id="sharePromoCloseBtn" type="button" class="grid h-10 w-10 shrink-0 place-items-center rounded-full border border-white/20 bg-white/10 text-white">
+            <i class="fa-solid fa-xmark"></i>
+          </button>
+        </div>
+        <p class="mt-3 text-[13px] leading-6 text-white/84 sm:text-sm">
+          Clique sur <span class="font-semibold text-white">Partager le site</span> 5 fois pour remplir la barre. A la fin, tu recois <span class="font-semibold text-white">100 Does</span> en bonus.
+        </p>
+        <p class="mt-2 text-xs leading-5 text-white/62">
+          Ce bonus suit les regles bonus du wallet et doit etre joue avant une reconversion.
+        </p>
+        <div class="mt-4 rounded-[24px] border border-white/12 bg-white/8 p-4 shadow-[inset_4px_4px_10px_rgba(20,28,45,0.28),inset_-4px_-4px_10px_rgba(123,137,180,0.08)]">
+          <div class="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between sm:gap-3">
+            <p id="sharePromoProgressText" class="text-sm font-semibold text-white">0/5 partages</p>
+            <span id="sharePromoRewardBadge" class="inline-flex w-fit rounded-full border border-[#ffb26e]/35 bg-[#F57C00]/16 px-3 py-1 text-[11px] font-semibold text-[#ffd5ae]">100 Does</span>
+          </div>
+          <div class="mt-3 h-3 overflow-hidden rounded-full bg-black/20">
+            <div id="sharePromoProgressBar" class="h-full w-0 rounded-full bg-[linear-gradient(90deg,#f57c00,#ffb26e)] transition-[width] duration-300 ease-out"></div>
+          </div>
+          <p id="sharePromoStatusText" class="mt-3 text-sm leading-6 text-white/82">Partage le site 5 fois pour debloquer ton bonus.</p>
+          <p id="sharePromoCooldownText" class="mt-1 text-xs text-white/60"></p>
+        </div>
+        <div class="mt-5 rounded-[24px] border border-white/12 bg-white/8 p-4 shadow-[inset_4px_4px_10px_rgba(20,28,45,0.24),inset_-4px_-4px_10px_rgba(123,137,180,0.08)]">
+          <p class="text-xs font-semibold uppercase tracking-[0.18em] text-white/58">Choisis une application</p>
+          <div id="sharePromoTargetGrid" class="mt-3 grid grid-cols-4 gap-2 sm:gap-3"></div>
+          <p id="sharePromoPendingText" class="mt-3 text-xs leading-5 text-white/62">
+            Choisis une application, partage le lien, puis reviens ici pour valider ton partage.
+          </p>
+          <button id="sharePromoConfirmBtn" type="button" class="mt-3 inline-flex h-11 w-full items-center justify-center gap-2 rounded-[16px] border border-white/18 bg-white/10 text-sm font-semibold text-white/78 transition hover:bg-white/15 disabled:cursor-not-allowed disabled:opacity-55" disabled>
+            <i class="fa-solid fa-check"></i>
+            <span id="sharePromoConfirmBtnLabel">Valider ce partage</span>
+          </button>
+        </div>
+        <p class="mt-3 text-center text-xs leading-5 text-white/62">
+          Le bonus revient une fois tous les 3 jours apres validation complete.
+        </p>
       </div>
     </div>
   `);
@@ -741,6 +905,245 @@ export function renderPage2(user, options = {}) {
   const stakeUnavailablePanel = document.getElementById("stakeUnavailablePanel");
   const stakeUnavailableClose = document.getElementById("stakeUnavailableClose");
   const tournamentBtn = document.getElementById("tournamentBtn");
+  const sharePromoBtn = document.getElementById("sharePromoBtn");
+  const sharePromoBtnTitle = document.getElementById("sharePromoBtnTitle");
+  const sharePromoBtnMeta = document.getElementById("sharePromoBtnMeta");
+  const sharePromoBtnBadge = document.getElementById("sharePromoBtnBadge");
+  const sharePromoOverlay = document.getElementById("sharePromoOverlay");
+  const sharePromoPanel = document.getElementById("sharePromoPanel");
+  const sharePromoCloseBtn = document.getElementById("sharePromoCloseBtn");
+  const sharePromoProgressText = document.getElementById("sharePromoProgressText");
+  const sharePromoProgressBar = document.getElementById("sharePromoProgressBar");
+  const sharePromoStatusText = document.getElementById("sharePromoStatusText");
+  const sharePromoCooldownText = document.getElementById("sharePromoCooldownText");
+  const sharePromoTargetGrid = document.getElementById("sharePromoTargetGrid");
+  const sharePromoPendingText = document.getElementById("sharePromoPendingText");
+  const sharePromoConfirmBtn = document.getElementById("sharePromoConfirmBtn");
+  const sharePromoConfirmBtnLabel = document.getElementById("sharePromoConfirmBtnLabel");
+  let sharePromoState = null;
+  let sharePromoStatusPromise = null;
+  let sharePromoActionInFlight = false;
+  let pendingShareSource = "";
+
+  const clearSharePromoCountdownTimer = () => {
+    if (!page2SharePromoCountdownTimer) return;
+    window.clearInterval(page2SharePromoCountdownTimer);
+    page2SharePromoCountdownTimer = null;
+  };
+
+  const renderSharePromoCooldown = (state = {}) => {
+    const isCoolingDown = state.isCoolingDown === true;
+    const remainingMs = isCoolingDown
+      ? Math.max(0, Number(state.cooldownUntilMs) - Date.now())
+      : Math.max(0, Number(state.cooldownRemainingMs) || 0);
+    const cooldownLabel = isCoolingDown
+      ? `Disponible de nouveau dans ${formatPromoCountdown(remainingMs)}`
+      : "Le bonus revient une fois tous les 3 jours apres validation complete.";
+    const compactUi = isCompactSharePromoUi();
+
+    if (sharePromoCooldownText) {
+      sharePromoCooldownText.textContent = cooldownLabel;
+    }
+    if (sharePromoBtnMeta) {
+      const shareCount = Math.max(0, Number(state.shareCount) || 0);
+      const targetCount = Math.max(1, Number(state.targetCount) || SHARE_SITE_PROMO_TARGET);
+      const remainingCount = Math.max(0, Number(state.remainingCount) || (targetCount - shareCount));
+      sharePromoBtnMeta.textContent = isCoolingDown
+        ? (compactUi ? `Revient dans ${formatPromoCountdown(remainingMs)}` : cooldownLabel)
+        : shareCount > 0
+          ? (compactUi ? `${remainingCount} restant(s)` : `${remainingCount} partage(s) restants pour terminer ce cycle.`)
+          : (compactUi ? "Bonus 100 Does" : "5 partages valides pour debloquer le bonus.");
+    }
+  };
+
+  const setSharePromoActionLoading = (loading) => {
+    sharePromoActionInFlight = loading === true;
+    if (sharePromoConfirmBtn) {
+      sharePromoConfirmBtn.disabled = loading === true || !pendingShareSource || sharePromoState?.isCoolingDown === true;
+      sharePromoConfirmBtn.classList.toggle("opacity-70", loading === true);
+      sharePromoConfirmBtn.classList.toggle("cursor-wait", loading === true);
+    }
+  };
+
+  const renderSharePromoTargets = () => {
+    if (!sharePromoTargetGrid) return;
+    const targets = buildShareSitePromoTargets();
+    sharePromoTargetGrid.innerHTML = targets.map((target) => `
+      <button
+        type="button"
+        class="share-promo-target inline-flex min-h-[56px] items-center justify-center rounded-[18px] border border-white/15 bg-white/8 px-3 py-3 text-white/88 transition hover:bg-white/14"
+        data-share-target="${target.id}"
+        aria-label="${target.label}"
+        title="${target.label}"
+      >
+        <i class="${target.icon} text-[20px]"></i>
+        <span class="sr-only">${target.label}</span>
+      </button>
+    `).join("");
+  };
+
+  const setPendingShareSource = (source = "") => {
+    pendingShareSource = String(source || "").trim();
+    const hasPendingShare = !!pendingShareSource;
+    if (sharePromoConfirmBtn) {
+      sharePromoConfirmBtn.disabled = !hasPendingShare || sharePromoState?.isCoolingDown === true;
+    }
+    if (sharePromoConfirmBtnLabel) {
+      sharePromoConfirmBtnLabel.textContent = hasPendingShare
+        ? `Valider le partage ${pendingShareSource}`
+        : "Valider ce partage";
+    }
+    if (sharePromoPendingText) {
+      sharePromoPendingText.textContent = hasPendingShare
+        ? `Fenetre ${pendingShareSource} ouverte. Reviens ici puis valide seulement si tu as bien partage le lien ${SHARE_SITE_PROMO_LINK}.`
+        : "Choisis une application, partage le lien, puis reviens ici pour valider ton partage.";
+    }
+  };
+
+  const applySharePromoState = (rawState = null) => {
+    sharePromoState = rawState && typeof rawState === "object" ? { ...rawState } : null;
+    const state = sharePromoState || {
+      targetCount: SHARE_SITE_PROMO_TARGET,
+      shareCount: 0,
+      rewardDoes: SHARE_SITE_PROMO_REWARD_DOES,
+      progressPercent: 0,
+      remainingCount: SHARE_SITE_PROMO_TARGET,
+      canShare: false,
+      isCoolingDown: false,
+      cooldownRemainingMs: 0,
+      cooldownUntilMs: 0,
+      rewardGranted: false,
+    };
+
+    const shareCount = Math.max(0, Number(state.shareCount) || 0);
+    const targetCount = Math.max(1, Number(state.targetCount) || SHARE_SITE_PROMO_TARGET);
+    const remainingCount = Math.max(0, Number(state.remainingCount) || (targetCount - shareCount));
+    const progressPercent = Math.max(0, Math.min(100, Number(state.progressPercent) || Math.round((shareCount / targetCount) * 100)));
+    const isCoolingDown = state.isCoolingDown === true;
+    const rewardGranted = state.rewardGranted === true;
+
+    if (sharePromoProgressText) {
+      sharePromoProgressText.textContent = `${shareCount}/${targetCount} partages`;
+    }
+    if (sharePromoProgressBar) {
+      sharePromoProgressBar.style.width = `${progressPercent}%`;
+    }
+    if (sharePromoBtnBadge) {
+      sharePromoBtnBadge.textContent = `${shareCount}/${targetCount}`;
+    }
+
+    if (sharePromoBtnTitle) {
+      sharePromoBtnTitle.textContent = isCompactSharePromoUi()
+        ? (isCoolingDown ? "Bonus en pause" : "Bonus partage")
+        : (isCoolingDown ? "Bonus partage deja utilise" : `Partager et gagner ${SHARE_SITE_PROMO_REWARD_DOES} Does`);
+    }
+
+    if (sharePromoStatusText) {
+      if (rewardGranted && isCoolingDown) {
+        sharePromoStatusText.textContent = `Bravo, tes ${SHARE_SITE_PROMO_REWARD_DOES} Does bonus ont deja ete credites.`;
+      } else if (remainingCount <= 0) {
+        sharePromoStatusText.textContent = "Bonus valide. Le prochain cycle sera disponible apres le delai.";
+      } else if (shareCount > 0) {
+        sharePromoStatusText.textContent = `Encore ${remainingCount} partage(s) pour debloquer tes ${SHARE_SITE_PROMO_REWARD_DOES} Does.`;
+      } else {
+        sharePromoStatusText.textContent = `Partage le site ${targetCount} fois pour debloquer ton bonus.`;
+      }
+    }
+
+    renderSharePromoCooldown({
+      ...state,
+      shareCount,
+      targetCount,
+      remainingCount,
+      isCoolingDown,
+    });
+
+    if (sharePromoBtn) {
+      sharePromoBtn.classList.toggle("opacity-65", isCoolingDown);
+      sharePromoBtn.classList.toggle("border-white/15", isCoolingDown);
+      sharePromoBtn.classList.toggle("bg-white/5", isCoolingDown);
+      sharePromoBtn.setAttribute("aria-disabled", isCoolingDown ? "true" : "false");
+    }
+
+    if (!sharePromoActionInFlight) {
+      if (sharePromoConfirmBtn) {
+        sharePromoConfirmBtn.disabled = isCoolingDown || !pendingShareSource;
+      }
+    }
+
+    clearSharePromoCountdownTimer();
+    if (isCoolingDown && Number(state.cooldownUntilMs) > Date.now()) {
+      page2SharePromoCountdownTimer = window.setInterval(() => {
+        const remainingMs = Math.max(0, Number(state.cooldownUntilMs) - Date.now());
+        const nextCoolingDown = remainingMs > 0;
+        sharePromoState = {
+          ...(sharePromoState || state),
+          cooldownRemainingMs: remainingMs,
+          isCoolingDown: nextCoolingDown,
+          cooldownUntilMs: Number(state.cooldownUntilMs) || 0,
+        };
+        renderSharePromoCooldown({
+          ...(sharePromoState || state),
+          shareCount,
+          targetCount,
+          remainingCount,
+          isCoolingDown: nextCoolingDown,
+        });
+        if (!nextCoolingDown) {
+          clearSharePromoCountdownTimer();
+          applySharePromoState({
+            ...(sharePromoState || state),
+            shareCount: 0,
+            remainingCount: SHARE_SITE_PROMO_TARGET,
+            progressPercent: 0,
+            rewardGranted: false,
+            isCoolingDown: false,
+            cooldownRemainingMs: 0,
+            cooldownUntilMs: 0,
+          });
+        }
+      }, 1000);
+    }
+  };
+
+  const loadSharePromoStatus = () => {
+    if (!hasConfirmedAuth) {
+      applySharePromoState(null);
+      return Promise.resolve(null);
+    }
+    if (!sharePromoStatusPromise) {
+      sharePromoStatusPromise = getShareSitePromoStatusSecure({})
+        .then((result) => {
+          applySharePromoState(result);
+          return result;
+        })
+        .catch((error) => {
+          console.warn("[SHARE_PROMO] status load failed", error);
+          applySharePromoState(null);
+          return null;
+        })
+        .finally(() => {
+          sharePromoStatusPromise = null;
+        });
+    }
+    return sharePromoStatusPromise;
+  };
+
+  const openSharePromo = () => {
+    if (!sharePromoOverlay) return;
+    sharePromoOverlay.classList.remove("hidden");
+    sharePromoOverlay.classList.add("flex");
+    document.body.classList.add("overflow-hidden");
+    setPendingShareSource("");
+  };
+
+  const closeSharePromo = () => {
+    if (!sharePromoOverlay) return;
+    sharePromoOverlay.classList.add("hidden");
+    sharePromoOverlay.classList.remove("flex");
+    document.body.classList.remove("overflow-hidden");
+  };
+
   if (logo && logoFallback) {
     logo.addEventListener("error", () => {
       logo.classList.add("hidden");
@@ -912,6 +1315,76 @@ export function renderPage2(user, options = {}) {
     });
   }
 
+  if (sharePromoBtn) {
+    sharePromoBtn.addEventListener("click", () => {
+      if (!isAuthenticated) {
+        showGlobalLoading("Connexion requise pour le bonus...");
+        window.location.href = "./auth.html";
+        return;
+      }
+      if (isOptimisticAuth) {
+        showGlobalLoading("Finalisation de la session...");
+        window.setTimeout(() => {
+          hideGlobalLoading();
+        }, 1600);
+        return;
+      }
+      openSharePromo();
+      void loadSharePromoStatus();
+    });
+  }
+
+  sharePromoCloseBtn?.addEventListener("click", closeSharePromo);
+  sharePromoOverlay?.addEventListener("click", (ev) => {
+    if (ev.target === sharePromoOverlay) {
+      closeSharePromo();
+    }
+  });
+  sharePromoPanel?.addEventListener("click", (ev) => {
+    ev.stopPropagation();
+  });
+  sharePromoTargetGrid?.addEventListener("click", async (event) => {
+    const btn = event.target.closest("[data-share-target]");
+    if (!btn || sharePromoActionInFlight || sharePromoState?.isCoolingDown) return;
+    const targetId = String(btn.getAttribute("data-share-target") || "").trim();
+    if (!targetId) return;
+    try {
+      await withButtonLoading(btn, async () => {
+        const result = await openShareSitePromoTarget(targetId);
+        setPendingShareSource(result?.source || targetId);
+      }, { loadingLabel: "..." });
+    } catch (error) {
+      if (isShareAbortError(error)) return;
+      console.error("[SHARE_PROMO] target open failed", error);
+      if (sharePromoPendingText) {
+        sharePromoPendingText.textContent = "Impossible d'ouvrir ce canal de partage pour le moment.";
+      }
+    }
+  });
+  sharePromoConfirmBtn?.addEventListener("click", async () => {
+    if (sharePromoActionInFlight || !hasConfirmedAuth || !pendingShareSource) return;
+    if (sharePromoState?.isCoolingDown) return;
+    try {
+      setSharePromoActionLoading(true, "Validation du bonus...");
+      const result = await recordShareSitePromoSecure({
+        actionId: makePromoActionId(),
+        shareSource: pendingShareSource,
+      });
+      applySharePromoState(result);
+      setPendingShareSource("");
+      if (result?.rewardGrantedNow && sharePromoStatusText) {
+        sharePromoStatusText.textContent = `Bravo, ${SHARE_SITE_PROMO_REWARD_DOES} Does bonus ont ete ajoutes a ton compte.`;
+      }
+    } catch (error) {
+      console.error("[SHARE_PROMO] confirm failed", error);
+      if (sharePromoStatusText) {
+        sharePromoStatusText.textContent = "Impossible de valider ce partage pour le moment.";
+      }
+    } finally {
+      setSharePromoActionLoading(false);
+    }
+  });
+
   tournamentIntroContinueBtn?.addEventListener("click", () => {
     markTournamentIntroSeen();
     closeTournamentIntro();
@@ -983,7 +1456,11 @@ export function renderPage2(user, options = {}) {
   bindDeferredModalTrigger(soldBadgeBtn, () => ensureSoldeUiReady("#soldBadge"), "Chargement du solde...");
 
   const effectiveUser = hasConfirmedAuth ? user : null;
+  renderSharePromoTargets();
+  setPendingShareSource("");
+  applySharePromoState(null);
   scheduleNonCriticalTask(runId, () => ensureStakeOptionsLoaded(), 360);
+  scheduleNonCriticalTask(runId, () => loadSharePromoStatus(), 420);
   scheduleNonCriticalTask(runId, () => {
     initDiscussionFab(effectiveUser);
     initAgentSupportAlert(effectiveUser);

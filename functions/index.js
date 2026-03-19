@@ -79,6 +79,10 @@ const DEFAULT_BOT_DIFFICULTY = "expert";
 const ROOM_WAIT_MS = 15 * 1000;
 const ROOM_DISCONNECT_TAKEOVER_MS = 5 * 1000;
 const ROOM_DISCONNECT_GRACE_MS = 15 * 1000;
+const BOT_THINK_DELAY_MIN_MS = 1400;
+const BOT_THINK_DELAY_MAX_MS = 2600;
+const BOT_THINK_DELAY_PASS_MIN_MS = 900;
+const BOT_THINK_DELAY_PASS_MAX_MS = 1700;
 const BOT_DIFFICULTY_LEVELS = new Set(["amateur", "expert", "ultra", "userpro"]);
 const BOT_DIFFICULTY_LOOKAHEAD = Object.freeze({
   amateur: 0,
@@ -97,6 +101,11 @@ const USER_TOURNAMENT_OBSERVER_TICK_MS = 20 * 1000;
 const USER_TOURNAMENT_MIN_BOTS = 11; // user + 11 = 12 players
 const USER_TOURNAMENT_MAX_BOTS = 19; // user + 19 = 20 players
 const USER_TOURNAMENT_WIN_REWARD_DOES = 10000;
+const SHARE_SITE_PROMO_DOC = "shareSiteV1";
+const SHARE_SITE_PROMO_TARGET = 5;
+const SHARE_SITE_PROMO_REWARD_DOES = 100;
+const SHARE_SITE_PROMO_COOLDOWN_MS = 3 * 24 * 60 * 60 * 1000;
+const SHARE_SITE_PROMO_ACTION_CACHE = 30;
 const PRESENCE_ANALYTICS_TIMEZONE = "America/Port-au-Prince";
 const PRESENCE_ANALYTICS_CLIENT_WINDOW_MS = 2 * 60 * 1000;
 const PRESENCE_ANALYTICS_ROOM_WINDOW_MS = 20 * 1000;
@@ -1346,6 +1355,10 @@ function walletHistoryRef(uid) {
   return db.collection(CLIENTS_COLLECTION).doc(uid).collection("xchanges");
 }
 
+function shareSitePromoRef(uid) {
+  return walletRef(uid).collection("growthCampaigns").doc(SHARE_SITE_PROMO_DOC);
+}
+
 function adminBootstrapRef() {
   return db.collection("settings").doc(DPAYMENT_ADMIN_BOOTSTRAP_DOC);
 }
@@ -2211,6 +2224,56 @@ function chooseBotMove(room, state, seat) {
   });
 }
 
+function computeBotThinkDelayMs(room, state, seat) {
+  const legalMoves = getLegalMovesForSeat(state, seat);
+  if (legalMoves.length === 0) {
+    return randomInt(BOT_THINK_DELAY_PASS_MIN_MS, BOT_THINK_DELAY_PASS_MAX_MS);
+  }
+
+  const difficulty = normalizeBotDifficulty(room?.botDifficulty);
+  const branchingCount = Math.max(0, legalMoves.length - 1);
+  const openingResponse = safeSignedInt(state?.appliedActionSeq) <= 0;
+
+  let min = BOT_THINK_DELAY_MIN_MS;
+  let max = BOT_THINK_DELAY_MAX_MS;
+
+  if (openingResponse) {
+    min += 180;
+    max += 420;
+  }
+
+  min += Math.min(900, branchingCount * 220);
+  max += Math.min(1700, branchingCount * 420);
+
+  if (difficulty === "ultra") {
+    min += 180;
+    max += 360;
+  } else if (difficulty === "amateur") {
+    min = Math.max(900, min - 140);
+    max = Math.max(min + 220, max - 180);
+  }
+
+  return randomInt(min, max);
+}
+
+function resolveBotTurnLockUntilMs(room, state, nowMs = Date.now()) {
+  if (!state || safeSignedInt(state?.winnerSeat) >= 0) return 0;
+  if (room?.startRevealPending === true) return 0;
+
+  const botSeat = safeSignedInt(state?.currentPlayer);
+  if (botSeat < 0 || botSeat > 3 || isSeatHuman(room, botSeat)) {
+    return 0;
+  }
+
+  const safeNowMs = safeSignedInt(nowMs) || Date.now();
+  const currentLockUntilMs = safeSignedInt(room?.turnLockedUntilMs);
+  if (currentLockUntilMs > safeNowMs) {
+    return currentLockUntilMs;
+  }
+
+  return safeNowMs + computeBotThinkDelayMs(room, state, botSeat);
+}
+
 function buildOpeningMoveForState(state) {
   const liveState = normalizeGameState(state);
   const openingSeat = findSeatWithTile(liveState.seatHands, 27);
@@ -2296,6 +2359,7 @@ function buildRoomUpdateFromGameState(room, nextState, records = []) {
   const lastRecord = records.length > 0 ? records[records.length - 1] : null;
   const playedCountDelta = records.reduce((count, item) => count + (item.type === "play" ? 1 : 0), 0);
   const nextActionSeq = safeInt(nextState.appliedActionSeq + 1);
+  const nextTurnLockUntilMs = resolveBotTurnLockUntilMs(room, nextState, Date.now());
   const update = {
     nextActionSeq,
     lastActionSeq: nextState.appliedActionSeq,
@@ -2304,7 +2368,7 @@ function buildRoomUpdateFromGameState(room, nextState, records = []) {
     turnStartedAt: admin.firestore.FieldValue.serverTimestamp(),
     playedCount: safeInt(room.playedCount) + playedCountDelta,
     updatedAt: admin.firestore.FieldValue.serverTimestamp(),
-    turnLockedUntilMs: 0,
+    turnLockedUntilMs: nextTurnLockUntilMs,
     deckOrder: admin.firestore.FieldValue.delete(),
   };
 
@@ -2402,6 +2466,23 @@ async function processPendingBotTurns(roomId) {
         return { processed: false, stop: true };
       }
 
+      const safeNowMs = Date.now();
+      const lockedUntilMs = safeSignedInt(liveRoom.turnLockedUntilMs);
+      if (lockedUntilMs > safeNowMs) {
+        return { processed: false, stop: true };
+      }
+
+      if (lockedUntilMs <= 0) {
+        const scheduledUntilMs = resolveBotTurnLockUntilMs(liveRoom, currentState, safeNowMs);
+        if (scheduledUntilMs > safeNowMs) {
+          tx.update(roomRef, {
+            turnLockedUntilMs: scheduledUntilMs,
+            updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+          });
+          return { processed: false, stop: true };
+        }
+      }
+
       const botMove = chooseBotMove(liveRoom, currentState, liveBotSeat);
       const batchResult = applyActionBatchInTransaction(
         tx,
@@ -2410,7 +2491,8 @@ async function processPendingBotTurns(roomId) {
         currentState,
         safeRoomId,
         botMove,
-        "server:bot"
+        "server:bot",
+        { allowBotAdvance: false }
       );
       const nextState = batchResult.state;
       tx.set(stateRef, buildGameStateWrite(nextState), { merge: true });
@@ -2523,6 +2605,10 @@ async function applyWalletMutationTx(tx, options) {
     }
   }
 
+  if (type === "share_reward_bonus") {
+    afterPendingFromReferral = beforePendingFromReferral + amountDoes;
+  }
+
   if (type === "xchange_sell") {
     const pendingTotal = afterPendingFromXchange + afterPendingFromReferral;
     if (pendingTotal > 0) {
@@ -2580,6 +2666,84 @@ async function applyWalletMutationTx(tx, options) {
     afterPendingFromXchange,
     afterPendingFromReferral,
     afterTotalExchangedEver,
+  };
+}
+
+function buildDefaultShareSitePromoState(nowMs = Date.now()) {
+  const safeNow = safeSignedInt(nowMs) || Date.now();
+  return {
+    campaignId: SHARE_SITE_PROMO_DOC,
+    targetCount: SHARE_SITE_PROMO_TARGET,
+    rewardDoes: SHARE_SITE_PROMO_REWARD_DOES,
+    cooldownMs: SHARE_SITE_PROMO_COOLDOWN_MS,
+    cycleStartedAtMs: 0,
+    shareCount: 0,
+    rewardGranted: false,
+    rewardGrantedAtMs: 0,
+    cooldownUntilMs: 0,
+    lastShareAtMs: 0,
+    lastShareSource: "",
+    actionIds: {},
+    lastResetAtMs: safeNow,
+  };
+}
+
+function normalizeShareSitePromoState(raw = {}, nowMs = Date.now()) {
+  const safeNow = safeSignedInt(nowMs) || Date.now();
+  const fallback = buildDefaultShareSitePromoState(safeNow);
+  const cooldownUntilMs = safeSignedInt(raw.cooldownUntilMs);
+
+  if (cooldownUntilMs > 0 && cooldownUntilMs <= safeNow) {
+    return {
+      ...fallback,
+      rewardGrantedAtMs: safeSignedInt(raw.rewardGrantedAtMs),
+      lastResetAtMs: safeNow,
+    };
+  }
+
+  return {
+    ...fallback,
+    cycleStartedAtMs: safeSignedInt(raw.cycleStartedAtMs),
+    shareCount: Math.min(SHARE_SITE_PROMO_TARGET, safeInt(raw.shareCount)),
+    rewardGranted: raw.rewardGranted === true,
+    rewardGrantedAtMs: safeSignedInt(raw.rewardGrantedAtMs),
+    cooldownUntilMs: Math.max(0, cooldownUntilMs),
+    lastShareAtMs: safeSignedInt(raw.lastShareAtMs),
+    lastShareSource: sanitizeText(raw.lastShareSource || "", 40),
+    actionIds: trimIdempotencyKeys(
+      raw.actionIds && typeof raw.actionIds === "object" ? raw.actionIds : {},
+      SHARE_SITE_PROMO_ACTION_CACHE
+    ),
+    lastResetAtMs: safeSignedInt(raw.lastResetAtMs) || fallback.lastResetAtMs,
+  };
+}
+
+function buildShareSitePromoResponse(state = {}, nowMs = Date.now()) {
+  const safeNow = safeSignedInt(nowMs) || Date.now();
+  const normalized = normalizeShareSitePromoState(state, safeNow);
+  const isCoolingDown = normalized.cooldownUntilMs > safeNow;
+  const shareCount = normalized.rewardGranted
+    ? SHARE_SITE_PROMO_TARGET
+    : Math.min(SHARE_SITE_PROMO_TARGET, safeInt(normalized.shareCount));
+  const remainingCount = Math.max(0, SHARE_SITE_PROMO_TARGET - shareCount);
+
+  return {
+    campaignId: SHARE_SITE_PROMO_DOC,
+    targetCount: SHARE_SITE_PROMO_TARGET,
+    shareCount,
+    remainingCount,
+    rewardDoes: SHARE_SITE_PROMO_REWARD_DOES,
+    progressPercent: Math.round((shareCount / SHARE_SITE_PROMO_TARGET) * 100),
+    rewardGranted: normalized.rewardGranted === true,
+    canShare: !isCoolingDown && normalized.rewardGranted !== true && shareCount < SHARE_SITE_PROMO_TARGET,
+    isCoolingDown,
+    cooldownMs: SHARE_SITE_PROMO_COOLDOWN_MS,
+    cooldownUntilMs: isCoolingDown ? normalized.cooldownUntilMs : 0,
+    cooldownRemainingMs: isCoolingDown ? Math.max(0, normalized.cooldownUntilMs - safeNow) : 0,
+    cycleStartedAtMs: normalized.cycleStartedAtMs,
+    rewardGrantedAtMs: normalized.rewardGrantedAtMs,
+    lastShareAtMs: normalized.lastShareAtMs,
+    lastResetAtMs: normalized.lastResetAtMs,
   };
 }
 
@@ -2781,6 +2945,7 @@ function buildStartedRoomTransaction(tx, roomRefDoc, room = {}, options = {}) {
     updates.endedReason = admin.firestore.FieldValue.delete();
     updates.endedAt = admin.firestore.FieldValue.delete();
     updates.endedAtMs = admin.firestore.FieldValue.delete();
+    updates.turnLockedUntilMs = 0;
   }
 
   tx.update(roomRefDoc, updates);
@@ -4104,7 +4269,16 @@ exports.submitAction = publicOnCall("submitAction", async (request) => {
     }
 
     const resolvedMove = resolveRequestedMove(currentState, localSeat, action);
-    const batchResult = applyActionBatchInTransaction(tx, roomRef, room, currentState, roomId, resolvedMove, uid);
+    const batchResult = applyActionBatchInTransaction(
+      tx,
+      roomRef,
+      room,
+      currentState,
+      roomId,
+      resolvedMove,
+      uid,
+      { allowBotAdvance: false }
+    );
     const nextState = batchResult.state;
     nextState.idempotencyKeys[clientActionId] = true;
 
@@ -4987,6 +5161,89 @@ exports.getPublicRuntimeConfigSecure = publicOnCall("getPublicRuntimeConfigSecur
     dashboardWebPushPublicKey: String(pushConfig.publicKey || ""),
     dashboardWebPushEnabled: !!String(pushConfig.publicKey || "").trim(),
   };
+});
+
+exports.getShareSitePromoStatus = publicOnCall("getShareSitePromoStatus", async (request) => {
+  const { uid } = assertAuth(request);
+  const snap = await shareSitePromoRef(uid).get();
+  return buildShareSitePromoResponse(snap.exists ? (snap.data() || {}) : {}, Date.now());
+});
+
+exports.recordShareSitePromo = publicOnCall("recordShareSitePromo", async (request) => {
+  const { uid, email } = assertAuth(request);
+  const payload = request.data && typeof request.data === "object" ? request.data : {};
+  const actionId = sanitizeText(payload.actionId || "", 80);
+  const shareSource = sanitizeText(payload.shareSource || "", 40).toLowerCase();
+  if (!actionId) {
+    throw new HttpsError("invalid-argument", "actionId requis.");
+  }
+
+  const promoRef = shareSitePromoRef(uid);
+  const result = await db.runTransaction(async (tx) => {
+    const [promoSnap, walletSnap] = await Promise.all([
+      tx.get(promoRef),
+      tx.get(walletRef(uid)),
+    ]);
+    const nowMs = Date.now();
+    const nextState = normalizeShareSitePromoState(promoSnap.exists ? (promoSnap.data() || {}) : {}, nowMs);
+
+    if (nextState.rewardGranted === true && nextState.cooldownUntilMs > nowMs) {
+      tx.set(promoRef, {
+        ...nextState,
+        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      }, { merge: true });
+      return buildShareSitePromoResponse(nextState, nowMs);
+    }
+
+    if (nextState.actionIds[actionId]) {
+      return buildShareSitePromoResponse(nextState, nowMs);
+    }
+
+    if (nextState.cycleStartedAtMs <= 0) {
+      nextState.cycleStartedAtMs = nowMs;
+    }
+
+    nextState.actionIds = trimIdempotencyKeys({
+      ...nextState.actionIds,
+      [actionId]: true,
+    }, SHARE_SITE_PROMO_ACTION_CACHE);
+    nextState.shareCount = Math.min(
+      SHARE_SITE_PROMO_TARGET,
+      Math.max(0, safeInt(nextState.shareCount) + 1)
+    );
+    nextState.lastShareAtMs = nowMs;
+    nextState.lastShareSource = shareSource;
+
+    let rewardGrantedNow = false;
+    if (nextState.shareCount >= SHARE_SITE_PROMO_TARGET && nextState.rewardGranted !== true) {
+      rewardGrantedNow = true;
+      nextState.rewardGranted = true;
+      nextState.rewardGrantedAtMs = nowMs;
+      nextState.cooldownUntilMs = nowMs + SHARE_SITE_PROMO_COOLDOWN_MS;
+
+      await applyWalletMutationTx(tx, {
+        uid,
+        email: email || String(walletSnap.data()?.email || ""),
+        type: "share_reward_bonus",
+        note: "Bonus partage du site",
+        amountDoes: SHARE_SITE_PROMO_REWARD_DOES,
+        deltaDoes: SHARE_SITE_PROMO_REWARD_DOES,
+      });
+    }
+
+    tx.set(promoRef, {
+      ...nextState,
+      rewardGrantedNow,
+      updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+    }, { merge: true });
+
+    return {
+      ...buildShareSitePromoResponse(nextState, nowMs),
+      rewardGrantedNow,
+    };
+  });
+
+  return result;
 });
 
 exports.registerDashboardPushSubscriptionSecure = publicOnCall("registerDashboardPushSubscriptionSecure", async (request) => {

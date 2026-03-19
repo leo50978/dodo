@@ -13,6 +13,7 @@ const BALANCE_DEBUG = true;
 const WALLET_CACHE = new Map();
 let walletUnsub = null;
 let activeUid = null;
+let soldeModulePromise = null;
 
 function safeInt(value) {
   const n = Number(value);
@@ -48,6 +49,23 @@ function defaultWallet() {
 
 function currentUid() {
   return auth.currentUser?.uid || "guest";
+}
+
+async function waitForXchangeBalanceHydration(uid = currentUid(), timeoutMs = 2600) {
+  const safeUid = String(uid || "").trim();
+  if (!safeUid || safeUid === "guest") return false;
+  try {
+    if (!soldeModulePromise) {
+      soldeModulePromise = import("./solde.js");
+    }
+    const soldeModule = await soldeModulePromise;
+    if (typeof soldeModule?.waitForBalanceHydration === "function") {
+      return await soldeModule.waitForBalanceHydration(safeUid, timeoutMs);
+    }
+  } catch (error) {
+    console.warn("[XCHANGE] waitForBalanceHydration unavailable", error);
+  }
+  return false;
 }
 
 function walletRef(uid) {
@@ -191,7 +209,18 @@ async function applyWalletMutation({ uid, deltaDoes = 0, deltaExchangedGourdes =
 }
 
 export async function ensureXchangeState(uid = currentUid()) {
-  return getXchangeState(window.__userBaseBalance || window.__userBalance || 0, uid);
+  const hydrated = await waitForXchangeBalanceHydration(uid, 2600);
+  const state = getXchangeState(window.__userBaseBalance || window.__userBalance || 0, uid);
+  if (BALANCE_DEBUG) {
+    console.log("[BALANCE_DEBUG][XCHANGE] ensureXchangeState", {
+      uid,
+      hydrated,
+      __userBaseBalance: window.__userBaseBalance,
+      __userBalance: window.__userBalance,
+      state,
+    });
+  }
+  return state;
 }
 
 export function getXchangeState(balance = 0, uid = currentUid()) {
@@ -459,8 +488,7 @@ function ensureXchangeModal() {
   };
 
   const open = async () => {
-    await ensureXchangeState(currentUid());
-    const state = getXchangeState(window.__userBaseBalance || window.__userBalance || 0, currentUid());
+    const state = await ensureXchangeState(currentUid());
     if (availableHtgEl) availableHtgEl.textContent = String(state.availableGourdes);
     if (availableDoesEl) availableDoesEl.textContent = String(state.does || 0);
     if (amountInput) amountInput.value = "";
@@ -481,8 +509,7 @@ function ensureXchangeModal() {
   if (modeBuyBtn) {
     modeBuyBtn.addEventListener("click", async () => {
       await withButtonLoading(modeBuyBtn, async () => {
-        await ensureXchangeState(currentUid());
-        const state = getXchangeState(window.__userBaseBalance || window.__userBalance || 0, currentUid());
+        const state = await ensureXchangeState(currentUid());
         if (amountInput) amountInput.value = "";
         if (errorEl) errorEl.textContent = "";
         setModeUi("buy", state);
@@ -493,8 +520,7 @@ function ensureXchangeModal() {
   if (modeSellBtn) {
     modeSellBtn.addEventListener("click", async () => {
       await withButtonLoading(modeSellBtn, async () => {
-        await ensureXchangeState(currentUid());
-        const state = getXchangeState(window.__userBaseBalance || window.__userBalance || 0, currentUid());
+        const state = await ensureXchangeState(currentUid());
         if (amountInput) amountInput.value = "";
         if (errorEl) errorEl.textContent = "";
         setModeUi("sell", state);
@@ -506,8 +532,7 @@ function ensureXchangeModal() {
   if (submitBtn) {
     submitBtn.addEventListener("click", async () => {
       await withButtonLoading(submitBtn, async () => {
-        await ensureXchangeState(currentUid());
-        const state = getXchangeState(window.__userBaseBalance || window.__userBalance || 0, currentUid());
+        const state = await ensureXchangeState(currentUid());
         const raw = String(amountInput?.value || "").trim();
 
         if (!/^\d+$/.test(raw)) {

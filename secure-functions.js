@@ -104,6 +104,14 @@ export async function getPublicGameStakeOptionsSecure(payload = {}) {
   return invokeCallable("getPublicGameStakeOptionsSecure", payload, "Impossible de charger les mises de partie.");
 }
 
+export async function getShareSitePromoStatusSecure(payload = {}) {
+  return invokeCallable("getShareSitePromoStatus", payload, "Impossible de charger le bonus de partage.");
+}
+
+export async function recordShareSitePromoSecure(payload = {}) {
+  return invokeCallable("recordShareSitePromo", payload, "Impossible d'enregistrer le partage.");
+}
+
 export async function getGlobalAnalyticsSnapshotSecure(payload = {}) {
   return invokeCallable("getGlobalAnalyticsSnapshot", payload, "Impossible de charger les analytics globaux.");
 }
