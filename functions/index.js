@@ -639,9 +639,31 @@ function buildFrozenAccountError(walletData = {}) {
   );
 }
 
+function buildWithdrawalHoldError(walletData = {}) {
+  return new HttpsError(
+    "failed-precondition",
+    "Ton compte est gelé pour les retraits après plusieurs dépôts refusés. Contacte l'assistance si tu veux plaider ta cause.",
+    {
+      code: "withdrawal-hold",
+      withdrawalHold: true,
+      withdrawalHoldReason: String(walletData.withdrawalHoldReason || "3_rejected_deposits"),
+      rejectedDepositStrikeCount: safeInt(walletData.rejectedDepositStrikeCount),
+    }
+  );
+}
+
 function assertWalletNotFrozen(walletData = {}) {
   if (walletData?.accountFrozen === true) {
     throw buildFrozenAccountError(walletData);
+  }
+}
+
+function assertWithdrawalAllowed(walletData = {}) {
+  if (walletData?.accountFrozen === true) {
+    throw buildFrozenAccountError(walletData);
+  }
+  if (walletData?.withdrawalHold === true) {
+    throw buildWithdrawalHoldError(walletData);
   }
 }
 
@@ -6290,6 +6312,7 @@ exports.createOrderSecure = publicOnCall("createOrderSecure", async (request) =>
   const customerName = sanitizeText(payload.customerName || "", 120);
   const customerEmail = sanitizeEmail(payload.customerEmail || email || "", 160) || sanitizeEmail(email || "", 160);
   const customerPhone = sanitizePhone(payload.customerPhone || "", 40);
+  const depositorPhone = sanitizePhone(payload.depositorPhone || "", 40);
   const proofRef = sanitizeText(payload.proofRef || "", 180);
 
   if (!methodId || amountHtg < MIN_ORDER_HTG || !customerName || !proofRef) {
@@ -6338,6 +6361,7 @@ exports.createOrderSecure = publicOnCall("createOrderSecure", async (request) =>
       customerName,
       customerEmail,
       customerPhone,
+      depositorPhone,
       extractedText: sanitizeText(payload.extractedText || "", MAX_PUBLIC_TEXT_LENGTH),
       extractedTextStatus: ["pending", "success", "empty", "failed"].includes(String(payload.extractedTextStatus || ""))
         ? String(payload.extractedTextStatus)
@@ -6512,7 +6536,7 @@ exports.createWithdrawalSecure = publicOnCall("createWithdrawalSecure", async (r
   ]);
 
   const clientData = clientSnap.exists ? (clientSnap.data() || {}) : {};
-  assertWalletNotFrozen(clientData);
+  assertWithdrawalAllowed(clientData);
   const walletSummary = buildWalletFundingSnapshot({
     orders: ordersSnap.docs.map((item) => item.data() || {}),
     withdrawals: withdrawalsSnap.docs.map((item) => item.data() || {}),
@@ -6640,6 +6664,9 @@ exports.getDepositFundingStatusSecure = publicOnCall("getDepositFundingStatusSec
     ...fundingSnapshot,
     accountFrozen: walletData.accountFrozen === true,
     freezeReason: String(walletData.freezeReason || ""),
+    withdrawalHold: walletData.withdrawalHold === true,
+    withdrawalHoldReason: String(walletData.withdrawalHoldReason || ""),
+    withdrawalHoldAtMs: safeInt(walletData.withdrawalHoldAtMs),
     rejectedDepositStrikeCount: safeInt(walletData.rejectedDepositStrikeCount),
     pendingOrders: ordersSnap.docs
       .map((item) => ({ id: item.id, ...(item.data() || {}) }))
@@ -6818,8 +6845,9 @@ exports.resolveDepositReviewSecure = publicOnCall("resolveDepositReviewSecure", 
       nextWallet.exchangeableDoesAvailable = beforeExchangeableDoes + unlockedFromPlayedDoes;
     } else {
       const removeDoes = settledPendingTotalDoes;
-      const nextStrikeCount = safeInt(walletData.rejectedDepositStrikeCount) + (resolutionStatus === "rejected" ? 0 : 1);
-      const shouldFreeze = nextStrikeCount >= ACCOUNT_FREEZE_REJECT_THRESHOLD;
+      const nextStrikeCount = safeInt(walletData.rejectedDepositStrikeCount) + 1;
+      const shouldWithdrawalHold = walletData.withdrawalHold === true
+        || nextStrikeCount >= ACCOUNT_FREEZE_REJECT_THRESHOLD;
       nextOrder = {
         ...nextOrder,
         status: "rejected",
@@ -6834,9 +6862,12 @@ exports.resolveDepositReviewSecure = publicOnCall("resolveDepositReviewSecure", 
       nextWallet.doesProvisionalBalance = Math.max(0, beforeProvisionalDoes - removeDoes);
       nextWallet.doesBalance = safeInt(nextWallet.doesApprovedBalance) + safeInt(nextWallet.doesProvisionalBalance);
       nextWallet.rejectedDepositStrikeCount = nextStrikeCount;
-      nextWallet.accountFrozen = shouldFreeze;
-      nextWallet.freezeReason = shouldFreeze ? "3_rejected_deposits" : String(walletData.freezeReason || "");
-      nextWallet.frozenAtMs = shouldFreeze ? nowMs : safeInt(walletData.frozenAtMs);
+      nextWallet.withdrawalHold = shouldWithdrawalHold;
+      nextWallet.withdrawalHoldReason = shouldWithdrawalHold ? "3_rejected_deposits" : String(walletData.withdrawalHoldReason || "");
+      nextWallet.withdrawalHoldAtMs = shouldWithdrawalHold ? nowMs : safeInt(walletData.withdrawalHoldAtMs);
+      nextWallet.accountFrozen = walletData.accountFrozen === true;
+      nextWallet.freezeReason = String(walletData.freezeReason || "");
+      nextWallet.frozenAtMs = safeInt(walletData.frozenAtMs);
       nextWallet.pendingPlayFromXchangeDoes = beforePendingFromXchange;
       nextWallet.pendingPlayFromReferralDoes = beforePendingFromReferral;
       nextWallet.exchangeableDoesAvailable = beforeExchangeableDoes;
@@ -6876,6 +6907,9 @@ exports.resolveDepositReviewSecure = publicOnCall("resolveDepositReviewSecure", 
       accountFrozen: nextWallet.accountFrozen === true,
       freezeReason: String(nextWallet.freezeReason || ""),
       frozenAtMs: safeInt(nextWallet.frozenAtMs),
+      withdrawalHold: nextWallet.withdrawalHold === true,
+      withdrawalHoldReason: String(nextWallet.withdrawalHoldReason || ""),
+      withdrawalHoldAtMs: safeInt(nextWallet.withdrawalHoldAtMs),
       updatedAt: admin.firestore.FieldValue.serverTimestamp(),
     }, { merge: true });
 
@@ -6887,6 +6921,9 @@ exports.resolveDepositReviewSecure = publicOnCall("resolveDepositReviewSecure", 
       resolutionStatus: nextOrder.resolutionStatus,
       ...fundingSnapshot,
       accountFrozen: nextWallet.accountFrozen === true,
+      withdrawalHold: nextWallet.withdrawalHold === true,
+      withdrawalHoldReason: String(nextWallet.withdrawalHoldReason || ""),
+      withdrawalHoldAtMs: safeInt(nextWallet.withdrawalHoldAtMs),
       rejectedDepositStrikeCount: safeInt(nextWallet.rejectedDepositStrikeCount),
     };
   });
@@ -6907,6 +6944,9 @@ exports.unfreezeClientAccountSecure = publicOnCall("unfreezeClientAccountSecure"
   await walletRef(uid).set({
     accountFrozen: false,
     freezeReason: "",
+    withdrawalHold: false,
+    withdrawalHoldReason: "",
+    withdrawalHoldAtMs: 0,
     rejectedDepositStrikeCount: 0,
     unfrozenAtMs: Date.now(),
     unfreezeReason: reason || "",
@@ -6917,6 +6957,7 @@ exports.unfreezeClientAccountSecure = publicOnCall("unfreezeClientAccountSecure"
     ok: true,
     uid,
     accountFrozen: false,
+    withdrawalHold: false,
     rejectedDepositStrikeCount: 0,
   };
 });

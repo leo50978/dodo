@@ -17,6 +17,7 @@ import { waitForBalanceHydration } from "./solde.js";
 import { getXchangeState } from "./xchange.js";
 const MIN_WITHDRAWAL_HTG = 50;
 const BALANCE_DEBUG = true;
+const ASSISTANCE_PHONE = "50941752992";
 
 function escapeHtml(input) {
   return String(input || "")
@@ -183,7 +184,9 @@ export async function getWithdrawalRuleStatus(uid) {
       : Math.max(0, approvedDepositsHtg - convertedHtg)
   );
   const accountFrozen = fundingStatus?.accountFrozen === true || clientData.accountFrozen === true;
-  const withdrawableHtg = accountFrozen
+  const withdrawalHold = fundingStatus?.withdrawalHold === true || clientData.withdrawalHold === true;
+  const withdrawalBlocked = accountFrozen || withdrawalHold;
+  const withdrawableHtg = withdrawalBlocked
     ? 0
     : safeInt(
       typeof fundingStatus?.withdrawableHtg === "number"
@@ -195,9 +198,21 @@ export async function getWithdrawalRuleStatus(uid) {
     approvedDepositsHtg,
     convertedHtg,
     remainingToExchangeHtg,
-    canWithdraw: !accountFrozen && withdrawableHtg > 0,
+    canWithdraw: !withdrawalBlocked && withdrawableHtg > 0,
     withdrawableHtg,
     accountFrozen,
+    withdrawalHold,
+    withdrawalHoldReason: String(fundingStatus?.withdrawalHoldReason || clientData.withdrawalHoldReason || ""),
+    withdrawalHoldAtMs: safeInt(
+      typeof fundingStatus?.withdrawalHoldAtMs === "number"
+        ? fundingStatus.withdrawalHoldAtMs
+        : clientData.withdrawalHoldAtMs
+    ),
+    rejectedDepositStrikeCount: safeInt(
+      typeof fundingStatus?.rejectedDepositStrikeCount === "number"
+        ? fundingStatus.rejectedDepositStrikeCount
+        : clientData.rejectedDepositStrikeCount
+    ),
     freezeReason: String(fundingStatus?.freezeReason || clientData.freezeReason || ""),
     provisionalHtgAvailable: safeInt(
       typeof fundingStatus?.provisionalHtgAvailable === "number"
@@ -219,9 +234,14 @@ function ensureRetraitRuleModal() {
       <h3 id="retraitRuleModalTitle" class="text-lg font-bold">Retrait bloqué</h3>
       <p id="retraitRuleModalMessage" class="mt-2 text-sm text-white/90"></p>
       <div id="retraitRuleModalDetails" class="mt-3 rounded-2xl border border-white/20 bg-white/10 p-3 text-xs text-white/85"></div>
-      <button id="retraitRuleModalClose" type="button" class="mt-4 h-11 w-full rounded-2xl border border-[#ffb26e] bg-[#F57C00] text-sm font-semibold text-white shadow-[8px_8px_18px_rgba(163,82,27,0.45),-6px_-6px_14px_rgba(255,175,102,0.22)]">
-        Compris
-      </button>
+      <div class="mt-4 grid gap-2 sm:grid-cols-2">
+        <button id="retraitRuleModalContact" type="button" class="h-11 w-full rounded-2xl border border-white/20 bg-white/10 text-sm font-semibold text-white">
+          Contacter l'assistance
+        </button>
+        <button id="retraitRuleModalClose" type="button" class="h-11 w-full rounded-2xl border border-[#ffb26e] bg-[#F57C00] text-sm font-semibold text-white shadow-[8px_8px_18px_rgba(163,82,27,0.45),-6px_-6px_14px_rgba(255,175,102,0.22)]">
+          Compris
+        </button>
+      </div>
     </div>
   `;
 
@@ -229,12 +249,18 @@ function ensureRetraitRuleModal() {
 
   const panel = overlay.querySelector("#retraitRuleModalPanel");
   const closeBtn = overlay.querySelector("#retraitRuleModalClose");
+  const contactBtn = overlay.querySelector("#retraitRuleModalContact");
   const close = () => {
     overlay.classList.add("hidden");
     overlay.classList.remove("flex");
   };
 
   if (closeBtn) closeBtn.addEventListener("click", close);
+  if (contactBtn) {
+    contactBtn.addEventListener("click", () => {
+      window.open(`https://wa.me/${ASSISTANCE_PHONE}`, "_blank", "noopener,noreferrer");
+    });
+  }
   overlay.addEventListener("click", (ev) => {
     if (ev.target === overlay) close();
   });
@@ -540,6 +566,20 @@ function ensureRetraitModal() {
           return;
         }
 
+        if (ruleStatus.withdrawalHold) {
+          showRetraitRuleModal({
+            title: "Compte gelé",
+            message: "Ton compte est gelé pour les retraits après 3 demandes rejetées.",
+            lines: [
+              `Rejets enregistrés: ${safeInt(ruleStatus.rejectedDepositStrikeCount)}/3`,
+              "Tu peux contacter l'assistance si tu penses que c'est une erreur ou si tu veux plaider ta cause.",
+              `WhatsApp assistance: ${ASSISTANCE_PHONE}`,
+            ],
+          });
+          if (errorEl) errorEl.textContent = "Compte gelé pour les retraits. Contacte l'assistance.";
+          return;
+        }
+
         if (amount > available) {
           if (errorEl) errorEl.textContent = "Montant supérieur au solde disponible.";
           return;
@@ -626,6 +666,16 @@ function ensureRetraitModal() {
             title: "Compte gelé",
             message: err?.message || "Ton compte a été temporairement gelé après plusieurs dépôts refusés.",
             lines: ["Contacte l'assistance pour demander un dégel."],
+          });
+        } else if (err?.code === "withdrawal-hold") {
+          showRetraitRuleModal({
+            title: "Compte gelé",
+            message: err?.message || "Ton compte est gelé pour les retraits après 3 demandes rejetées.",
+            lines: [
+              `Rejets enregistrés: ${safeInt(err?.rejectedDepositStrikeCount)}/3`,
+              "Contacte l'assistance si tu penses que c'est une erreur ou si tu veux plaider ta cause.",
+              `WhatsApp assistance: ${ASSISTANCE_PHONE}`,
+            ],
           });
         }
         if (errorEl) errorEl.textContent = err?.message || "Impossible de soumettre la demande.";

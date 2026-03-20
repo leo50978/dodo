@@ -5,6 +5,7 @@ import { mountSoldeModal, waitForBalanceHydration } from "./solde.js";
 import { db, doc, onSnapshot } from "./firebase-init.js";
 import { getDepositFundingStatusSecure } from "./secure-functions.js";
 const BALANCE_DEBUG = true;
+const ASSISTANCE_PHONE = "50941752992";
 let referralLoadToken = 0;
 let referralHintFreezeUntil = 0;
 let referralHintRestoreTimer = null;
@@ -17,6 +18,7 @@ let latestProfileFundingData = null;
 let profileFundingUid = "";
 let profileFundingRefreshTimer = null;
 let profileFundingRequestToken = 0;
+let lastWithdrawalHoldSignature = "";
 
 function safeCount(value) {
   const n = Number(value);
@@ -90,6 +92,79 @@ function bindHideOnErrorImages(root) {
   });
 }
 
+function buildAssistanceUrl(message = "") {
+  const base = `https://wa.me/${ASSISTANCE_PHONE}`;
+  const text = String(message || "").trim();
+  return text ? `${base}?text=${encodeURIComponent(text)}` : base;
+}
+
+function ensureWithdrawalHoldModal() {
+  const existing = document.getElementById("profileWithdrawalHoldOverlay");
+  if (existing) return existing;
+
+  const overlay = document.createElement("div");
+  overlay.id = "profileWithdrawalHoldOverlay";
+  overlay.className = "fixed inset-0 z-[3600] hidden items-center justify-center bg-black/55 p-4 backdrop-blur-sm";
+  overlay.innerHTML = `
+    <div class="w-full max-w-md rounded-3xl border border-white/20 bg-[#3F4766]/82 p-5 text-white shadow-[14px_14px_34px_rgba(16,23,40,0.5),-10px_-10px_24px_rgba(112,126,165,0.2)] backdrop-blur-xl sm:p-6">
+      <p class="text-xs font-semibold uppercase tracking-[0.16em] text-white/70">Compte gelé</p>
+      <h3 class="mt-2 text-xl font-bold text-white">Retraits bloqués</h3>
+      <p id="profileWithdrawalHoldMessage" class="mt-3 text-sm leading-6 text-white/90"></p>
+      <div id="profileWithdrawalHoldDetails" class="mt-3 rounded-2xl border border-white/20 bg-white/10 p-3 text-xs leading-5 text-white/82"></div>
+      <div class="mt-4 grid gap-2 sm:grid-cols-2">
+        <button id="profileWithdrawalHoldClose" type="button" class="h-11 rounded-2xl border border-white/20 bg-white/10 text-sm font-semibold text-white">
+          Je comprends
+        </button>
+        <button id="profileWithdrawalHoldContact" type="button" class="h-11 rounded-2xl border border-[#ffb26e] bg-[#F57C00] text-sm font-semibold text-white shadow-[8px_8px_18px_rgba(163,82,27,0.45),-6px_-6px_14px_rgba(255,175,102,0.22)]">
+          Contacter l'assistance
+        </button>
+      </div>
+    </div>
+  `;
+
+  document.body.appendChild(overlay);
+  const close = () => {
+    overlay.classList.add("hidden");
+    overlay.classList.remove("flex");
+  };
+  overlay.querySelector("#profileWithdrawalHoldClose")?.addEventListener("click", close);
+  overlay.querySelector("#profileWithdrawalHoldContact")?.addEventListener("click", () => {
+    window.open(buildAssistanceUrl("Bonjour, je veux plaider ma cause concernant le gel de mon compte pour retrait."), "_blank", "noopener,noreferrer");
+  });
+  overlay.addEventListener("click", (ev) => {
+    if (ev.target === overlay) close();
+  });
+  return overlay;
+}
+
+function maybeShowWithdrawalHoldModal(user, payload = {}) {
+  const uid = String(user?.uid || auth.currentUser?.uid || "").trim();
+  if (!uid || payload.withdrawalHold !== true) return;
+
+  const signature = `${uid}:${safeCount(payload.withdrawalHoldAtMs)}:${safeCount(payload.rejectedDepositStrikeCount)}`;
+  if (!signature || signature === lastWithdrawalHoldSignature) return;
+  lastWithdrawalHoldSignature = signature;
+
+  const storageKey = `withdrawalHoldSeen:${signature}`;
+  try {
+    if (window.localStorage?.getItem(storageKey) === "1") return;
+    window.localStorage?.setItem(storageKey, "1");
+  } catch (_) {}
+
+  const overlay = ensureWithdrawalHoldModal();
+  const messageEl = overlay.querySelector("#profileWithdrawalHoldMessage");
+  const detailsEl = overlay.querySelector("#profileWithdrawalHoldDetails");
+  if (messageEl) {
+    messageEl.textContent = "Ton compte est gelé pour les retraits après 3 demandes rejetées. Si tu penses que ce n'est pas vrai ou si tu veux plaider ta cause, contacte l'assistance.";
+  }
+  if (detailsEl) {
+    const rejects = safeCount(payload.rejectedDepositStrikeCount);
+    detailsEl.textContent = `Rejets enregistrés: ${rejects}/3. Dépôt, Xchange et parties restent actifs. Seuls les retraits sont bloqués.`;
+  }
+  overlay.classList.remove("hidden");
+  overlay.classList.add("flex");
+}
+
 function clearProfileRealtimeWatchers() {
   if (profileClientUnsub) {
     profileClientUnsub();
@@ -104,6 +179,7 @@ function clearProfileRealtimeWatchers() {
     clearTimeout(profileFundingRefreshTimer);
     profileFundingRefreshTimer = null;
   }
+  lastWithdrawalHoldSignature = "";
 }
 
 function scheduleProfileRealtimeRefresh(user) {
@@ -308,6 +384,19 @@ function ensureProfileModal() {
         </div>
 
         <div class="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+          <div class="rounded-2xl border border-white/20 bg-white/10 p-4 shadow-[8px_8px_18px_rgba(19,25,40,0.34),-6px_-6px_14px_rgba(111,126,164,0.2)] sm:col-span-2 xl:col-span-3">
+            <div class="flex min-w-0 flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+              <div class="min-w-0">
+                <p class="text-[11px] uppercase tracking-[0.14em] text-white/65">Statut compte</p>
+                <p id="profileAccountStatusValue" class="mt-2 text-sm font-semibold text-white">Actif</p>
+              </div>
+              <span id="profileAccountStatusBadge" class="inline-flex w-fit items-center rounded-full border border-emerald-400/20 bg-emerald-500/15 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.14em] text-emerald-200">
+                Actif
+              </span>
+            </div>
+            <p id="profileAccountStatusStrike" class="mt-3 text-sm text-white/84">Rejets: 0/3</p>
+            <p id="profileAccountStatusMeta" class="mt-1 text-xs text-white/62">Encore 3 rejets avant gel du retrait.</p>
+          </div>
           <div class="rounded-2xl border border-white/20 bg-white/10 p-4 shadow-[8px_8px_18px_rgba(19,25,40,0.34),-6px_-6px_14px_rgba(111,126,164,0.2)]">
             <p class="text-[11px] uppercase tracking-[0.14em] text-white/65">HTG approuvé</p>
             <p id="profileApprovedHtg" class="mt-2 text-sm font-semibold text-white">-</p>
@@ -571,6 +660,14 @@ async function updateWithdrawalAvailability(user, xState) {
       return;
     }
 
+    if (ruleStatus.withdrawalHold) {
+      if (hintEl) hintEl.textContent = "Retrait gelé après 3 demandes rejetées.";
+      if (metaEl) {
+        metaEl.textContent = `Rejets: ${safeCount(ruleStatus.rejectedDepositStrikeCount)}/3 | Assistance: ${ASSISTANCE_PHONE}`;
+      }
+      return;
+    }
+
     const provisionalLockedHtg = safeCount(ruleStatus.provisionalHtgAvailable);
     if (ruleStatus.canWithdraw) {
       if (hintEl) {
@@ -628,6 +725,10 @@ function updateProfileData(user) {
   const doesBreakdownEl = document.getElementById("profileDoesBreakdown");
   const frozenBannerEl = document.getElementById("profileFrozenBanner");
   const frozenMessageEl = document.getElementById("profileFrozenMessage");
+  const accountStatusValueEl = document.getElementById("profileAccountStatusValue");
+  const accountStatusBadgeEl = document.getElementById("profileAccountStatusBadge");
+  const accountStatusStrikeEl = document.getElementById("profileAccountStatusStrike");
+  const accountStatusMetaEl = document.getElementById("profileAccountStatusMeta");
   const baseForUi = getBalanceBaseForUi();
   const xState = getXchangeState(baseForUi, user?.uid || auth.currentUser?.uid);
   const clientData = latestProfileClientData || {};
@@ -692,6 +793,22 @@ function updateProfileData(user) {
   const accountFrozen = fundingData.accountFrozen === true
     || clientData.accountFrozen === true
     || xState?.accountFrozen === true;
+  const withdrawalHold = fundingData.withdrawalHold === true
+    || clientData.withdrawalHold === true;
+  const withdrawalLocked = withdrawalHold || accountFrozen;
+  const rejectedDepositStrikeCount = safeCount(
+    pickFirstFiniteNumber(
+      fundingData.rejectedDepositStrikeCount,
+      clientData.rejectedDepositStrikeCount
+    )
+  );
+  const withdrawalHoldAtMs = safeCount(
+    pickFirstFiniteNumber(
+      fundingData.withdrawalHoldAtMs,
+      clientData.withdrawalHoldAtMs
+    )
+  );
+  const rejectsRemaining = Math.max(0, 3 - rejectedDepositStrikeCount);
   const approvedDepositsTotal = safeCount(
     pickFirstFiniteNumber(
       fundingData.approvedDepositsHtg,
@@ -722,6 +839,7 @@ function updateProfileData(user) {
       )
     ),
     accountFrozen,
+    withdrawalHold: withdrawalLocked,
   };
 
   if (BALANCE_DEBUG) {
@@ -749,6 +867,9 @@ function updateProfileData(user) {
       doesProvisionalBalance,
       exchangeableDoesAvailable,
       accountFrozen,
+      withdrawalHold,
+      withdrawalLocked,
+      rejectedDepositStrikeCount,
     });
   }
 
@@ -774,18 +895,55 @@ function updateProfileData(user) {
   if (verifiedAvailableHintEl) verifiedAvailableHintEl.textContent = `HTG vérifié dispo: ${formatAmount(approvedHtgAvailable)}`;
   if (pendingHintEl) pendingHintEl.textContent = `HTG en examen: ${formatAmount(provisionalHtgAvailable)} | HTG dispo échange: ${formatAmount(resolvedAvailableHtg)}`;
   if (doesBreakdownEl) doesBreakdownEl.textContent = `Total Does: ${formatDoesAmount(resolvedDoesBalance)} | Approuvés: ${formatDoesAmount(doesApprovedBalance)} | En examen: ${formatDoesAmount(doesProvisionalBalance)} | Dispo échange: ${formatDoesAmount(exchangeableDoesAvailable)}`;
-  if (frozenBannerEl) frozenBannerEl.classList.toggle("hidden", accountFrozen !== true);
+  if (frozenBannerEl) frozenBannerEl.classList.toggle("hidden", withdrawalLocked !== true);
   if (frozenMessageEl) {
     frozenMessageEl.textContent = accountFrozen
-      ? "Ton compte a été temporairement gelé après plusieurs dépôts refusés. Contacte l'assistance pour demander un dégel."
-      : "";
+      ? "Ton compte a été temporairement gelé. Contacte l'assistance pour demander un dégel."
+      : withdrawalHold
+        ? "Ton compte est gelé pour les retraits après plusieurs dépôts refusés. Contacte l'assistance si tu penses que c'est une erreur."
+        : "";
   }
-  ["profileDepositBtn", "profileXchangeBtn", "profileWithdrawBtn"].forEach((id) => {
+  if (accountStatusValueEl) {
+    accountStatusValueEl.textContent = accountFrozen ? "Gelé globalement" : withdrawalHold ? "Gelé pour retrait" : "Actif";
+  }
+  if (accountStatusBadgeEl) {
+    accountStatusBadgeEl.textContent = withdrawalLocked ? "Gelé" : "Actif";
+    accountStatusBadgeEl.classList.toggle("border-emerald-400/20", !withdrawalLocked);
+    accountStatusBadgeEl.classList.toggle("bg-emerald-500/15", !withdrawalLocked);
+    accountStatusBadgeEl.classList.toggle("text-emerald-200", !withdrawalLocked);
+    accountStatusBadgeEl.classList.toggle("border-amber-300/25", withdrawalLocked);
+    accountStatusBadgeEl.classList.toggle("bg-amber-500/15", withdrawalLocked);
+    accountStatusBadgeEl.classList.toggle("text-amber-100", withdrawalLocked);
+  }
+  if (accountStatusStrikeEl) {
+    accountStatusStrikeEl.textContent = `Rejets: ${rejectedDepositStrikeCount}/3`;
+  }
+  if (accountStatusMetaEl) {
+    accountStatusMetaEl.textContent = accountFrozen
+      ? "Dépôt, retrait, Xchange et parties sont bloqués."
+      : withdrawalHold
+        ? "Les retraits sont bloqués. Dépôt, Xchange et parties restent actifs."
+        : `Encore ${rejectsRemaining} rejet${rejectsRemaining > 1 ? "s" : ""} avant gel du retrait.`;
+  }
+
+  ["profileDepositBtn", "profileXchangeBtn"].forEach((id) => {
     const btn = document.getElementById(id);
     if (!btn) return;
     btn.disabled = accountFrozen === true;
     btn.classList.toggle("opacity-60", accountFrozen === true);
     btn.classList.toggle("cursor-not-allowed", accountFrozen === true);
+  });
+  const withdrawBtn = document.getElementById("profileWithdrawBtn");
+  if (withdrawBtn) {
+    const withdrawDisabled = withdrawalLocked === true;
+    withdrawBtn.disabled = withdrawDisabled;
+    withdrawBtn.classList.toggle("opacity-60", withdrawDisabled);
+    withdrawBtn.classList.toggle("cursor-not-allowed", withdrawDisabled);
+  }
+  maybeShowWithdrawalHoldModal(user, {
+    withdrawalHold,
+    withdrawalHoldAtMs,
+    rejectedDepositStrikeCount,
   });
   void updateWithdrawalAvailability(user, resolvedXState);
   updateReferralData(user);

@@ -81,6 +81,17 @@ function escapeAttr(value) {
   return escapeHtml(value).replace(/`/g, '&#096;');
 }
 
+function sanitizePhoneInput(value) {
+  return String(value || "")
+    .replace(/[^\d+\-\s().]/g, "")
+    .trim()
+    .slice(0, 40);
+}
+
+function extractPhoneDigits(value) {
+  return String(value || "").replace(/\D/g, "");
+}
+
 function sanitizeAsset(value) {
   const out = String(value || '').trim();
   if (!out) return '';
@@ -801,10 +812,18 @@ class PaymentModal {
   
   renderProofStep(step) {
     const expectedName = this.clientData.fullName || this.clientData.name || this.options.client?.name || '';
+    const expectedDepositorPhone = sanitizePhoneInput(
+      this.clientData.depositorPhone
+      || this.clientData.phone
+      || this.options.client?.depositorPhone
+      || this.options.client?.phone
+      || ''
+    );
     const safeTitle = escapeHtml(step?.title || 'Confirmez votre paiement');
     const safeDescription = escapeHtml(step?.description || "Téléchargez une capture d'écran de votre transaction");
     const safeExpectedName = escapeHtml(expectedName);
     const safeExpectedAttr = escapeAttr(expectedName);
+    const safeDepositorPhoneAttr = escapeAttr(expectedDepositorPhone);
     const safeButtonText = escapeHtml(step?.buttonText || 'Soumettre ma demande');
     
     return `
@@ -825,6 +844,14 @@ class PaymentModal {
           <div class="form-group">
             <label>Confirmez votre nom *</label>
             <input type="text" id="proofName" required placeholder="Votre nom exact" value="${safeExpectedAttr}">
+          </div>
+
+          <div class="form-group">
+            <label>Numero qui a effectue le depot *</label>
+            <input type="tel" id="proofDepositorPhone" required inputmode="tel" autocomplete="tel" placeholder="Ex: 50941752992" value="${safeDepositorPhoneAttr}">
+            <p style="font-size: 0.8rem; color: #8B7E6B; margin-top: 0.25rem;">
+              Cette information doit etre exacte. Une erreur peut entrainer le rejet de la demande.
+            </p>
           </div>
           
           <div class="form-group">
@@ -1163,6 +1190,8 @@ class PaymentModal {
   
   async validateProofStep() {
     const proofName = this.modal.querySelector('#proofName')?.value.trim();
+    const proofDepositorPhoneInput = this.modal.querySelector('#proofDepositorPhone');
+    const proofDepositorPhone = sanitizePhoneInput(proofDepositorPhoneInput?.value || '');
     const proofImage = this.modal.querySelector('#proofImage')?.files[0];
     
     if (!proofName) {
@@ -1173,6 +1202,13 @@ class PaymentModal {
     const expectedName = this.clientData.fullName || this.clientData.name || this.options.client?.name || '';
     if (expectedName && proofName !== expectedName) {
       alert(`Le nom "${proofName}" ne correspond pas à "${expectedName}". Veuillez saisir le même nom.`);
+      return false;
+    }
+
+    const depositorPhoneDigits = extractPhoneDigits(proofDepositorPhone);
+    if (!proofDepositorPhone || depositorPhoneDigits.length < 8) {
+      alert('Veuillez saisir le numero exact qui a effectue le depot.');
+      proofDepositorPhoneInput?.focus();
       return false;
     }
     
@@ -1193,6 +1229,8 @@ class PaymentModal {
       this.extractedText = '';
       this.extractedTextStatus = 'failed';
     }
+
+    this.clientData.depositorPhone = proofDepositorPhone;
     
     await this.saveOrder(proofName);
     
@@ -1251,6 +1289,7 @@ class PaymentModal {
         customerName: this.clientData.fullName || this.clientData.name || this.options.client?.name || '',
         customerEmail: this.clientData.email || this.options.client?.email || '',
         customerPhone: this.clientData.phone || this.options.client?.phone || '',
+        depositorPhone: this.clientData.depositorPhone || '',
         customerAddress: this.clientData.address || this.options.client?.address || '',
         customerCity: this.clientData.city || this.options.client?.city || '',
         createdAt: new Date().toISOString(),
@@ -1263,6 +1302,7 @@ class PaymentModal {
         customerName: orderData.customerName,
         customerEmail: orderData.customerEmail,
         customerPhone: orderData.customerPhone,
+        depositorPhone: orderData.depositorPhone,
         proofRef: proofName,
         extractedText: this.extractedText,
         extractedTextStatus: this.extractedTextStatus,

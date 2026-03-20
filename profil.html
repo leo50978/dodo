@@ -268,6 +268,20 @@
                 <p id="profileFrozenMessage" class="mt-1 text-sm leading-6 text-white/90">Ton compte a été temporairement gelé. Contacte l'assistance.</p>
               </div>
 
+              <div class="profile-liquid-soft mt-4 rounded-2xl border border-white/10 bg-[#111827]/82 p-4">
+                <div class="flex min-w-0 flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                  <div class="min-w-0">
+                    <p class="text-[11px] uppercase tracking-[0.14em] text-white/60">Statut compte</p>
+                    <p id="profileAccountStatusValue" class="profile-dynamic-value mt-2 text-lg font-semibold text-white sm:text-xl">Actif</p>
+                  </div>
+                  <span id="profileAccountStatusBadge" class="inline-flex w-fit items-center rounded-full border border-emerald-400/20 bg-emerald-500/15 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.14em] text-emerald-200">
+                    Actif
+                  </span>
+                </div>
+                <p id="profileAccountStatusStrike" class="profile-dynamic-text mt-3 text-sm leading-6 text-white/84">Rejets: 0/3</p>
+                <p id="profileAccountStatusMeta" class="profile-dynamic-text mt-1 text-xs leading-5 text-white/62">Encore 3 rejets avant gel du retrait.</p>
+              </div>
+
               <div class="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
                 <div class="profile-liquid-soft rounded-2xl border border-white/10 bg-[#111827]/82 p-4">
                   <p class="text-[11px] uppercase tracking-[0.14em] text-white/60">HTG approuvé</p>
