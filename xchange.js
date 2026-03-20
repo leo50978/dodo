@@ -6,7 +6,7 @@ import {
   onAuthStateChanged,
 } from "./firebase-init.js";
 import { withButtonLoading } from "./loading-ui.js";
-import { walletMutateSecure } from "./secure-functions.js";
+import { getDepositFundingStatusSecure, walletMutateSecure } from "./secure-functions.js";
 
 const RATE_HTG_TO_DOES = 20;
 const BALANCE_DEBUG = true;
@@ -39,7 +39,16 @@ function bindHideOnErrorImages(root) {
 function defaultWallet() {
   return {
     does: 0,
+    doesApprovedBalance: 0,
+    doesProvisionalBalance: 0,
+    exchangeableDoesAvailable: 0,
     exchangedGourdes: 0,
+    approvedHtgAvailable: 0,
+    provisionalHtgAvailable: 0,
+    withdrawableHtg: 0,
+    accountFrozen: false,
+    freezeReason: "",
+    rejectedDepositStrikeCount: 0,
     pendingPlayFromXchangeDoes: 0,
     pendingPlayFromReferralDoes: 0,
     totalExchangedHtgEver: 0,
@@ -79,12 +88,72 @@ function getCachedWallet(uid) {
 function setCachedWallet(uid, data, loaded = true) {
   WALLET_CACHE.set(uid, {
     does: safeInt(data?.does),
+    doesApprovedBalance: safeInt(
+      typeof data?.doesApprovedBalance === "number"
+        ? data.doesApprovedBalance
+        : (safeInt(data?.does) - safeInt(data?.doesProvisionalBalance))
+    ),
+    doesProvisionalBalance: safeInt(data?.doesProvisionalBalance),
+    exchangeableDoesAvailable: safeInt(
+      typeof data?.exchangeableDoesAvailable === "number"
+        ? data.exchangeableDoesAvailable
+        : ((safeInt(data?.pendingPlayFromXchangeDoes) + safeInt(data?.pendingPlayFromReferralDoes)) <= 0
+            ? safeInt(
+              typeof data?.doesApprovedBalance === "number"
+                ? data.doesApprovedBalance
+                : (safeInt(data?.does) - safeInt(data?.doesProvisionalBalance))
+            )
+            : 0)
+    ),
     exchangedGourdes: safeSignedInt(data?.exchangedGourdes),
+    approvedHtgAvailable: safeInt(data?.approvedHtgAvailable),
+    provisionalHtgAvailable: safeInt(data?.provisionalHtgAvailable),
+    withdrawableHtg: safeInt(data?.withdrawableHtg),
+    accountFrozen: data?.accountFrozen === true,
+    freezeReason: String(data?.freezeReason || ""),
+    rejectedDepositStrikeCount: safeInt(data?.rejectedDepositStrikeCount),
     pendingPlayFromXchangeDoes: safeInt(data?.pendingPlayFromXchangeDoes),
     pendingPlayFromReferralDoes: safeInt(data?.pendingPlayFromReferralDoes),
     totalExchangedHtgEver: safeInt(data?.totalExchangedHtgEver),
     loaded,
   });
+}
+
+async function syncWalletFundingState(uid = currentUid()) {
+  const safeUid = String(uid || "").trim();
+  if (!safeUid || safeUid === "guest") {
+    return getXchangeState(window.__userBaseBalance || window.__userBalance || 0, safeUid);
+  }
+
+  try {
+    const funding = await getDepositFundingStatusSecure({});
+    if (BALANCE_DEBUG) {
+      console.log("[BALANCE_DEBUG][XCHANGE] syncWalletFundingState", {
+        uid: safeUid,
+        funding,
+      });
+    }
+    setCachedWallet(safeUid, {
+      does: safeInt(funding?.doesBalance),
+      doesApprovedBalance: safeInt(funding?.approvedDoesBalance),
+      doesProvisionalBalance: safeInt(funding?.provisionalDoesBalance),
+      exchangeableDoesAvailable: safeInt(funding?.exchangeableDoesAvailable),
+      exchangedGourdes: safeSignedInt(funding?.exchangedApprovedHtg),
+      approvedHtgAvailable: safeInt(funding?.approvedHtgAvailable),
+      provisionalHtgAvailable: safeInt(funding?.provisionalHtgAvailable),
+      withdrawableHtg: safeInt(funding?.withdrawableHtg),
+      accountFrozen: funding?.accountFrozen === true,
+      freezeReason: String(funding?.freezeReason || ""),
+      rejectedDepositStrikeCount: safeInt(funding?.rejectedDepositStrikeCount),
+      pendingPlayFromXchangeDoes: safeInt(funding?.pendingPlayFromXchangeDoes),
+      pendingPlayFromReferralDoes: safeInt(funding?.pendingPlayFromReferralDoes),
+      totalExchangedHtgEver: safeInt(funding?.totalExchangedApprovedHtg),
+    }, true);
+    return emitXchangeUpdated(safeUid);
+  } catch (error) {
+    console.warn("[XCHANGE] syncWalletFundingState failed", error);
+    return getXchangeState(window.__userBaseBalance || window.__userBalance || 0, safeUid);
+  }
 }
 
 function emitXchangeUpdated(uid = currentUid()) {
@@ -119,7 +188,16 @@ function startWalletWatcher(uid) {
       console.log("[BALANCE_DEBUG][XCHANGE] wallet snapshot", {
         uid,
         doesBalance: data.doesBalance,
+        doesApprovedBalance: data.doesApprovedBalance,
+        doesProvisionalBalance: data.doesProvisionalBalance,
+        exchangeableDoesAvailable: data.exchangeableDoesAvailable,
         exchangedGourdes: data.exchangedGourdes,
+        approvedHtgAvailable: data.approvedHtgAvailable,
+        provisionalHtgAvailable: data.provisionalHtgAvailable,
+        withdrawableHtg: data.withdrawableHtg,
+        accountFrozen: data.accountFrozen,
+        freezeReason: data.freezeReason,
+        rejectedDepositStrikeCount: data.rejectedDepositStrikeCount,
         pendingPlayFromXchangeDoes: data.pendingPlayFromXchangeDoes,
         pendingPlayFromReferralDoes: data.pendingPlayFromReferralDoes,
         totalExchangedHtgEver: data.totalExchangedHtgEver,
@@ -127,7 +205,16 @@ function startWalletWatcher(uid) {
     }
     setCachedWallet(uid, {
       does: safeInt(data.doesBalance),
+      doesApprovedBalance: safeInt(data.doesApprovedBalance),
+      doesProvisionalBalance: safeInt(data.doesProvisionalBalance),
+      exchangeableDoesAvailable: safeInt(data.exchangeableDoesAvailable),
       exchangedGourdes: safeSignedInt(data.exchangedGourdes),
+      approvedHtgAvailable: safeInt(data.approvedHtgAvailable),
+      provisionalHtgAvailable: safeInt(data.provisionalHtgAvailable),
+      withdrawableHtg: safeInt(data.withdrawableHtg),
+      accountFrozen: data.accountFrozen === true,
+      freezeReason: String(data.freezeReason || ""),
+      rejectedDepositStrikeCount: safeInt(data.rejectedDepositStrikeCount),
       pendingPlayFromXchangeDoes: safeInt(data.pendingPlayFromXchangeDoes),
       pendingPlayFromReferralDoes: safeInt(data.pendingPlayFromReferralDoes),
       totalExchangedHtgEver: safeInt(data.totalExchangedHtgEver),
@@ -166,12 +253,18 @@ async function applyWalletMutation({ uid, deltaDoes = 0, deltaExchangedGourdes =
 
     const nextDoes = safeInt(result?.does);
     const nextExchanged = safeSignedInt(result?.exchangedGourdes);
+    const nextApprovedDoes = safeInt(result?.doesApprovedBalance);
+    const nextProvisionalDoes = safeInt(result?.doesProvisionalBalance);
+    const nextExchangeableDoes = safeInt(result?.exchangeableDoesAvailable);
     const nextPendingFromXchange = safeInt(result?.pendingPlayFromXchangeDoes);
     const nextPendingFromReferral = safeInt(result?.pendingPlayFromReferralDoes);
     const nextTotalExchanged = safeInt(result?.totalExchangedHtgEver);
 
     setCachedWallet(uid, {
       does: nextDoes,
+      doesApprovedBalance: nextApprovedDoes,
+      doesProvisionalBalance: nextProvisionalDoes,
+      exchangeableDoesAvailable: nextExchangeableDoes,
       exchangedGourdes: nextExchanged,
       pendingPlayFromXchangeDoes: nextPendingFromXchange,
       pendingPlayFromReferralDoes: nextPendingFromReferral,
@@ -186,6 +279,9 @@ async function applyWalletMutation({ uid, deltaDoes = 0, deltaExchangedGourdes =
         amountGourdes,
         amountDoes,
         afterDoes: nextDoes,
+        afterApprovedDoes: nextApprovedDoes,
+        afterProvisionalDoes: nextProvisionalDoes,
+        exchangeableDoesAvailable: nextExchangeableDoes,
         afterExchanged: nextExchanged,
         pendingPlayFromXchangeDoes: nextPendingFromXchange,
         pendingPlayFromReferralDoes: nextPendingFromReferral,
@@ -195,6 +291,9 @@ async function applyWalletMutation({ uid, deltaDoes = 0, deltaExchangedGourdes =
     emitXchangeUpdated(uid);
     return { ok: true, does: nextDoes };
   } catch (err) {
+    if (type === "xchange_buy" || type === "xchange_sell") {
+      await syncWalletFundingState(uid);
+    }
     console.error("[XCHANGE] applyWalletMutation error", err);
     return {
       ok: false,
@@ -204,13 +303,14 @@ async function applyWalletMutation({ uid, deltaDoes = 0, deltaExchangedGourdes =
       pendingPlayFromXchangeDoes: safeInt(err?.pendingPlayFromXchangeDoes),
       pendingPlayFromReferralDoes: safeInt(err?.pendingPlayFromReferralDoes),
       pendingPlayTotalDoes: safeInt(err?.pendingPlayTotalDoes),
+      exchangeableDoesAvailable: safeInt(err?.exchangeableDoesAvailable),
     };
   }
 }
 
 export async function ensureXchangeState(uid = currentUid()) {
   const hydrated = await waitForXchangeBalanceHydration(uid, 2600);
-  const state = getXchangeState(window.__userBaseBalance || window.__userBalance || 0, uid);
+  const state = await syncWalletFundingState(uid);
   if (BALANCE_DEBUG) {
     console.log("[BALANCE_DEBUG][XCHANGE] ensureXchangeState", {
       uid,
@@ -227,12 +327,38 @@ export function getXchangeState(balance = 0, uid = currentUid()) {
   const wallet = getCachedWallet(uid);
   const totalBalance = safeInt(balance);
   const exchanged = safeSignedInt(wallet.exchangedGourdes);
-  const available = Math.max(0, totalBalance - exchanged);
+  const hasNonEmptyFundingBreakdown = (
+    safeInt(wallet.approvedHtgAvailable) > 0
+    || safeInt(wallet.provisionalHtgAvailable) > 0
+    || safeInt(wallet.withdrawableHtg) > 0
+    || safeInt(wallet.doesApprovedBalance) > 0
+    || safeInt(wallet.doesProvisionalBalance) > 0
+  );
+  const shouldFallbackToLegacyBalance = wallet.loaded === true
+    && !hasNonEmptyFundingBreakdown
+    && totalBalance > 0;
+  const hasFundingBreakdown = wallet.loaded === true && !shouldFallbackToLegacyBalance;
+  const approvedGourdesAvailable = hasFundingBreakdown
+    ? safeInt(wallet.approvedHtgAvailable)
+    : Math.max(0, totalBalance - exchanged);
+  const provisionalGourdesAvailable = hasFundingBreakdown
+    ? safeInt(wallet.provisionalHtgAvailable)
+    : 0;
+  const available = approvedGourdesAvailable + provisionalGourdesAvailable;
   return {
-    totalBalance,
+    totalBalance: hasFundingBreakdown ? available : totalBalance,
     availableGourdes: available,
+    approvedGourdesAvailable,
+    provisionalGourdesAvailable,
     exchangedGourdes: exchanged,
     does: safeInt(wallet.does),
+    doesApprovedBalance: safeInt(wallet.doesApprovedBalance),
+    doesProvisionalBalance: safeInt(wallet.doesProvisionalBalance),
+    exchangeableDoesAvailable: safeInt(wallet.exchangeableDoesAvailable),
+    withdrawableHtg: safeInt(wallet.withdrawableHtg),
+    accountFrozen: wallet.accountFrozen === true,
+    freezeReason: String(wallet.freezeReason || ""),
+    rejectedDepositStrikeCount: safeInt(wallet.rejectedDepositStrikeCount),
     pendingPlayFromXchangeDoes: safeInt(wallet.pendingPlayFromXchangeDoes),
     pendingPlayFromReferralDoes: safeInt(wallet.pendingPlayFromReferralDoes),
     pendingPlayTotalDoes: safeInt(wallet.pendingPlayFromXchangeDoes) + safeInt(wallet.pendingPlayFromReferralDoes),
@@ -489,6 +615,17 @@ function ensureXchangeModal() {
 
   const open = async () => {
     const state = await ensureXchangeState(currentUid());
+    if (state.accountFrozen) {
+      showXchangeRuleModal({
+        title: "Compte gelé",
+        message: "Ton compte a été temporairement gelé après plusieurs dépôts refusés. Contacte l'assistance.",
+        lines: [
+          "Le dépôt, le retrait, le Xchange et les parties sont bloqués.",
+          "Le support reste disponible pour demander un dégel.",
+        ],
+      });
+      return;
+    }
     if (availableHtgEl) availableHtgEl.textContent = String(state.availableGourdes);
     if (availableDoesEl) availableDoesEl.textContent = String(state.does || 0);
     if (amountInput) amountInput.value = "";
@@ -541,12 +678,25 @@ function ensureXchangeModal() {
         }
 
         const amount = Number(raw);
+        if (BALANCE_DEBUG) {
+          console.log("[BALANCE_DEBUG][XCHANGE] submit attempt", {
+            uid: currentUid(),
+            mode,
+            raw,
+            amount,
+            state,
+          });
+        }
         if (amount <= 0) {
           if (errorEl) errorEl.textContent = "Le montant doit être supérieur à zéro.";
           return;
         }
 
         if (mode === "buy") {
+          if (state.accountFrozen) {
+            if (errorEl) errorEl.textContent = "Compte gelé. Contacte l'assistance.";
+            return;
+          }
           if (amount > state.availableGourdes) {
             if (errorEl) errorEl.textContent = "Montant supérieur au solde disponible.";
             return;
@@ -557,23 +707,36 @@ function ensureXchangeModal() {
             return;
           }
         } else {
-          if (amount > state.does) {
-            if (errorEl) errorEl.textContent = "Montant supérieur au solde Does disponible.";
+          if (state.accountFrozen) {
+            if (errorEl) errorEl.textContent = "Compte gelé. Contacte l'assistance.";
+            return;
+          }
+          if (amount > state.exchangeableDoesAvailable) {
+            if (errorEl) errorEl.textContent = "Montant supérieur aux Does actuellement échangeables.";
             return;
           }
           const res = await exchangeDoesToHtg(amount, currentUid());
           if (!res.ok) {
+            if (res.code === "account-frozen") {
+              showXchangeRuleModal({
+                title: "Compte gelé",
+                message: res.error || "Ton compte a été temporairement gelé après plusieurs dépôts refusés.",
+                lines: ["Contacte l'assistance pour demander un dégel."],
+              });
+            }
             if (res.code === "play-required-before-sell") {
               const pendingFromXchange = safeInt(res.pendingPlayFromXchangeDoes);
               const pendingFromReferral = safeInt(res.pendingPlayFromReferralDoes);
               const pendingTotal = safeInt(res.pendingPlayTotalDoes || (pendingFromXchange + pendingFromReferral));
+              const exchangeableDoesAvailable = safeInt(res.exchangeableDoesAvailable);
               showXchangeRuleModal({
                 title: "Conversion bloquée",
-                message: `Tu dois d'abord jouer ${pendingTotal} Does avant de reconvertir en HTG.`,
+                message: `Tu peux reconvertir ${exchangeableDoesAvailable} Does pour le moment. Le reste sera débloqué en jouant.`,
                 lines: [
                   `Reste à jouer (Does achetés): ${pendingFromXchange} Does`,
                   `Reste à jouer (bonus parrainage): ${pendingFromReferral} Does`,
-                  "Joue des parties pour débloquer la reconversion.",
+                  `Total encore bloqué: ${pendingTotal} Does`,
+                  "Joue des parties pour débloquer plus de reconversion.",
                 ],
               });
             }

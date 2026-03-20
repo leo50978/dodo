@@ -3,6 +3,7 @@ import { mountXchangeModal, getXchangeState } from "./xchange.js";
 import { mountRetraitModal, getWithdrawalRuleStatus } from "./retrait.js";
 import { mountSoldeModal, waitForBalanceHydration } from "./solde.js";
 import { db, doc, onSnapshot } from "./firebase-init.js";
+import { getDepositFundingStatusSecure } from "./secure-functions.js";
 const BALANCE_DEBUG = true;
 let referralLoadToken = 0;
 let referralHintFreezeUntil = 0;
@@ -12,10 +13,22 @@ let profileClientUnsub = null;
 let profileRealtimeUid = "";
 let profileRealtimeRefreshTimer = null;
 let latestProfileClientData = null;
+let latestProfileFundingData = null;
+let profileFundingUid = "";
+let profileFundingRefreshTimer = null;
+let profileFundingRequestToken = 0;
 
 function safeCount(value) {
   const n = Number(value);
   return Number.isFinite(n) ? Math.max(0, Math.floor(n)) : 0;
+}
+
+function pickFirstFiniteNumber(...values) {
+  for (const value of values) {
+    const n = Number(value);
+    if (Number.isFinite(n)) return n;
+  }
+  return 0;
 }
 
 function normalizeReferralCode(value) {
@@ -84,6 +97,13 @@ function clearProfileRealtimeWatchers() {
   }
   profileRealtimeUid = "";
   latestProfileClientData = null;
+  latestProfileFundingData = null;
+  profileFundingUid = "";
+  profileFundingRequestToken += 1;
+  if (profileFundingRefreshTimer) {
+    clearTimeout(profileFundingRefreshTimer);
+    profileFundingRefreshTimer = null;
+  }
 }
 
 function scheduleProfileRealtimeRefresh(user) {
@@ -114,12 +134,81 @@ function ensureProfileRealtimeWatchers(user) {
     doc(db, "clients", uid),
     (snap) => {
       latestProfileClientData = snap.exists() ? (snap.data() || {}) : null;
+      if (BALANCE_DEBUG) {
+        console.log("[BALANCE_DEBUG][PROFILE] client snapshot", {
+          uid,
+          exists: snap.exists(),
+          data: latestProfileClientData,
+        });
+      }
       scheduleProfileRealtimeRefresh(user || auth.currentUser || null);
     },
     (err) => {
       console.error("Erreur listener profil client:", err);
     }
   );
+}
+
+async function refreshProfileFundingStatus(user) {
+  const uid = String(user?.uid || auth.currentUser?.uid || "").trim();
+  if (!uid) {
+    latestProfileFundingData = null;
+    profileFundingUid = "";
+    scheduleProfileRealtimeRefresh(null);
+    return;
+  }
+
+  profileFundingUid = uid;
+  const token = ++profileFundingRequestToken;
+  try {
+    if (BALANCE_DEBUG) {
+      console.log("[BALANCE_DEBUG][PROFILE] funding status request", {
+        uid,
+        token,
+      });
+    }
+    const result = await getDepositFundingStatusSecure();
+    if (token !== profileFundingRequestToken) return;
+    if (uid !== String(auth.currentUser?.uid || "").trim()) return;
+    latestProfileFundingData = result && typeof result === "object" ? result : null;
+    if (BALANCE_DEBUG) {
+      console.log("[BALANCE_DEBUG][PROFILE] funding status", {
+        uid,
+        raw: latestProfileFundingData,
+        approvedHtgAvailable: latestProfileFundingData?.approvedHtgAvailable,
+        provisionalHtgAvailable: latestProfileFundingData?.provisionalHtgAvailable,
+        withdrawableHtg: latestProfileFundingData?.withdrawableHtg,
+        approvedDoesBalance: latestProfileFundingData?.approvedDoesBalance,
+        provisionalDoesBalance: latestProfileFundingData?.provisionalDoesBalance,
+        doesBalance: latestProfileFundingData?.doesBalance,
+      });
+    }
+  } catch (error) {
+    console.warn("[PROFILE] funding status unavailable", error);
+    if (token !== profileFundingRequestToken) return;
+  }
+  scheduleProfileRealtimeRefresh(user || auth.currentUser || null);
+}
+
+function scheduleProfileFundingRefresh(user, delayMs = 120) {
+  const uid = String(user?.uid || auth.currentUser?.uid || "").trim();
+  if (!uid) {
+    latestProfileFundingData = null;
+    profileFundingUid = "";
+    if (profileFundingRefreshTimer) {
+      clearTimeout(profileFundingRefreshTimer);
+      profileFundingRefreshTimer = null;
+    }
+    return;
+  }
+  profileFundingUid = uid;
+  if (profileFundingRefreshTimer) {
+    clearTimeout(profileFundingRefreshTimer);
+  }
+  profileFundingRefreshTimer = setTimeout(() => {
+    profileFundingRefreshTimer = null;
+    void refreshProfileFundingStatus(user || auth.currentUser || null);
+  }, Math.max(0, Number(delayMs) || 0));
 }
 
 function ensureProfileModal() {
@@ -146,7 +235,7 @@ function ensureProfileModal() {
 
         <div class="mt-6 grid grid-cols-1 gap-3 sm:grid-cols-2">
           <div class="rounded-2xl border border-white/20 bg-white/10 p-4 shadow-[8px_8px_18px_rgba(19,25,40,0.34),-6px_-6px_14px_rgba(111,126,164,0.2)]">
-            <p class="text-[11px] uppercase tracking-[0.14em] text-white/65">Solde disponible</p>
+            <p class="text-[11px] uppercase tracking-[0.14em] text-white/65">Solde jouable</p>
             <p id="profileBalance" class="mt-2 text-sm text-white">-</p>
           </div>
           <div class="rounded-2xl border border-white/20 bg-white/10 p-4 shadow-[8px_8px_18px_rgba(19,25,40,0.34),-6px_-6px_14px_rgba(111,126,164,0.2)]">
@@ -218,13 +307,44 @@ function ensureProfileModal() {
           </button>
         </div>
 
-        <div class="mt-4 rounded-2xl border border-white/20 bg-white/10 p-4 shadow-[8px_8px_18px_rgba(19,25,40,0.34),-6px_-6px_14px_rgba(111,126,164,0.2)]">
-          <p class="text-[11px] uppercase tracking-[0.14em] text-white/65">Xchange prioritaire</p>
-          <div class="mt-2 flex items-center gap-2">
-            <img src="./does.png" alt="Does" class="h-6 w-6 rounded-full object-cover" data-hide-on-error="1" />
-            <p class="text-sm font-semibold text-white"><span id="profileDoesTotal">0</span> Does</p>
+        <div class="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+          <div class="rounded-2xl border border-white/20 bg-white/10 p-4 shadow-[8px_8px_18px_rgba(19,25,40,0.34),-6px_-6px_14px_rgba(111,126,164,0.2)]">
+            <p class="text-[11px] uppercase tracking-[0.14em] text-white/65">HTG approuvé</p>
+            <p id="profileApprovedHtg" class="mt-2 text-sm font-semibold text-white">-</p>
+            <p class="mt-1 text-xs text-white/70">Partie validée qui reste encore en HTG.</p>
           </div>
-          <p id="profileExchanged" class="mt-1 text-xs text-white/70">Échangé: 0 HTG</p>
+          <div class="rounded-2xl border border-white/20 bg-white/10 p-4 shadow-[8px_8px_18px_rgba(19,25,40,0.34),-6px_-6px_14px_rgba(111,126,164,0.2)]">
+            <p class="text-[11px] uppercase tracking-[0.14em] text-white/65">HTG en examen</p>
+            <p id="profileProvisionalHtg" class="mt-2 text-sm font-semibold text-white">-</p>
+            <p class="mt-1 text-xs text-white/70">Jouable, mais pas retirable tant que non validé.</p>
+          </div>
+          <div class="rounded-2xl border border-white/20 bg-white/10 p-4 shadow-[8px_8px_18px_rgba(19,25,40,0.34),-6px_-6px_14px_rgba(111,126,164,0.2)]">
+            <p class="text-[11px] uppercase tracking-[0.14em] text-white/65">HTG dispo retrait</p>
+            <p id="profileWithdrawAvailable" class="mt-2 text-sm font-semibold text-white">-</p>
+            <p class="mt-1 text-xs text-white/70">Montant que tu peux demander en retrait maintenant.</p>
+          </div>
+          <div class="rounded-2xl border border-white/20 bg-white/10 p-4 shadow-[8px_8px_18px_rgba(19,25,40,0.34),-6px_-6px_14px_rgba(111,126,164,0.2)]">
+            <p class="text-[11px] uppercase tracking-[0.14em] text-white/65">Does approuvés</p>
+            <p class="mt-2 text-sm font-semibold text-white"><span id="profileApprovedDoes">0</span> Does</p>
+            <p class="mt-1 text-xs text-white/70">Does venant d'un dépôt déjà validé.</p>
+          </div>
+          <div class="rounded-2xl border border-white/20 bg-white/10 p-4 shadow-[8px_8px_18px_rgba(19,25,40,0.34),-6px_-6px_14px_rgba(111,126,164,0.2)]">
+            <p class="text-[11px] uppercase tracking-[0.14em] text-white/65">Does en examen</p>
+            <p class="mt-2 text-sm font-semibold text-white"><span id="profileProvisionalDoes">0</span> Does</p>
+            <p class="mt-1 text-xs text-white/70">Does venant d'un dépôt pas encore validé.</p>
+          </div>
+          <div class="rounded-2xl border border-white/20 bg-white/10 p-4 shadow-[8px_8px_18px_rgba(19,25,40,0.34),-6px_-6px_14px_rgba(111,126,164,0.2)]">
+            <p class="text-[11px] uppercase tracking-[0.14em] text-white/65">Does dispo échange</p>
+            <p class="mt-2 text-sm font-semibold text-white"><span id="profileExchangeableDoesAvailable">0</span> Does</p>
+            <p class="mt-1 text-xs text-white/70">Does approuvés que tu peux reconvertir.</p>
+          </div>
+          <div class="rounded-2xl border border-white/20 bg-white/10 p-4 shadow-[8px_8px_18px_rgba(19,25,40,0.34),-6px_-6px_14px_rgba(111,126,164,0.2)] sm:col-span-2 xl:col-span-3">
+            <p id="profileApprovedDepositsSummary" class="text-xs text-white/70">Dépôts approuvés: 0 HTG</p>
+            <p id="profileExchanged" class="mt-1 text-xs text-white/70">Déjà converti: 0 HTG</p>
+            <p id="profileVerifiedAvailableHint" class="mt-1 text-xs text-white/70">HTG vérifié dispo: 0 HTG</p>
+            <p id="profilePendingBalanceHint" class="mt-1 text-xs text-white/70">HTG en examen: 0 HTG</p>
+            <p id="profileDoesBreakdown" class="mt-1 text-xs text-white/70">Does approuvés: 0 | Does en examen: 0</p>
+          </div>
         </div>
 
         <div class="mt-auto pt-6">
@@ -406,17 +526,15 @@ function showReferralCopyFeedback(message, success = true) {
 
 async function updateWithdrawalAvailability(user, xState) {
   const htgEl = document.getElementById("profileWithdrawAvailable");
-  const doesEl = document.getElementById("profileWithdrawDoesEquivalent");
   const hintEl = document.getElementById("profileWithdrawRuleHint");
   const metaEl = document.getElementById("profileWithdrawRuleMeta");
-  if (!htgEl && !doesEl && !hintEl && !metaEl) return;
+  if (!htgEl && !hintEl && !metaEl) return;
 
   const uid = String(user?.uid || auth.currentUser?.uid || "").trim();
   const token = ++withdrawalAvailabilityToken;
 
   if (!uid) {
     if (htgEl) htgEl.textContent = "-";
-    if (doesEl) doesEl.textContent = "-";
     if (hintEl) hintEl.textContent = "Connecte-toi pour voir ton retrait disponible.";
     if (metaEl) metaEl.textContent = "";
     return;
@@ -440,15 +558,41 @@ async function updateWithdrawalAvailability(user, xState) {
     const ruleStatus = await getWithdrawalRuleStatus(uid);
     if (token !== withdrawalAvailabilityToken) return;
 
-    const withdrawableHtg = ruleStatus.canWithdraw ? Math.max(0, Number(xState?.availableGourdes || 0)) : 0;
-    const withdrawableDoes = Math.max(0, Math.floor(withdrawableHtg * Number(xState?.rate || 20)));
-
+    const withdrawableHtg = safeCount(
+      ruleStatus.canWithdraw
+        ? (typeof ruleStatus.withdrawableHtg === "number" ? ruleStatus.withdrawableHtg : Number(xState?.withdrawableHtg || xState?.availableGourdes || 0))
+        : 0
+    );
     if (htgEl) htgEl.textContent = formatAmount(withdrawableHtg);
-    if (doesEl) doesEl.textContent = `${formatDoesAmount(withdrawableDoes)} Does`;
 
+    if (ruleStatus.accountFrozen) {
+      if (hintEl) hintEl.textContent = "Compte gelé: dépôt, retrait, Xchange et parties sont bloqués.";
+      if (metaEl) metaEl.textContent = "Contacte l'assistance pour demander un dégel.";
+      return;
+    }
+
+    const provisionalLockedHtg = safeCount(ruleStatus.provisionalHtgAvailable);
     if (ruleStatus.canWithdraw) {
-      if (hintEl) hintEl.textContent = "Montant réellement retirable maintenant selon les règles actuelles.";
-      if (metaEl) metaEl.textContent = `Base retrait: ${formatAmount(withdrawableHtg)} | Taux: 1 HTG = ${Number(xState?.rate || 20)} Does`;
+      if (hintEl) {
+        hintEl.textContent = provisionalLockedHtg > 0
+          ? "Montant réellement retirable maintenant, hors dépôts encore en examen."
+          : "Montant réellement retirable maintenant selon les règles actuelles.";
+      }
+      if (metaEl) {
+        metaEl.textContent = provisionalLockedHtg > 0
+          ? `Retirable: ${formatAmount(withdrawableHtg)} | En examen: ${formatAmount(provisionalLockedHtg)}`
+          : `Base retrait: ${formatAmount(withdrawableHtg)} | Taux: 1 HTG = ${Number(xState?.rate || 20)} Does`;
+      }
+      return;
+    }
+
+    if (provisionalLockedHtg > 0 && safeCount(ruleStatus.remainingToExchangeHtg) <= 0) {
+      if (hintEl) {
+        hintEl.textContent = "Retrait partiellement bloqué: une partie de ton solde est encore en cours d'examen.";
+      }
+      if (metaEl) {
+        metaEl.textContent = `En examen: ${formatAmount(provisionalLockedHtg)} | Retirable maintenant: ${formatAmount(withdrawableHtg)}`;
+      }
       return;
     }
 
@@ -462,7 +606,6 @@ async function updateWithdrawalAvailability(user, xState) {
     console.error("Erreur calcul disponibilité retrait profil:", error);
     if (token !== withdrawalAvailabilityToken) return;
     if (htgEl) htgEl.textContent = "-";
-    if (doesEl) doesEl.textContent = "-";
     if (hintEl) hintEl.textContent = "Impossible de vérifier la disponibilité du retrait.";
     if (metaEl) metaEl.textContent = "";
   }
@@ -472,20 +615,140 @@ function updateProfileData(user) {
   const nameEl = document.getElementById("profileName");
   const emailEl = document.getElementById("profileEmail");
   const balanceEl = document.getElementById("profileBalance");
-  const doesEl = document.getElementById("profileDoesTotal");
+  const approvedHtgEl = document.getElementById("profileApprovedHtg");
+  const provisionalHtgEl = document.getElementById("profileProvisionalHtg");
+  const approvedDoesEl = document.getElementById("profileApprovedDoes");
+  const provisionalDoesEl = document.getElementById("profileProvisionalDoes");
+  const approvedDepositsSummaryEl = document.getElementById("profileApprovedDepositsSummary");
   const exchangedEl = document.getElementById("profileExchanged");
+  const verifiedAvailableHintEl = document.getElementById("profileVerifiedAvailableHint");
+  const withdrawAvailableEl = document.getElementById("profileWithdrawAvailable");
+  const exchangeableDoesEl = document.getElementById("profileExchangeableDoesAvailable");
+  const pendingHintEl = document.getElementById("profilePendingBalanceHint");
+  const doesBreakdownEl = document.getElementById("profileDoesBreakdown");
+  const frozenBannerEl = document.getElementById("profileFrozenBanner");
+  const frozenMessageEl = document.getElementById("profileFrozenMessage");
   const baseForUi = getBalanceBaseForUi();
   const xState = getXchangeState(baseForUi, user?.uid || auth.currentUser?.uid);
+  const clientData = latestProfileClientData || {};
+  const fundingData = latestProfileFundingData || {};
+  const approvedHtgAvailable = safeCount(
+    pickFirstFiniteNumber(
+      fundingData.approvedHtgAvailable,
+      xState?.approvedGourdesAvailable,
+      clientData.approvedHtgAvailable
+    )
+  );
+  const provisionalHtgAvailable = safeCount(
+    pickFirstFiniteNumber(
+      fundingData.provisionalHtgAvailable,
+      xState?.provisionalGourdesAvailable,
+      clientData.provisionalHtgAvailable
+    )
+  );
+  const doesApprovedBalance = safeCount(
+    pickFirstFiniteNumber(
+      fundingData.approvedDoesBalance,
+      xState?.doesApprovedBalance,
+      clientData.doesApprovedBalance
+    )
+  );
+  const doesProvisionalBalance = safeCount(
+    pickFirstFiniteNumber(
+      fundingData.provisionalDoesBalance,
+      xState?.doesProvisionalBalance,
+      clientData.doesProvisionalBalance
+    )
+  );
+  const exchangeableDoesAvailable = safeCount(
+    pickFirstFiniteNumber(
+      fundingData.exchangeableDoesAvailable,
+      xState?.exchangeableDoesAvailable,
+      clientData.exchangeableDoesAvailable
+    )
+  );
+  const allowLegacyAvailableFallback = !latestProfileFundingData
+    && safeCount(approvedHtgAvailable + provisionalHtgAvailable) <= 0
+    && xState?.loaded !== true;
+  const resolvedAvailableHtg = safeCount(
+    allowLegacyAvailableFallback
+      ? pickFirstFiniteNumber(
+        fundingData.playableHtg,
+        approvedHtgAvailable + provisionalHtgAvailable,
+        xState.availableGourdes
+      )
+      : pickFirstFiniteNumber(
+        fundingData.playableHtg,
+        approvedHtgAvailable + provisionalHtgAvailable
+      )
+  );
+  const resolvedDoesBalance = safeCount(
+    pickFirstFiniteNumber(
+      fundingData.doesBalance,
+      doesApprovedBalance + doesProvisionalBalance,
+      xState.does
+    )
+  );
+  const accountFrozen = fundingData.accountFrozen === true
+    || clientData.accountFrozen === true
+    || xState?.accountFrozen === true;
+  const approvedDepositsTotal = safeCount(
+    pickFirstFiniteNumber(
+      fundingData.approvedDepositsHtg,
+      clientData.approvedDepositsHtg
+    )
+  );
+  const convertedApprovedHtg = safeCount(
+    pickFirstFiniteNumber(
+      fundingData.totalExchangedApprovedHtg,
+      xState?.totalExchangedHtgEver,
+      clientData.totalExchangedHtgEver
+    )
+  );
+  const resolvedXState = {
+    ...xState,
+    availableGourdes: resolvedAvailableHtg,
+    approvedGourdesAvailable: approvedHtgAvailable,
+    provisionalGourdesAvailable: provisionalHtgAvailable,
+    does: resolvedDoesBalance,
+    doesApprovedBalance,
+    doesProvisionalBalance,
+    exchangeableDoesAvailable,
+    withdrawableHtg: safeCount(
+      pickFirstFiniteNumber(
+        fundingData.withdrawableHtg,
+        xState?.withdrawableHtg,
+        clientData.withdrawableHtg
+      )
+    ),
+    accountFrozen,
+  };
 
   if (BALANCE_DEBUG) {
+    console.log("[BALANCE_DEBUG][PROFILE] source comparison", {
+      uid: user?.uid || auth.currentUser?.uid || null,
+      clientData,
+      fundingData,
+      xState,
+      resolvedXState,
+    });
     console.log("[BALANCE_DEBUG][PROFILE] updateProfileData", {
       uid: user?.uid || auth.currentUser?.uid || null,
       baseForUi,
       __userBaseBalance: window.__userBaseBalance,
       __userBalance: window.__userBalance,
       availableFromXchange: xState.availableGourdes,
-      exchanged: xState.exchangedGourdes,
-      does: xState.does,
+      availableResolved: resolvedAvailableHtg,
+      approvedDepositsTotal,
+      convertedApprovedHtg,
+      approvedHtgAvailable,
+      provisionalHtgAvailable,
+      exchanged: resolvedXState.exchangedGourdes,
+      does: resolvedDoesBalance,
+      doesApprovedBalance,
+      doesProvisionalBalance,
+      exchangeableDoesAvailable,
+      accountFrozen,
     });
   }
 
@@ -499,10 +762,32 @@ function updateProfileData(user) {
     emailEl.textContent = email;
     emailEl.title = email;
   }
-  if (balanceEl) balanceEl.textContent = formatAmount(xState.availableGourdes);
-  if (doesEl) doesEl.textContent = String(xState.does || 0);
-  if (exchangedEl) exchangedEl.textContent = `Échangé: ${xState.exchangedGourdes} HTG`;
-  void updateWithdrawalAvailability(user, xState);
+  if (balanceEl) balanceEl.textContent = formatAmount(resolvedAvailableHtg);
+  if (approvedHtgEl) approvedHtgEl.textContent = formatAmount(approvedHtgAvailable);
+  if (provisionalHtgEl) provisionalHtgEl.textContent = formatAmount(provisionalHtgAvailable);
+  if (approvedDoesEl) approvedDoesEl.textContent = formatDoesAmount(doesApprovedBalance);
+  if (provisionalDoesEl) provisionalDoesEl.textContent = formatDoesAmount(doesProvisionalBalance);
+  if (withdrawAvailableEl) withdrawAvailableEl.textContent = formatAmount(resolvedXState.withdrawableHtg);
+  if (exchangeableDoesEl) exchangeableDoesEl.textContent = formatDoesAmount(exchangeableDoesAvailable);
+  if (approvedDepositsSummaryEl) approvedDepositsSummaryEl.textContent = `Dépôts approuvés: ${formatAmount(approvedDepositsTotal)}`;
+  if (exchangedEl) exchangedEl.textContent = `Déjà converti: ${formatAmount(convertedApprovedHtg)}`;
+  if (verifiedAvailableHintEl) verifiedAvailableHintEl.textContent = `HTG vérifié dispo: ${formatAmount(approvedHtgAvailable)}`;
+  if (pendingHintEl) pendingHintEl.textContent = `HTG en examen: ${formatAmount(provisionalHtgAvailable)} | HTG dispo échange: ${formatAmount(resolvedAvailableHtg)}`;
+  if (doesBreakdownEl) doesBreakdownEl.textContent = `Total Does: ${formatDoesAmount(resolvedDoesBalance)} | Approuvés: ${formatDoesAmount(doesApprovedBalance)} | En examen: ${formatDoesAmount(doesProvisionalBalance)} | Dispo échange: ${formatDoesAmount(exchangeableDoesAvailable)}`;
+  if (frozenBannerEl) frozenBannerEl.classList.toggle("hidden", accountFrozen !== true);
+  if (frozenMessageEl) {
+    frozenMessageEl.textContent = accountFrozen
+      ? "Ton compte a été temporairement gelé après plusieurs dépôts refusés. Contacte l'assistance pour demander un dégel."
+      : "";
+  }
+  ["profileDepositBtn", "profileXchangeBtn", "profileWithdrawBtn"].forEach((id) => {
+    const btn = document.getElementById(id);
+    if (!btn) return;
+    btn.disabled = accountFrozen === true;
+    btn.classList.toggle("opacity-60", accountFrozen === true);
+    btn.classList.toggle("cursor-not-allowed", accountFrozen === true);
+  });
+  void updateWithdrawalAvailability(user, resolvedXState);
   updateReferralData(user);
 }
 
@@ -588,13 +873,16 @@ export function mountProfileModal(options = {}) {
   watchAuthState((user) => {
     const activeUser = user || auth.currentUser || null;
     ensureProfileRealtimeWatchers(activeUser);
+    scheduleProfileFundingRefresh(activeUser, 0);
     updateProfileData(activeUser);
   });
 
   window.addEventListener("userBalanceUpdated", () => {
+    scheduleProfileFundingRefresh(auth.currentUser, 80);
     updateProfileData(auth.currentUser);
   });
   window.addEventListener("xchangeUpdated", () => {
+    scheduleProfileFundingRefresh(auth.currentUser, 80);
     updateProfileData(auth.currentUser);
   });
 
@@ -602,6 +890,7 @@ export function mountProfileModal(options = {}) {
   mountRetraitModal({ triggerSelector: "#profileWithdrawBtn" });
 
   ensureProfileRealtimeWatchers(auth.currentUser);
+  scheduleProfileFundingRefresh(auth.currentUser, 0);
   updateProfileData(auth.currentUser);
 }
 
@@ -759,16 +1048,20 @@ export function mountProfilePage(options = {}) {
   watchAuthState((user) => {
     const activeUser = user || auth.currentUser || null;
     ensureProfileRealtimeWatchers(activeUser);
+    scheduleProfileFundingRefresh(activeUser, 0);
     updateProfileData(activeUser);
   });
 
   window.addEventListener("userBalanceUpdated", () => {
+    scheduleProfileFundingRefresh(auth.currentUser, 80);
     updateProfileData(auth.currentUser);
   });
   window.addEventListener("xchangeUpdated", () => {
+    scheduleProfileFundingRefresh(auth.currentUser, 80);
     updateProfileData(auth.currentUser);
   });
 
   ensureProfileRealtimeWatchers(auth.currentUser);
+  scheduleProfileFundingRefresh(auth.currentUser, 0);
   updateProfileData(auth.currentUser);
 }

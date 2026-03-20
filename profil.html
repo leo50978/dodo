@@ -258,31 +258,68 @@
                   <h2 class="mt-1 text-xl font-bold text-white sm:text-2xl">Résumé financier</h2>
                 </div>
                 <div class="profile-liquid-accent w-full rounded-2xl border border-[#ffb26e]/25 bg-[#1b2437] px-3 py-2 text-left sm:w-auto sm:text-right">
-                  <p class="text-[10px] uppercase tracking-[0.18em] text-white/70">Disponible</p>
+                  <p class="text-[10px] uppercase tracking-[0.18em] text-white/70">HTG dispo échange</p>
                   <p id="profileBalance" class="profile-dynamic-value profile-dynamic-stat profile-balance-mobile mt-1 text-lg font-semibold text-white sm:text-2xl">-</p>
                 </div>
               </div>
 
-              <div class="mt-4 grid gap-3 sm:grid-cols-2">
+              <div id="profileFrozenBanner" class="profile-liquid-accent mt-4 hidden rounded-2xl border border-[#ffb26e]/25 bg-[#1b2437] px-4 py-3">
+                <p class="text-xs font-semibold uppercase tracking-[0.18em] text-white/70">Compte gelé</p>
+                <p id="profileFrozenMessage" class="mt-1 text-sm leading-6 text-white/90">Ton compte a été temporairement gelé. Contacte l'assistance.</p>
+              </div>
+
+              <div class="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
                 <div class="profile-liquid-soft rounded-2xl border border-white/10 bg-[#111827]/82 p-4">
-                  <p class="text-[11px] uppercase tracking-[0.14em] text-white/60">Retrait disponible</p>
-                  <p id="profileWithdrawAvailable" class="profile-dynamic-value profile-dynamic-stat profile-stat-mobile mt-2 text-lg font-semibold text-white sm:text-xl">-</p>
-                  <p class="mt-1 text-xs leading-5 text-white/62">Montant réellement retirable maintenant.</p>
+                  <p class="text-[11px] uppercase tracking-[0.14em] text-white/60">HTG approuvé</p>
+                  <p id="profileApprovedHtg" class="profile-dynamic-value profile-dynamic-stat profile-stat-mobile mt-2 text-lg font-semibold text-white sm:text-xl">-</p>
+                  <p class="mt-1 text-xs leading-5 text-white/62">Partie validée qui reste encore en HTG.</p>
                 </div>
                 <div class="profile-liquid-soft rounded-2xl border border-white/10 bg-[#111827]/82 p-4">
-                  <p class="text-[11px] uppercase tracking-[0.14em] text-white/60">Equivalent retraitable</p>
-                  <p id="profileWithdrawDoesEquivalent" class="profile-dynamic-value profile-dynamic-stat profile-stat-mobile mt-2 text-lg font-semibold text-white sm:text-xl">-</p>
-                  <p class="mt-1 text-xs leading-5 text-white/62">Lecture rapide en Does pour l’utilisateur.</p>
+                  <p class="text-[11px] uppercase tracking-[0.14em] text-white/60">HTG en examen</p>
+                  <p id="profileProvisionalHtg" class="profile-dynamic-value profile-dynamic-stat profile-stat-mobile mt-2 text-lg font-semibold text-white sm:text-xl">-</p>
+                  <p class="mt-1 text-xs leading-5 text-white/62">Jouable, mais pas retirable tant que non validé.</p>
                 </div>
-                <div class="profile-liquid-soft rounded-2xl border border-white/10 bg-[#111827]/82 p-4 sm:col-span-2">
+                <div class="profile-liquid-soft rounded-2xl border border-white/10 bg-[#111827]/82 p-4">
                   <div class="flex items-center gap-3">
                     <img src="./does.png" alt="Does" class="h-10 w-10 rounded-2xl object-cover" data-hide-on-error="1" />
                     <div class="min-w-0">
-                      <p class="text-[11px] uppercase tracking-[0.14em] text-white/60">Crypto disponible</p>
-                      <p class="profile-dynamic-value profile-stat-mobile mt-1 text-lg font-semibold text-white sm:text-xl"><span id="profileDoesTotal" class="profile-dynamic-inline profile-dynamic-stat">0</span> Does</p>
+                      <p class="text-[11px] uppercase tracking-[0.14em] text-white/60">Does approuvés</p>
+                      <p class="profile-dynamic-value profile-stat-mobile mt-1 text-lg font-semibold text-white sm:text-xl"><span id="profileApprovedDoes" class="profile-dynamic-inline profile-dynamic-stat">0</span> Does</p>
                     </div>
                   </div>
-                  <p id="profileExchanged" class="profile-dynamic-text mt-3 text-xs leading-5 text-white/68">Échangé: 0 HTG</p>
+                  <p class="mt-1 text-xs leading-5 text-white/62">Does venant d'un dépôt déjà validé.</p>
+                </div>
+                <div class="profile-liquid-soft rounded-2xl border border-white/10 bg-[#111827]/82 p-4">
+                  <div class="flex items-center gap-3">
+                    <img src="./does.png" alt="Does" class="h-10 w-10 rounded-2xl object-cover" data-hide-on-error="1" />
+                    <div class="min-w-0">
+                      <p class="text-[11px] uppercase tracking-[0.14em] text-white/60">Does en examen</p>
+                      <p class="profile-dynamic-value profile-stat-mobile mt-1 text-lg font-semibold text-white sm:text-xl"><span id="profileProvisionalDoes" class="profile-dynamic-inline profile-dynamic-stat">0</span> Does</p>
+                    </div>
+                  </div>
+                  <p class="mt-1 text-xs leading-5 text-white/62">Does venant d'un dépôt pas encore validé.</p>
+                </div>
+                <div class="profile-liquid-soft rounded-2xl border border-white/10 bg-[#111827]/82 p-4">
+                  <p class="text-[11px] uppercase tracking-[0.14em] text-white/60">HTG dispo retrait</p>
+                  <p id="profileWithdrawAvailable" class="profile-dynamic-value profile-dynamic-stat profile-stat-mobile mt-2 text-lg font-semibold text-white sm:text-xl">-</p>
+                  <p class="mt-1 text-xs leading-5 text-white/62">Montant que tu peux demander en retrait maintenant.</p>
+                </div>
+                <div class="profile-liquid-soft rounded-2xl border border-white/10 bg-[#111827]/82 p-4">
+                  <div class="flex items-center gap-3">
+                    <img src="./does.png" alt="Does" class="h-10 w-10 rounded-2xl object-cover" data-hide-on-error="1" />
+                    <div class="min-w-0">
+                      <p class="text-[11px] uppercase tracking-[0.14em] text-white/60">Does dispo échange</p>
+                      <p class="profile-dynamic-value profile-stat-mobile mt-1 text-lg font-semibold text-white sm:text-xl"><span id="profileExchangeableDoesAvailable" class="profile-dynamic-inline profile-dynamic-stat">0</span> Does</p>
+                    </div>
+                  </div>
+                  <p class="mt-1 text-xs leading-5 text-white/62">Does approuvés que tu peux reconvertir.</p>
+                </div>
+                <div class="profile-liquid-soft rounded-2xl border border-white/10 bg-[#111827]/82 p-4 sm:col-span-2 xl:col-span-3">
+                  <p id="profileApprovedDepositsSummary" class="profile-dynamic-text text-xs leading-5 text-white/68">Dépôts approuvés: 0 HTG</p>
+                  <p id="profileExchanged" class="profile-dynamic-text mt-1 text-xs leading-5 text-white/68">Déjà converti: 0 HTG</p>
+                  <p id="profileVerifiedAvailableHint" class="profile-dynamic-text mt-1 text-xs leading-5 text-white/68">HTG vérifié dispo: 0 HTG</p>
+                  <p id="profilePendingBalanceHint" class="profile-dynamic-text mt-2 text-xs leading-5 text-white/68">HTG en examen: 0 HTG</p>
+                  <p id="profileDoesBreakdown" class="profile-dynamic-text mt-1 text-xs leading-5 text-white/58">Does approuvés: 0 | Does en examen: 0</p>
                 </div>
               </div>
 
@@ -471,6 +508,19 @@
             <p>Seules les mises activées par la plateforme sont visibles et jouables.</p>
             <p>Toute tentative de fraude entraîne la suspension du compte.</p>
             <p>La participation au jeu implique l’acceptation complète du règlement.</p>
+          </div>
+
+          <div>
+            <p class="font-semibold text-white">Avertissement faux dépôt, arnaque et vol</p>
+            <p class="mt-1">
+              Attention: si tu envoies un faux dépôt, un dépôt volé, un faux document, ou si tu fais une tentative d’arnaque ou de vol, tu peux perdre définitivement ton compte, ton solde, tes gains et l’accès à la plateforme.
+            </p>
+            <p>
+              Tu dois lire les conditions d’utilisation avant de continuer. En utilisant la plateforme, tu acceptes que tout dépôt suspect, frauduleux ou lié à une tentative de vol puisse être signalé aux autorités compétentes si nécessaire.
+            </p>
+            <p>
+              Le vol, l’arnaque, la fraude et l’usage de faux peuvent aussi avoir des conséquences avec la justice. Si tu es accusé de fraude, d’arnaque, de faux ou de vol, ton compte peut être fermé sans préavis pendant la vérification du dossier.
+            </p>
           </div>
         </div>
       </div>

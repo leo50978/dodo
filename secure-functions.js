@@ -112,6 +112,18 @@ export async function recordShareSitePromoSecure(payload = {}) {
   return invokeCallable("recordShareSitePromo", payload, "Impossible d'enregistrer le partage.");
 }
 
+export async function getDepositFundingStatusSecure(payload = {}) {
+  return invokeCallable("getDepositFundingStatusSecure", payload, "Impossible de charger l'état du dépôt.");
+}
+
+export async function resolveDepositReviewSecure(payload = {}) {
+  return invokeCallable("resolveDepositReviewSecure", payload, "Impossible de résoudre le dépôt.");
+}
+
+export async function unfreezeClientAccountSecure(payload = {}) {
+  return invokeCallable("unfreezeClientAccountSecure", payload, "Impossible de dégeler le compte.");
+}
+
 export async function getGlobalAnalyticsSnapshotSecure(payload = {}) {
   return invokeCallable("getGlobalAnalyticsSnapshot", payload, "Impossible de charger les analytics globaux.");
 }

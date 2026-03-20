@@ -238,7 +238,7 @@ function applyReadOnlyMode() {
   }
   if (filePreviewEl) filePreviewEl.classList.remove("visible");
   if (composerStatusEl) {
-    setComposerStatus("Le canal public est en lecture seule. Utilise \"Discuter avec un agent\" pour écrire.", "neutral");
+    setComposerStatus("Le canal public est en lecture seule pour les utilisateurs.", "neutral");
   }
 }
 

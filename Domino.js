@@ -59,6 +59,7 @@ var DominoThree = function() {
         'ElementoRaiz'              : "",                // ID de la etiqueta que se usara como raÃ­z para todo el HTML del objeto canvas. Si no se especifica ninguna, se usara el body.
         'Pausar'                    : false,             // Pausa el canvas si la pestaÃ±a no tiene el foco del teclado
         'ColorFondo'                : 0x2F354A,
+        'AlphaFondo'                : 0,
         'CapturaEjemplo'            : "Domino.png",      // Captura de pantalla para el ejemplo a "NuevoCanvas2D.png" se le aÃ±adirÃ¡ "https://devildrey33.github.io/Graficos/250x200_"
         'ForzarLandscape'           : false              // Fuerza al dispositivo movil para que se muestre solo apaisado
     }) === false) { return false; }
@@ -216,6 +217,7 @@ DominoThree.prototype = Object.assign( Object.create(ObjetoCanvas.prototype) , {
     ZoomMovilOffset : 0,
     PinchZoom       : { Activa : false, DistanciaInicial : 0, ZoomInicial : 0 },
     OperaGlowTexture: null,
+    MesaTextura     : null,
     LucesJugadores  : [],
 //    Opciones        : new Domino_Opciones(),
     ObtenerDistanciaTouches : function(Evento) {
@@ -291,6 +293,88 @@ DominoThree.prototype = Object.assign( Object.create(ObjetoCanvas.prototype) , {
         this.OperaGlowTexture.magFilter = THREE.LinearFilter;
         this.OperaGlowTexture.generateMipmaps = false;
         return this.OperaGlowTexture;
+    },
+    CrearTexturaMadera : function() {
+        if (this.MesaTextura !== null) return this.MesaTextura;
+
+        var Canvas = document.createElement("canvas");
+        Canvas.width = 1024;
+        Canvas.height = 1024;
+        var Ctx = Canvas.getContext("2d");
+        var Grad = Ctx.createLinearGradient(0, 0, 0, Canvas.height);
+        Grad.addColorStop(0, "#b98553");
+        Grad.addColorStop(0.44, "#996238");
+        Grad.addColorStop(1, "#6b4122");
+        Ctx.fillStyle = Grad;
+        Ctx.fillRect(0, 0, Canvas.width, Canvas.height);
+
+        for (var i = 0; i < 5; i++) {
+            var boardX = 120 + (i * 155);
+            Ctx.fillStyle = "rgba(68, 38, 18, 0.16)";
+            Ctx.fillRect(boardX, 40, 8, Canvas.height - 80);
+            Ctx.fillStyle = "rgba(255, 220, 175, 0.045)";
+            Ctx.fillRect(boardX + 9, 40, 2, Canvas.height - 80);
+        }
+
+        for (var j = 0; j < 220; j++) {
+            var y = (j / 220) * Canvas.height;
+            var alpha = 0.028 + Math.random() * 0.042;
+            Ctx.fillStyle = "rgba(74, 40, 18, " + alpha + ")";
+            Ctx.fillRect(0, y, Canvas.width, 2 + Math.random() * 6);
+        }
+
+        for (var n = 0; n < 1800; n++) {
+            var x = Math.random() * Canvas.width;
+            var yy = Math.random() * Canvas.height;
+            var w = 18 + Math.random() * 90;
+            var h = 0.5 + Math.random() * 1.5;
+            Ctx.fillStyle = Math.random() > 0.5 ? "rgba(255, 231, 189, 0.05)" : "rgba(46, 23, 10, 0.05)";
+            Ctx.fillRect(x, yy, w, h);
+        }
+
+        Ctx.strokeStyle = "rgba(58, 30, 14, 0.38)";
+        Ctx.lineWidth = 16;
+        Ctx.strokeRect(42, 42, Canvas.width - 84, Canvas.height - 84);
+        Ctx.lineWidth = 6;
+        Ctx.strokeRect(92, 92, Canvas.width - 184, Canvas.height - 184);
+        Ctx.lineWidth = 3;
+        Ctx.strokeStyle = "rgba(255, 228, 188, 0.16)";
+        Ctx.strokeRect(102, 102, Canvas.width - 204, Canvas.height - 204);
+
+        this.MesaTextura = new THREE.Texture(Canvas);
+        this.MesaTextura.needsUpdate = true;
+        this.MesaTextura.wrapS = THREE.RepeatWrapping;
+        this.MesaTextura.wrapT = THREE.RepeatWrapping;
+        this.MesaTextura.repeat.set(1.12, 1.02);
+        this.MesaTextura.minFilter = THREE.LinearMipMapLinearFilter || THREE.LinearFilter;
+        this.MesaTextura.magFilter = THREE.LinearFilter;
+        return this.MesaTextura;
+    },
+    CrearMesaEscena : function() {
+        if (typeof(this.Escena) === "undefined") return;
+
+        var WoodTexture = this.CrearTexturaMadera();
+        if (this.Context && this.Context.capabilities && typeof(this.Context.capabilities.getMaxAnisotropy) === "function") {
+            WoodTexture.anisotropy = Math.min(8, Math.max(1, this.Context.capabilities.getMaxAnisotropy()));
+        }
+
+        this.Suelo = new THREE.Mesh(
+            new THREE.PlaneGeometry(38, 24),
+            new THREE.MeshPhongMaterial({
+                map: WoodTexture,
+                color: 0xc88a57,
+                specular: 0x7f4a28,
+                shininess: 30,
+                transparent: true,
+                opacity: 0.96
+            })
+        );
+        this.Suelo.rotation.x = -Math.PI / 2;
+        this.Suelo.position.y = -0.12;
+        this.Suelo.position.z = -3.2;
+        this.Suelo.castShadow = false;
+        this.Suelo.receiveShadow = true;
+        this.Escena.add(this.Suelo);
     },
     CrearLuzJugadorVisual : function(Config) {
         var Grupo = new THREE.Group();
@@ -405,25 +489,7 @@ DominoThree.prototype = Object.assign( Object.create(ObjetoCanvas.prototype) , {
         this.Escena.add(this.Camara);
         this.Camara.lookAt(this.Camara.Rotacion.MirarHacia); 
 
-        // Plano de suelo con look glass/neumorphism
-        this.Suelo = new THREE.Mesh(
-            new THREE.PlaneGeometry(300, 300),
-            new THREE.MeshPhongMaterial({
-                color: 0x3f4766,
-                specular: 0xffffff,
-                shininess: 85,
-                emissive: 0x12182a,
-                transparent: true,
-                opacity: 0.94
-            })
-        );
-        this.Suelo.rotation.x = -Math.PI / 2;
-        this.Suelo.position.y = -0.2;
-        //this.Suelo.position.x = -25;
-        this.Suelo.position.z = 15;
-        this.Suelo.castShadow = false;
-        this.Suelo.receiveShadow = true;
-        this.Escena.add(this.Suelo);
+        this.CrearMesaEscena();
 
         // Inicio las texturas del domino
         Texturas.Iniciar();
@@ -509,11 +575,11 @@ DominoThree.prototype = Object.assign( Object.create(ObjetoCanvas.prototype) , {
     
     CrearLuces : function() {
         // Luz de ambiente  
-        this.HemiLight = new THREE.HemisphereLight( 0xeeeeee, 0xffffff, 0.7 );
-        this.HemiLight.color.setHSL( 0.6, 0.6, 0.6 );
-        this.HemiLight.groundColor.setHSL( 0.095, 1, 0.75 );
+        this.HemiLight = new THREE.HemisphereLight( 0xfff0d8, 0x8d5a31, 0.95 );
+        this.HemiLight.color.setHSL( 0.11, 0.75, 0.86 );
+        this.HemiLight.groundColor.setHSL( 0.08, 0.65, 0.44 );
         this.HemiLight.position.set( 0, 0, 0 );
-        this.Escena.add( this.HemiLight );                 
+        this.Escena.add( this.HemiLight );
     },
         
     // Mantiene la orientacion de la camara del turno sin desplazar la luz direccional.

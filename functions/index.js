@@ -65,6 +65,7 @@ const DISCUSSION_MESSAGES_FETCH_LIMIT = 250;
 const DEFAULT_PUBLIC_SETTINGS = Object.freeze({
   verificationHours: 12,
   expiredMessage: "Le délai de vérification est dépassé. Contactez le support.",
+  provisionalDepositsEnabled: true,
 });
 const DPAYMENT_ADMIN_BOOTSTRAP_DOC = "dpayment_admin_bootstrap";
 const APP_PUBLIC_SETTINGS_DOC = "public_app_settings";
@@ -106,6 +107,9 @@ const SHARE_SITE_PROMO_TARGET = 5;
 const SHARE_SITE_PROMO_REWARD_DOES = 100;
 const SHARE_SITE_PROMO_COOLDOWN_MS = 3 * 24 * 60 * 60 * 1000;
 const SHARE_SITE_PROMO_ACTION_CACHE = 30;
+const PROVISIONAL_FUNDING_VERSION = 2;
+const PROVISIONAL_CREDIT_MODE = "provisional";
+const ACCOUNT_FREEZE_REJECT_THRESHOLD = 3;
 const PRESENCE_ANALYTICS_TIMEZONE = "America/Port-au-Prince";
 const PRESENCE_ANALYTICS_CLIENT_WINDOW_MS = 2 * 60 * 1000;
 const PRESENCE_ANALYTICS_ROOM_WINDOW_MS = 20 * 1000;
@@ -434,6 +438,270 @@ function computeWalletAvailableGourdes({
     exchangedGourdes: exchanged,
     availableBalanceHtg: Math.max(0, baseBalanceHtg - exchanged),
   };
+}
+
+function isProvisionalFundingEnabled(settings = {}) {
+  return settings?.provisionalDepositsEnabled === true;
+}
+
+function isFundingV2Order(order = {}) {
+  return safeInt(order?.fundingVersion) >= PROVISIONAL_FUNDING_VERSION
+    && String(order?.creditMode || "") === PROVISIONAL_CREDIT_MODE;
+}
+
+function getOrderResolutionStatus(order = {}) {
+  const resolution = String(order?.resolutionStatus || "").trim().toLowerCase();
+  if (resolution === "approved" || resolution === "rejected" || resolution === "pending") {
+    return resolution;
+  }
+  const status = String(order?.status || "").trim().toLowerCase();
+  if (status === "approved" || status === "rejected") return status;
+  return "pending";
+}
+
+function getOrderApprovedAmountHtg(order = {}) {
+  if (isFundingV2Order(order)) {
+    if (getOrderResolutionStatus(order) !== "approved") return 0;
+    const explicitAmount = safeInt(order?.approvedAmountHtg);
+    return explicitAmount > 0 ? explicitAmount : computeOrderAmount(order);
+  }
+  return String(order?.status || "").trim().toLowerCase() === "approved"
+    ? computeOrderAmount(order)
+    : 0;
+}
+
+function getOrderProvisionalHtgRemaining(order = {}) {
+  if (!isFundingV2Order(order)) return 0;
+  if (getOrderResolutionStatus(order) !== "pending") return 0;
+  return safeInt(order?.provisionalHtgRemaining);
+}
+
+function getPendingOrdersProvisionalConvertedHtg(orders = []) {
+  return (Array.isArray(orders) ? orders : []).reduce((sum, item) => {
+    if (!isFundingV2Order(item)) return sum;
+    if (getOrderResolutionStatus(item) !== "pending") return sum;
+    return sum + safeInt(item?.provisionalHtgConverted);
+  }, 0);
+}
+
+function getOrderProvisionalCapitalDoesBalance(order = {}) {
+  if (!isFundingV2Order(order)) return 0;
+  if (getOrderResolutionStatus(order) !== "pending") return 0;
+
+  const explicitRemainingDoes = safeInt(order?.provisionalDoesRemaining);
+  if (explicitRemainingDoes > 0) return explicitRemainingDoes;
+
+  const totalConvertedDoes = safeInt(order?.provisionalHtgConverted) * RATE_HTG_TO_DOES;
+  if (totalConvertedDoes <= 0) return 0;
+
+  const playedDoes = safeInt(order?.provisionalDoesPlayed);
+  return Math.max(0, totalConvertedDoes - playedDoes);
+}
+
+function getOrderPendingProvisionalDoesTotal(order = {}) {
+  if (!isFundingV2Order(order)) return 0;
+  if (getOrderResolutionStatus(order) !== "pending") return 0;
+  return getOrderProvisionalCapitalDoesBalance(order) + safeInt(order?.provisionalGainDoes);
+}
+
+function buildApprovedExchangeLedger({
+  orders = [],
+  walletData = {},
+  exchangeHistory = [],
+} = {}) {
+  const storedNetExchangedHtg = safeSignedInt(walletData.exchangedGourdes);
+  const storedTotalBoughtEverHtg = safeInt(walletData.totalExchangedHtgEver);
+  const pendingProvisionalConvertedHtg = getPendingOrdersProvisionalConvertedHtg(orders);
+
+  if (!Array.isArray(exchangeHistory) || exchangeHistory.length <= 0) {
+    return {
+      exchangedApprovedHtg: storedNetExchangedHtg,
+      totalExchangedApprovedHtg: storedTotalBoughtEverHtg,
+      pendingProvisionalConvertedHtg,
+      source: "wallet",
+    };
+  }
+
+  let historyNetExchangedHtg = 0;
+  let historyTotalBoughtEverHtg = 0;
+
+  exchangeHistory.forEach((item) => {
+    const data = item && typeof item === "object" ? item : {};
+    const type = String(data.type || "").trim();
+    if (type === "xchange_buy") {
+      const amountHtg = safeInt(data.amountGourdes ?? data.deltaExchangedGourdes);
+      historyNetExchangedHtg += amountHtg;
+      historyTotalBoughtEverHtg += amountHtg;
+      return;
+    }
+    if (type === "xchange_sell") {
+      const amountHtg = safeInt(data.amountGourdes ?? Math.abs(safeSignedInt(data.deltaExchangedGourdes)));
+      historyNetExchangedHtg -= amountHtg;
+    }
+  });
+
+  return {
+    exchangedApprovedHtg: safeSignedInt(historyNetExchangedHtg - pendingProvisionalConvertedHtg),
+    totalExchangedApprovedHtg: Math.max(0, historyTotalBoughtEverHtg - pendingProvisionalConvertedHtg),
+    pendingProvisionalConvertedHtg,
+    source: "history",
+  };
+}
+
+function buildWalletFundingSnapshot({
+  orders = [],
+  withdrawals = [],
+  walletData = {},
+  exchangeHistory = [],
+} = {}) {
+  const approvedDepositsHtg = (Array.isArray(orders) ? orders : []).reduce(
+    (sum, item) => sum + getOrderApprovedAmountHtg(item),
+    0
+  );
+  const reservedWithdrawalsHtg = (Array.isArray(withdrawals) ? withdrawals : []).reduce((sum, item) => {
+    if (String(item?.status || "").trim().toLowerCase() === "rejected") return sum;
+    return sum + computeReservedWithdrawalAmount(item);
+  }, 0);
+  const approvedBaseHtg = approvedDepositsHtg - reservedWithdrawalsHtg;
+  const exchangeLedger = buildApprovedExchangeLedger({
+    orders,
+    walletData,
+    exchangeHistory,
+  });
+  const exchangedApprovedHtg = safeSignedInt(exchangeLedger.exchangedApprovedHtg);
+  const approvedHtgAvailable = Math.max(0, approvedBaseHtg - exchangedApprovedHtg);
+  const provisionalHtgAvailable = (Array.isArray(orders) ? orders : []).reduce(
+    (sum, item) => sum + getOrderProvisionalHtgRemaining(item),
+    0
+  );
+  const totalExchangedApprovedHtg = safeInt(exchangeLedger.totalExchangedApprovedHtg);
+  const remainingToExchangeHtg = Math.max(0, approvedDepositsHtg - totalExchangedApprovedHtg);
+  const provisionalDoesBalance = safeInt(walletData.doesProvisionalBalance);
+  const rawDoesBalance = safeInt(walletData.doesBalance);
+  const approvedDoesBalance = safeInt(
+    typeof walletData.doesApprovedBalance === "number"
+      ? walletData.doesApprovedBalance
+      : Math.max(0, rawDoesBalance - provisionalDoesBalance)
+  );
+  const pendingPlayFromXchangeDoes = safeInt(walletData.pendingPlayFromXchangeDoes);
+  const pendingPlayFromReferralDoes = safeInt(walletData.pendingPlayFromReferralDoes);
+  const pendingPlayTotalDoes = pendingPlayFromXchangeDoes + pendingPlayFromReferralDoes;
+  const exchangeableDoesAvailable = safeInt(
+    typeof walletData.exchangeableDoesAvailable === "number"
+      ? Math.min(walletData.exchangeableDoesAvailable, approvedDoesBalance)
+      : (pendingPlayTotalDoes <= 0 ? approvedDoesBalance : 0)
+  );
+
+  return {
+    approvedDepositsHtg,
+    reservedWithdrawalsHtg,
+    approvedBaseHtg,
+    approvedHtgAvailable,
+    provisionalHtgAvailable,
+    playableHtg: approvedHtgAvailable + provisionalHtgAvailable,
+    exchangedApprovedHtg,
+    totalExchangedApprovedHtg,
+    remainingToExchangeHtg,
+    // HTG becomes withdrawable as it comes back from approved Does reconversion.
+    withdrawableHtg: Math.max(0, approvedHtgAvailable - remainingToExchangeHtg),
+    approvedDoesBalance,
+    provisionalDoesBalance,
+    doesBalance: approvedDoesBalance + provisionalDoesBalance,
+    exchangeableDoesAvailable,
+    pendingPlayFromXchangeDoes,
+    pendingPlayFromReferralDoes,
+    pendingPlayTotalDoes,
+  };
+}
+
+function buildFundingWalletPatch(snapshot = {}) {
+  return {
+    approvedHtgAvailable: safeInt(snapshot.approvedHtgAvailable),
+    provisionalHtgAvailable: safeInt(snapshot.provisionalHtgAvailable),
+    withdrawableHtg: safeInt(snapshot.withdrawableHtg),
+    approvedDoesBalance: safeInt(snapshot.approvedDoesBalance),
+    doesProvisionalBalance: safeInt(snapshot.provisionalDoesBalance),
+    doesBalance: safeInt(snapshot.doesBalance),
+    exchangeableDoesAvailable: safeInt(snapshot.exchangeableDoesAvailable),
+  };
+}
+
+function buildFrozenAccountError(walletData = {}) {
+  return new HttpsError(
+    "failed-precondition",
+    "Ton compte a été temporairement gelé après plusieurs dépôts refusés. Contacte l'assistance.",
+    {
+      code: "account-frozen",
+      accountFrozen: true,
+      freezeReason: String(walletData.freezeReason || "3_rejected_deposits"),
+      rejectedDepositStrikeCount: safeInt(walletData.rejectedDepositStrikeCount),
+    }
+  );
+}
+
+function assertWalletNotFrozen(walletData = {}) {
+  if (walletData?.accountFrozen === true) {
+    throw buildFrozenAccountError(walletData);
+  }
+}
+
+function normalizeFundingSources(raw = []) {
+  if (!Array.isArray(raw)) return [];
+  return raw
+    .map((item) => ({
+      orderId: sanitizeText(item?.orderId || "", 120),
+      amountDoes: safeInt(item?.amountDoes),
+    }))
+    .filter((item) => item.orderId && item.amountDoes > 0);
+}
+
+function allocateDoesProportionally(totalDoes = 0, rawEntries = []) {
+  const total = safeInt(totalDoes);
+  const entries = Array.isArray(rawEntries)
+    ? rawEntries
+      .map((item, index) => ({
+        ...item,
+        weight: safeInt(item?.weight ?? item?.amountDoes),
+        index,
+      }))
+      .filter((item) => item.weight > 0)
+    : [];
+  if (total <= 0 || entries.length === 0) return [];
+
+  const totalWeight = entries.reduce((sum, item) => sum + item.weight, 0);
+  if (totalWeight <= 0) return [];
+
+  let assigned = 0;
+  const provisional = entries.map((item) => {
+    const exact = (total * item.weight) / totalWeight;
+    const floorValue = Math.floor(exact);
+    assigned += floorValue;
+    return {
+      ...item,
+      allocated: floorValue,
+      remainder: exact - floorValue,
+    };
+  });
+
+  let remaining = total - assigned;
+  provisional
+    .sort((left, right) => {
+      if (right.remainder !== left.remainder) return right.remainder - left.remainder;
+      return left.index - right.index;
+    })
+    .forEach((item) => {
+      if (remaining <= 0) return;
+      item.allocated += 1;
+      remaining -= 1;
+    });
+
+  return provisional
+    .sort((left, right) => left.index - right.index)
+    .map((item) => ({
+      orderId: sanitizeText(item.orderId || "", 120),
+      amountDoes: safeInt(item.allocated),
+    }))
+    .filter((item) => item.orderId && item.amountDoes > 0);
 }
 
 function clamp(value, min, max) {
@@ -1429,11 +1697,15 @@ function resolveRoomRewardDoes(room = {}) {
 }
 
 function normalizePublicAppSettings(rawData = {}) {
+  const hasExplicitProvisionalToggle = typeof rawData.provisionalDepositsEnabled === "boolean";
   return {
     verificationHours: Math.max(1, Math.min(72, safeInt(rawData.verificationHours || DEFAULT_PUBLIC_SETTINGS.verificationHours))),
     expiredMessage: sanitizeText(rawData.expiredMessage || DEFAULT_PUBLIC_SETTINGS.expiredMessage, MAX_PUBLIC_TEXT_LENGTH),
     gameStakeOptions: normalizeGameStakeOptions(rawData.gameStakeOptions),
     appCheckSiteKey: sanitizeText(rawData.appCheckSiteKey || "", 256),
+    provisionalDepositsEnabled: hasExplicitProvisionalToggle
+      ? rawData.provisionalDepositsEnabled === true
+      : DEFAULT_PUBLIC_SETTINGS.provisionalDepositsEnabled === true,
   };
 }
 
@@ -1515,6 +1787,7 @@ function buildPlayRequiredError(payload = {}) {
       pendingPlayFromXchangeDoes: safeInt(payload.pendingPlayFromXchangeDoes),
       pendingPlayFromReferralDoes: safeInt(payload.pendingPlayFromReferralDoes),
       pendingPlayTotalDoes: safeInt(payload.pendingPlayTotalDoes),
+      exchangeableDoesAvailable: safeInt(payload.exchangeableDoesAvailable),
     }
   );
 }
@@ -2537,94 +2810,414 @@ async function applyWalletMutationTx(tx, options) {
   const deltaExchangedGourdes = safeSignedInt(options.deltaExchangedGourdes);
   const amountGourdes = safeInt(options.amountGourdes);
   const amountDoes = safeInt(options.amountDoes);
+  const provisionalDepositsEnabled = options.provisionalDepositsEnabled === true;
+  const rewardApprovedDoes = safeInt(
+    typeof options.approvedRewardDoes === "number"
+      ? options.approvedRewardDoes
+      : (type === "game_reward" ? amountDoes : 0)
+  );
+  const rewardProvisionalDoes = safeInt(options.provisionalRewardDoes);
 
   const ref = walletRef(uid);
   const snap = await tx.get(ref);
   const data = snap.exists ? (snap.data() || {}) : {};
-
-  const beforeDoes = safeInt(data.doesBalance);
-  const beforeExchanged = safeSignedInt(data.exchangedGourdes);
-  const beforePendingFromXchange = safeInt(data.pendingPlayFromXchangeDoes);
-  const beforePendingFromReferral = safeInt(data.pendingPlayFromReferralDoes);
-  const beforeTotalExchangedEver = safeInt(data.totalExchangedHtgEver);
-
-  const nextDoesRaw = beforeDoes + deltaDoes;
-  if (nextDoesRaw < 0) {
-    throw new HttpsError("failed-precondition", "Solde Does insuffisant.");
+  if (type === "xchange_buy" || type === "xchange_sell" || type === "game_entry") {
+    assertWalletNotFrozen(data);
   }
 
-  const nextExchangedRaw = beforeExchanged + deltaExchangedGourdes;
-  const afterDoes = safeInt(nextDoesRaw);
-  const afterExchanged = safeSignedInt(nextExchangedRaw);
+  const beforeDoes = safeInt(data.doesBalance);
+  let beforeExchanged = safeSignedInt(data.exchangedGourdes);
+  const beforePendingFromXchange = safeInt(data.pendingPlayFromXchangeDoes);
+  const beforePendingFromReferral = safeInt(data.pendingPlayFromReferralDoes);
+  let beforeTotalExchangedEver = safeInt(data.totalExchangedHtgEver);
+  const beforeProvisionalDoes = safeInt(data.doesProvisionalBalance);
+  const beforeApprovedDoes = safeInt(
+    typeof data.doesApprovedBalance === "number"
+      ? data.doesApprovedBalance
+      : Math.max(0, beforeDoes - beforeProvisionalDoes)
+  );
+  const beforePendingPlayTotal = beforePendingFromXchange + beforePendingFromReferral;
+  const beforeExchangeableDoes = safeInt(
+    typeof data.exchangeableDoesAvailable === "number"
+      ? Math.min(data.exchangeableDoesAvailable, beforeApprovedDoes)
+      : (beforePendingPlayTotal <= 0 ? beforeApprovedDoes : 0)
+  );
+
+  let afterApprovedDoes = beforeApprovedDoes;
+  let afterProvisionalDoes = beforeProvisionalDoes;
+  let afterExchanged = safeSignedInt(beforeExchanged + deltaExchangedGourdes);
+  let afterExchangeableDoes = beforeExchangeableDoes;
 
   let afterPendingFromXchange = beforePendingFromXchange;
   let afterPendingFromReferral = beforePendingFromReferral;
   let afterTotalExchangedEver = beforeTotalExchangedEver;
+  let fundingPatch = {};
+  let gameEntryFunding = {
+    approvedDoes: 0,
+    provisionalDoes: 0,
+    provisionalSources: [],
+  };
+  let provisionalConversion = {
+    consumedGourdes: 0,
+    consumedDoes: 0,
+    sources: [],
+  };
+
+  const orderCollectionRef = db.collection(CLIENTS_COLLECTION).doc(uid).collection("orders");
+  const xchangeHistoryCollectionRef = walletHistoryRef(uid);
+  let cachedOrders = null;
+  let cachedExchangeHistory = null;
+
+  const loadAllOrders = async () => {
+    if (cachedOrders) return cachedOrders;
+    const ordersSnap = await tx.get(orderCollectionRef);
+    cachedOrders = ordersSnap.docs.map((item) => ({
+      id: item.id,
+      ref: item.ref,
+      data: item.data() || {},
+    }));
+    return cachedOrders;
+  };
+
+  const loadExchangeHistory = async () => {
+    if (cachedExchangeHistory) return cachedExchangeHistory;
+    const historySnap = await tx.get(xchangeHistoryCollectionRef);
+    cachedExchangeHistory = historySnap.docs.map((item) => item.data() || {});
+    return cachedExchangeHistory;
+  };
+
+  const consumeProvisionalHtgForConversion = async (requestedAmountHtg = 0) => {
+    const remainingTarget = safeInt(requestedAmountHtg);
+    if (remainingTarget <= 0 || !provisionalDepositsEnabled) {
+      return {
+        consumedGourdes: 0,
+        consumedDoes: 0,
+        sources: [],
+      };
+    }
+
+    const orders = await loadAllOrders();
+    let remaining = remainingTarget;
+    const sources = [];
+
+    orders
+      .filter((item) => getOrderResolutionStatus(item.data) === "pending" && getOrderProvisionalHtgRemaining(item.data) > 0)
+      .sort((left, right) => safeInt(left.data.createdAtMs) - safeInt(right.data.createdAtMs))
+      .forEach((item) => {
+        if (remaining <= 0) return;
+        const currentRemaining = getOrderProvisionalHtgRemaining(item.data);
+        if (currentRemaining <= 0) return;
+        const used = Math.min(remaining, currentRemaining);
+        remaining -= used;
+        tx.set(item.ref, {
+          provisionalHtgRemaining: currentRemaining - used,
+          provisionalHtgConverted: safeInt(item.data.provisionalHtgConverted) + used,
+          provisionalDoesRemaining: safeInt(item.data.provisionalDoesRemaining) + (used * RATE_HTG_TO_DOES),
+          updatedAt: new Date().toISOString(),
+          updatedAtMs: Date.now(),
+        }, { merge: true });
+        sources.push({
+          orderId: item.id,
+          amountGourdes: used,
+          amountDoes: used * RATE_HTG_TO_DOES,
+        });
+      });
+
+    const consumedGourdes = remainingTarget - remaining;
+    return {
+      consumedGourdes,
+      consumedDoes: consumedGourdes * RATE_HTG_TO_DOES,
+      sources,
+    };
+  };
+
+  const consumeProvisionalDoesForGameEntry = async (requestedAmountDoes = 0) => {
+    const target = safeInt(requestedAmountDoes);
+    if (target <= 0 || !provisionalDepositsEnabled || beforeProvisionalDoes <= 0) {
+      return {
+        consumedDoes: 0,
+        sources: [],
+        coveredByOrdersDoes: 0,
+      };
+    }
+
+    const orders = await loadAllOrders();
+    let remaining = Math.min(target, beforeProvisionalDoes);
+    const sources = [];
+
+    orders
+      .filter((item) => getOrderResolutionStatus(item.data) === "pending")
+      .sort((left, right) => safeInt(left.data.createdAtMs) - safeInt(right.data.createdAtMs))
+      .forEach((item) => {
+        if (remaining <= 0) return;
+        const currentCapitalDoes = getOrderProvisionalCapitalDoesBalance(item.data);
+        const currentGainDoes = safeInt(item.data.provisionalGainDoes);
+        const totalAvailable = currentCapitalDoes + currentGainDoes;
+        if (totalAvailable <= 0) return;
+
+        const used = Math.min(remaining, totalAvailable);
+        remaining -= used;
+
+        const usedCapital = Math.min(used, currentCapitalDoes);
+        const usedGain = used - usedCapital;
+
+        tx.set(item.ref, {
+          provisionalDoesRemaining: currentCapitalDoes - usedCapital,
+          provisionalGainDoes: currentGainDoes - usedGain,
+          provisionalDoesPlayed: safeInt(item.data.provisionalDoesPlayed) + used,
+          updatedAt: new Date().toISOString(),
+          updatedAtMs: Date.now(),
+        }, { merge: true });
+
+        sources.push({
+          orderId: item.id,
+          amountDoes: used,
+        });
+      });
+
+    return {
+      consumedDoes: target - remaining,
+      sources,
+      coveredByOrdersDoes: target - remaining,
+    };
+  };
+
+  if (type === "xchange_buy" || type === "xchange_sell") {
+    const [allOrders, exchangeHistory] = await Promise.all([
+      loadAllOrders(),
+      loadExchangeHistory(),
+    ]);
+    const reconciledExchangeLedger = buildApprovedExchangeLedger({
+      orders: allOrders.map((item) => item.data || {}),
+      walletData: data,
+      exchangeHistory,
+    });
+    beforeExchanged = safeSignedInt(reconciledExchangeLedger.exchangedApprovedHtg);
+    beforeTotalExchangedEver = safeInt(reconciledExchangeLedger.totalExchangedApprovedHtg);
+    afterExchanged = safeSignedInt(beforeExchanged + deltaExchangedGourdes);
+    afterTotalExchangedEver = beforeTotalExchangedEver;
+  }
 
   if (type === "xchange_buy") {
-    const [ordersSnap, withdrawalsSnap] = await Promise.all([
-      tx.get(
-        db.collection(CLIENTS_COLLECTION)
-          .doc(uid)
-          .collection("orders")
-          .where("status", "==", "approved")
-      ),
+    const [allOrders, withdrawalsSnap] = await Promise.all([
+      loadAllOrders(),
       tx.get(
         db.collection(CLIENTS_COLLECTION)
           .doc(uid)
           .collection("withdrawals")
       ),
     ]);
-
-    const walletSummary = computeWalletAvailableGourdes({
-      orders: ordersSnap.docs.map((item) => item.data() || {}),
+    const fundingSnapshot = buildWalletFundingSnapshot({
+      orders: allOrders.map((item) => item.data || {}),
       withdrawals: withdrawalsSnap.docs.map((item) => item.data() || {}),
-      exchangedGourdes: beforeExchanged,
+      walletData: {
+        ...data,
+        exchangedGourdes: beforeExchanged,
+        totalExchangedHtgEver: beforeTotalExchangedEver,
+      },
     });
-    const availableToConvertHtg = walletSummary.availableBalanceHtg;
+    provisionalConversion = await consumeProvisionalHtgForConversion(amountGourdes);
+    const remainingApprovedAmount = Math.max(0, amountGourdes - provisionalConversion.consumedGourdes);
+    const availableApprovedToConvertHtg = safeInt(fundingSnapshot.approvedHtgAvailable);
 
-    if (amountGourdes <= 0 || amountGourdes > availableToConvertHtg) {
+    console.log("[BALANCE_DEBUG][FUNCTIONS][xchange_buy] snapshot", JSON.stringify({
+      uid,
+      amountGourdes,
+      beforeExchanged,
+      beforeTotalExchangedEver,
+      availableApprovedToConvertHtg,
+      remainingApprovedAmount,
+      provisionalConversion,
+      fundingSnapshot,
+      orders: allOrders.map((item) => ({
+        id: item.id,
+        amount: computeOrderAmount(item.data || {}),
+        status: String(item.data?.status || ""),
+        resolutionStatus: getOrderResolutionStatus(item.data || {}),
+        approvedAmountHtg: safeInt(item.data?.approvedAmountHtg),
+        provisionalHtgRemaining: safeInt(item.data?.provisionalHtgRemaining),
+        provisionalHtgConverted: safeInt(item.data?.provisionalHtgConverted),
+        provisionalDoesRemaining: safeInt(item.data?.provisionalDoesRemaining),
+        provisionalGainDoes: safeInt(item.data?.provisionalGainDoes),
+        fundingVersion: safeInt(item.data?.fundingVersion),
+        creditMode: String(item.data?.creditMode || ""),
+      })),
+      withdrawalsCount: withdrawalsSnap.size,
+    }));
+
+    if (amountGourdes <= 0 || remainingApprovedAmount > availableApprovedToConvertHtg) {
+      console.warn("[BALANCE_DEBUG][FUNCTIONS][xchange_buy] rejected", JSON.stringify({
+        uid,
+        amountGourdes,
+        remainingApprovedAmount,
+        availableApprovedToConvertHtg,
+        provisionalConversion,
+        fundingSnapshot,
+      }));
       throw new HttpsError("failed-precondition", "Montant supérieur au solde HTG disponible.");
     }
 
-    afterTotalExchangedEver = beforeTotalExchangedEver + amountGourdes;
-    afterPendingFromXchange = beforePendingFromXchange + amountDoes;
+    afterProvisionalDoes += provisionalConversion.consumedDoes;
+    if (remainingApprovedAmount > 0) {
+      const approvedDoesDelta = remainingApprovedAmount * RATE_HTG_TO_DOES;
+      afterApprovedDoes += approvedDoesDelta;
+      afterExchanged = beforeExchanged + remainingApprovedAmount;
+      afterTotalExchangedEver = beforeTotalExchangedEver + remainingApprovedAmount;
+      afterPendingFromXchange = beforePendingFromXchange + approvedDoesDelta;
+    }
+
+    const nextOrders = allOrders.map((item) => {
+      const source = provisionalConversion.sources.find((entry) => entry.orderId === String(item.id || ""));
+      if (!source) return item;
+      return {
+        ...item.data,
+        provisionalHtgRemaining: Math.max(0, safeInt(item.data.provisionalHtgRemaining) - safeInt(source.amountGourdes)),
+        provisionalHtgConverted: safeInt(item.data.provisionalHtgConverted) + safeInt(source.amountGourdes),
+        provisionalDoesRemaining: safeInt(item.data.provisionalDoesRemaining) + safeInt(source.amountDoes),
+      };
+    });
+    fundingPatch = buildFundingWalletPatch(buildWalletFundingSnapshot({
+      orders: nextOrders,
+      withdrawals: withdrawalsSnap.docs.map((item) => item.data() || {}),
+      walletData: {
+        ...data,
+        exchangedGourdes: afterExchanged,
+        totalExchangedHtgEver: afterTotalExchangedEver,
+        doesApprovedBalance: afterApprovedDoes,
+        doesProvisionalBalance: afterProvisionalDoes,
+        doesBalance: afterApprovedDoes + afterProvisionalDoes,
+      },
+    }));
   }
 
   if (type === "game_entry") {
-    let playedDoes = amountDoes;
-    if (playedDoes > 0 && afterPendingFromXchange > 0) {
-      const consumeXchange = Math.min(playedDoes, afterPendingFromXchange);
+    if (amountDoes > beforeDoes) {
+      throw new HttpsError("failed-precondition", "Solde Does insuffisant.");
+    }
+    const provisionalSpend = await consumeProvisionalDoesForGameEntry(amountDoes);
+    const provisionalCoveredByOrders = safeInt(provisionalSpend.coveredByOrdersDoes);
+    const provisionalFallbackDoes = Math.max(
+      0,
+      Math.min(beforeProvisionalDoes, amountDoes) - provisionalCoveredByOrders
+    );
+    const provisionalSpentDoes = safeInt(provisionalCoveredByOrders + provisionalFallbackDoes);
+    const approvedSpentDoes = Math.max(0, amountDoes - provisionalSpentDoes);
+
+    afterProvisionalDoes = Math.max(0, afterProvisionalDoes - provisionalSpentDoes);
+    afterApprovedDoes = Math.max(0, afterApprovedDoes - approvedSpentDoes);
+
+    let playedApprovedDoes = approvedSpentDoes;
+    if (playedApprovedDoes > 0 && afterPendingFromXchange > 0) {
+      const consumeXchange = Math.min(playedApprovedDoes, afterPendingFromXchange);
       afterPendingFromXchange -= consumeXchange;
-      playedDoes -= consumeXchange;
+      playedApprovedDoes -= consumeXchange;
+      afterExchangeableDoes += consumeXchange;
     }
-    if (playedDoes > 0 && afterPendingFromReferral > 0) {
-      const consumeReferral = Math.min(playedDoes, afterPendingFromReferral);
+    if (playedApprovedDoes > 0 && afterPendingFromReferral > 0) {
+      const consumeReferral = Math.min(playedApprovedDoes, afterPendingFromReferral);
       afterPendingFromReferral -= consumeReferral;
-      playedDoes -= consumeReferral;
+      playedApprovedDoes -= consumeReferral;
+      afterExchangeableDoes += consumeReferral;
     }
+
+    gameEntryFunding = {
+      approvedDoes: approvedSpentDoes,
+      provisionalDoes: provisionalSpentDoes,
+      provisionalSources: normalizeFundingSources(provisionalSpend.sources),
+    };
+    console.log("[BALANCE_DEBUG][FUNCTIONS][game_entry]", JSON.stringify({
+      uid,
+      amountDoes,
+      beforeDoes,
+      beforeApprovedDoes,
+      beforeProvisionalDoes,
+      provisionalCoveredByOrders,
+      provisionalFallbackDoes,
+      approvedSpentDoes,
+      provisionalSpentDoes,
+      afterApprovedDoes,
+      afterProvisionalDoes,
+      afterDoesPreview: safeInt(afterApprovedDoes + afterProvisionalDoes),
+      gameEntryFunding,
+    }));
   }
 
   if (type === "share_reward_bonus") {
+    afterApprovedDoes += amountDoes;
     afterPendingFromReferral = beforePendingFromReferral + amountDoes;
+  }
+
+  if (type === "game_reward") {
+    const approvedReward = safeInt(rewardApprovedDoes);
+    const provisionalReward = safeInt(rewardProvisionalDoes);
+    if ((approvedReward + provisionalReward) !== amountDoes) {
+      throw new HttpsError("failed-precondition", "Répartition de gain invalide.");
+    }
+    afterApprovedDoes += approvedReward;
+    afterProvisionalDoes += provisionalReward;
   }
 
   if (type === "xchange_sell") {
     const pendingTotal = afterPendingFromXchange + afterPendingFromReferral;
-    if (pendingTotal > 0) {
+    const availableExchangeableDoes = Math.min(beforeApprovedDoes, beforeExchangeableDoes);
+    if (amountDoes > availableExchangeableDoes) {
       throw buildPlayRequiredError({
         pendingPlayFromXchangeDoes: afterPendingFromXchange,
         pendingPlayFromReferralDoes: afterPendingFromReferral,
         pendingPlayTotalDoes: pendingTotal,
+        exchangeableDoesAvailable: availableExchangeableDoes,
       });
     }
+    if (amountDoes > beforeApprovedDoes) {
+      throw new HttpsError("failed-precondition", "Les Does en examen ne peuvent pas être reconvertis en HTG.");
+    }
+    afterApprovedDoes = Math.max(0, afterApprovedDoes - amountDoes);
+    afterExchangeableDoes = Math.max(0, availableExchangeableDoes - amountDoes);
+    const [allOrders, withdrawalsSnap] = await Promise.all([
+      loadAllOrders(),
+      tx.get(db.collection(CLIENTS_COLLECTION).doc(uid).collection("withdrawals")),
+    ]);
+    fundingPatch = buildFundingWalletPatch(buildWalletFundingSnapshot({
+      orders: allOrders.map((item) => item.data || {}),
+      withdrawals: withdrawalsSnap.docs.map((item) => item.data() || {}),
+      walletData: {
+        ...data,
+        exchangedGourdes: afterExchanged,
+        totalExchangedHtgEver: afterTotalExchangedEver,
+        doesApprovedBalance: afterApprovedDoes,
+        doesProvisionalBalance: afterProvisionalDoes,
+        doesBalance: afterApprovedDoes + afterProvisionalDoes,
+      },
+    }));
+  }
+
+  if (type !== "xchange_buy" && type !== "game_entry" && type !== "share_reward_bonus" && type !== "game_reward" && type !== "xchange_sell") {
+    const nextDoesRaw = beforeDoes + deltaDoes;
+    if (nextDoesRaw < 0) {
+      throw new HttpsError("failed-precondition", "Solde Does insuffisant.");
+    }
+    afterApprovedDoes = Math.max(0, nextDoesRaw - afterProvisionalDoes);
+  }
+
+  const afterDoes = safeInt(afterApprovedDoes + afterProvisionalDoes);
+  if (afterDoes < 0) {
+    throw new HttpsError("failed-precondition", "Solde Does insuffisant.");
+  }
+  if ((afterPendingFromXchange + afterPendingFromReferral) <= 0) {
+    afterExchangeableDoes = safeInt(afterApprovedDoes);
+  } else {
+    afterExchangeableDoes = Math.min(safeInt(afterApprovedDoes), safeInt(afterExchangeableDoes));
   }
 
   const nextWallet = {
     uid,
     email: email || String(data.email || ""),
     doesBalance: afterDoes,
+    doesApprovedBalance: safeInt(afterApprovedDoes),
+    doesProvisionalBalance: safeInt(afterProvisionalDoes),
+    ...fundingPatch,
     exchangedGourdes: afterExchanged,
+    exchangeableDoesAvailable: safeInt(afterExchangeableDoes),
     pendingPlayFromXchangeDoes: afterPendingFromXchange,
     pendingPlayFromReferralDoes: afterPendingFromReferral,
     totalExchangedHtgEver: afterTotalExchangedEver,
@@ -2655,6 +3248,14 @@ async function applyWalletMutationTx(tx, options) {
     afterPendingPlayFromXchangeDoes: afterPendingFromXchange,
     beforePendingPlayFromReferralDoes: beforePendingFromReferral,
     afterPendingPlayFromReferralDoes: afterPendingFromReferral,
+    beforeExchangeableDoesAvailable: beforeExchangeableDoes,
+    afterExchangeableDoesAvailable: safeInt(afterExchangeableDoes),
+    beforeApprovedDoesBalance: beforeApprovedDoes,
+    afterApprovedDoesBalance: safeInt(afterApprovedDoes),
+    beforeProvisionalDoesBalance: beforeProvisionalDoes,
+    afterProvisionalDoesBalance: safeInt(afterProvisionalDoes),
+    gameEntryFunding,
+    provisionalConversion,
     createdAt: admin.firestore.FieldValue.serverTimestamp(),
   });
 
@@ -2666,6 +3267,11 @@ async function applyWalletMutationTx(tx, options) {
     afterPendingFromXchange,
     afterPendingFromReferral,
     afterTotalExchangedEver,
+    afterExchangeableDoes: safeInt(afterExchangeableDoes),
+    afterApprovedDoes: safeInt(afterApprovedDoes),
+    afterProvisionalDoes: safeInt(afterProvisionalDoes),
+    gameEntryFunding,
+    provisionalConversion,
   };
 }
 
@@ -2966,6 +3572,8 @@ exports.walletMutate = publicOnCall("walletMutate", async (request) => {
   const { uid, email } = assertAuth(request);
   const payload = request.data && typeof request.data === "object" ? request.data : {};
   const op = String(payload.op || "").trim();
+  const settingsSnapshot = await getSettingsSnapshotData();
+  const provisionalDepositsEnabled = isProvisionalFundingEnabled(settingsSnapshot);
 
   let mutation = null;
   if (op === "xchange_buy") {
@@ -2977,6 +3585,7 @@ exports.walletMutate = publicOnCall("walletMutate", async (request) => {
       uid,
       email,
       type: "xchange_buy",
+      provisionalDepositsEnabled,
       note: "Conversion HTG vers Does",
       amountGourdes,
       amountDoes: amountGourdes * RATE_HTG_TO_DOES,
@@ -2993,6 +3602,7 @@ exports.walletMutate = publicOnCall("walletMutate", async (request) => {
       uid,
       email,
       type: "xchange_sell",
+      provisionalDepositsEnabled,
       note: "Conversion Does vers HTG",
       amountGourdes,
       amountDoes,
@@ -3001,7 +3611,6 @@ exports.walletMutate = publicOnCall("walletMutate", async (request) => {
     };
   } else if (op === "game_entry") {
     const amountDoes = safeInt(payload.amountDoes);
-    const settingsSnapshot = await getSettingsSnapshotData();
     if (!findStakeConfigByAmount(amountDoes, settingsSnapshot.gameStakeOptions, true)) {
       throw new HttpsError("invalid-argument", "Mise non autorisée.");
     }
@@ -3009,6 +3618,7 @@ exports.walletMutate = publicOnCall("walletMutate", async (request) => {
       uid,
       email,
       type: "game_entry",
+      provisionalDepositsEnabled,
       note: "Participation partie",
       amountGourdes: 0,
       amountDoes,
@@ -3019,14 +3629,41 @@ exports.walletMutate = publicOnCall("walletMutate", async (request) => {
     throw new HttpsError("invalid-argument", "Opération non supportée.");
   }
 
+  console.log("[BALANCE_DEBUG][FUNCTIONS][walletMutate] request", JSON.stringify({
+    uid,
+    op,
+    payload,
+    provisionalDepositsEnabled,
+    mutation,
+  }));
+
   const result = await db.runTransaction((tx) => applyWalletMutationTx(tx, mutation));
+  console.log("[BALANCE_DEBUG][FUNCTIONS][walletMutate] result", JSON.stringify({
+    uid,
+    op,
+    afterDoes: result.afterDoes,
+    afterApprovedDoes: result.afterApprovedDoes,
+    afterProvisionalDoes: result.afterProvisionalDoes,
+    afterExchanged: result.afterExchanged,
+    afterPendingFromXchange: result.afterPendingFromXchange,
+    afterPendingFromReferral: result.afterPendingFromReferral,
+    afterTotalExchangedEver: result.afterTotalExchangedEver,
+    afterExchangeableDoes: result.afterExchangeableDoes,
+    provisionalConversion: result.provisionalConversion,
+    gameEntryFunding: result.gameEntryFunding,
+  }));
   return {
     ok: true,
     does: result.afterDoes,
+    doesApprovedBalance: result.afterApprovedDoes,
+    doesProvisionalBalance: result.afterProvisionalDoes,
+    exchangeableDoesAvailable: result.afterExchangeableDoes,
     exchangedGourdes: result.afterExchanged,
     pendingPlayFromXchangeDoes: result.afterPendingFromXchange,
     pendingPlayFromReferralDoes: result.afterPendingFromReferral,
     totalExchangedHtgEver: result.afterTotalExchangedEver,
+    gameEntryFunding: result.gameEntryFunding,
+    provisionalConversion: result.provisionalConversion,
   };
 });
 
@@ -3183,6 +3820,9 @@ exports.joinMatchmaking = publicOnCall("joinMatchmaking", async (request) => {
           throw new HttpsError("aborted", "Salle non disponible.");
         }
 
+        const walletData = walletSnap.exists ? (walletSnap.data() || {}) : {};
+        assertWalletNotFrozen(walletData);
+
         const roomEntryCostDoes = safeInt(room.entryCostDoes || room.stakeDoes);
         const roomRewardAmountDoes = resolveRoomRewardDoes(room);
         if (roomEntryCostDoes !== stakeDoes || roomRewardAmountDoes !== rewardAmountDoes) {
@@ -3240,7 +3880,6 @@ exports.joinMatchmaking = publicOnCall("joinMatchmaking", async (request) => {
           throw new HttpsError("aborted", "Salle complète.");
         }
 
-        const walletData = walletSnap.exists ? (walletSnap.data() || {}) : {};
         const beforeDoes = safeInt(walletData.doesBalance);
         if (beforeDoes < stakeDoes) {
           throw new HttpsError("failed-precondition", "Solde Does insuffisant.");
@@ -3256,6 +3895,13 @@ exports.joinMatchmaking = publicOnCall("joinMatchmaking", async (request) => {
           deltaDoes: -stakeDoes,
           deltaExchangedGourdes: 0,
         });
+        console.log("[BALANCE_DEBUG][FUNCTIONS][joinMatchmaking] charged waiting-room join", JSON.stringify({
+          uid,
+          roomId: roomRef.id,
+          stakeDoes,
+          afterDoes: safeInt(walletMutation.afterDoes),
+          gameEntryFunding: walletMutation.gameEntryFunding || null,
+        }));
 
         const usedSeats = new Set(
           Object.values(currentSeats)
@@ -3281,12 +3927,21 @@ exports.joinMatchmaking = publicOnCall("joinMatchmaking", async (request) => {
           ? { ...room.roomPresenceMs }
           : {};
         nextPresence[uid] = nowMs;
+        const currentEntryFunding = room.entryFundingByUid && typeof room.entryFundingByUid === "object"
+          ? { ...room.entryFundingByUid }
+          : {};
+        currentEntryFunding[uid] = {
+          approvedDoes: safeInt(walletMutation.gameEntryFunding?.approvedDoes),
+          provisionalDoes: safeInt(walletMutation.gameEntryFunding?.provisionalDoes),
+          provisionalSources: normalizeFundingSources(walletMutation.gameEntryFunding?.provisionalSources),
+        };
 
         const updates = {
           playerUids: nextPlayerUids,
           playerNames: nextPlayerNames,
           playerEmails: admin.firestore.FieldValue.delete(),
           seats: nextSeats,
+          entryFundingByUid: currentEntryFunding,
           roomPresenceMs: nextPresence,
           humanCount: nextHumans,
           botCount: Math.max(0, 4 - nextHumans),
@@ -3367,7 +4022,10 @@ exports.joinMatchmaking = publicOnCall("joinMatchmaking", async (request) => {
       tx.get(walletRef(uid)),
     ]);
 
-    const existingOpenRoomId = String(poolSnap.exists ? (poolSnap.data() || {}).openRoomId || "" : "").trim();
+        const walletData = walletSnap.exists ? (walletSnap.data() || {}) : {};
+        assertWalletNotFrozen(walletData);
+
+        const existingOpenRoomId = String(poolSnap.exists ? (poolSnap.data() || {}).openRoomId || "" : "").trim();
     if (existingOpenRoomId) {
       const openRoomRef = db.collection(ROOMS_COLLECTION).doc(existingOpenRoomId);
       const roomSnap = await tx.get(openRoomRef);
@@ -3413,7 +4071,6 @@ exports.joinMatchmaking = publicOnCall("joinMatchmaking", async (request) => {
             const currentSeats = room.seats && typeof room.seats === "object" ? room.seats : {};
             const humans = playerUids.filter(Boolean).length;
             if (humans < 4) {
-              const walletData = walletSnap.exists ? (walletSnap.data() || {}) : {};
               const beforeDoes = safeInt(walletData.doesBalance);
               if (beforeDoes < stakeDoes) {
                 throw new HttpsError("failed-precondition", "Solde Does insuffisant.");
@@ -3429,6 +4086,13 @@ exports.joinMatchmaking = publicOnCall("joinMatchmaking", async (request) => {
                 deltaDoes: -stakeDoes,
                 deltaExchangedGourdes: 0,
               });
+              console.log("[BALANCE_DEBUG][FUNCTIONS][joinMatchmaking] charged open-room join", JSON.stringify({
+                uid,
+                roomId: openRoomRef.id,
+                stakeDoes,
+                afterDoes: safeInt(walletMutation.afterDoes),
+                gameEntryFunding: walletMutation.gameEntryFunding || null,
+              }));
 
               const usedSeats = new Set(
                 Object.values(currentSeats)
@@ -3451,6 +4115,14 @@ exports.joinMatchmaking = publicOnCall("joinMatchmaking", async (request) => {
                   ? { ...room.roomPresenceMs }
                   : {};
                 nextPresence[uid] = nowMs;
+                const currentEntryFunding = room.entryFundingByUid && typeof room.entryFundingByUid === "object"
+                  ? { ...room.entryFundingByUid }
+                  : {};
+                currentEntryFunding[uid] = {
+                  approvedDoes: safeInt(walletMutation.gameEntryFunding?.approvedDoes),
+                  provisionalDoes: safeInt(walletMutation.gameEntryFunding?.provisionalDoes),
+                  provisionalSources: normalizeFundingSources(walletMutation.gameEntryFunding?.provisionalSources),
+                };
 
                 if (nextHumans >= 4) {
                   clearMatchmakingPool(tx, poolRef);
@@ -3481,6 +4153,7 @@ exports.joinMatchmaking = publicOnCall("joinMatchmaking", async (request) => {
                   playerNames: nextPlayerNames,
                   playerEmails: admin.firestore.FieldValue.delete(),
                   seats: nextSeats,
+                  entryFundingByUid: currentEntryFunding,
                   roomPresenceMs: nextPresence,
                   humanCount: nextHumans,
                   botCount: Math.max(0, 4 - nextHumans),
@@ -3535,6 +4208,13 @@ exports.joinMatchmaking = publicOnCall("joinMatchmaking", async (request) => {
       deltaDoes: -stakeDoes,
       deltaExchangedGourdes: 0,
     });
+    console.log("[BALANCE_DEBUG][FUNCTIONS][joinMatchmaking] charged new-room create", JSON.stringify({
+      uid,
+      roomId: newRoomRef.id,
+      stakeDoes,
+      afterDoes: safeInt(walletMutation.afterDoes),
+      gameEntryFunding: walletMutation.gameEntryFunding || null,
+    }));
 
     tx.set(newRoomRef, {
       status: "waiting",
@@ -3544,6 +4224,13 @@ exports.joinMatchmaking = publicOnCall("joinMatchmaking", async (request) => {
       ownerUid: uid,
       playerUids: [uid, "", "", ""],
       playerNames: [sanitizePlayerLabel(email || uid, 0), "", "", ""],
+      entryFundingByUid: {
+        [uid]: {
+          approvedDoes: safeInt(walletMutation.gameEntryFunding?.approvedDoes),
+          provisionalDoes: safeInt(walletMutation.gameEntryFunding?.provisionalDoes),
+          provisionalSources: normalizeFundingSources(walletMutation.gameEntryFunding?.provisionalSources),
+        },
+      },
       blockedRejoinUids: [],
       humanCount: 1,
       seats: { [uid]: 0 },
@@ -4363,16 +5050,86 @@ exports.claimWinReward = publicOnCall("claimWinReward", async (request) => {
       throw new HttpsError("failed-precondition", "Gain invalide pour cette salle.");
     }
 
+    const entryFundingRaw = room.entryFundingByUid && typeof room.entryFundingByUid === "object"
+      ? (room.entryFundingByUid[uid] || null)
+      : null;
+    const provisionalSources = normalizeFundingSources(entryFundingRaw?.provisionalSources);
+    const approvedEntryDoes = safeInt(entryFundingRaw?.approvedDoes);
+    const provisionalEntryDoes = safeInt(entryFundingRaw?.provisionalDoes);
+    let approvedRewardDoes = rewardAmountDoes;
+    let provisionalRewardDoes = 0;
+
+    if (provisionalEntryDoes > 0 && provisionalSources.length > 0) {
+      const totalEntryDoes = Math.max(approvedEntryDoes + provisionalEntryDoes, provisionalEntryDoes);
+      const provisionalRewardPool = Math.min(
+        rewardAmountDoes,
+        Math.round((rewardAmountDoes * provisionalEntryDoes) / Math.max(1, totalEntryDoes))
+      );
+      const allocatedRewardSources = allocateDoesProportionally(provisionalRewardPool, provisionalSources.map((item) => ({
+        orderId: item.orderId,
+        weight: item.amountDoes,
+      })));
+      const ordersSnap = await tx.get(db.collection(CLIENTS_COLLECTION).doc(uid).collection("orders"));
+      const ordersById = new Map(ordersSnap.docs.map((item) => [item.id, item]));
+      let pendingRewardDoes = 0;
+      let promotedApprovedRewardDoes = 0;
+
+      allocatedRewardSources.forEach((item) => {
+        const orderSnap = ordersById.get(item.orderId);
+        const orderData = orderSnap?.data() || {};
+        const resolutionStatus = getOrderResolutionStatus(orderData);
+        if (resolutionStatus === "pending" && isFundingV2Order(orderData)) {
+          pendingRewardDoes += item.amountDoes;
+          tx.set(orderSnap.ref, {
+            provisionalGainDoes: safeInt(orderData.provisionalGainDoes) + safeInt(item.amountDoes),
+            updatedAt: new Date().toISOString(),
+            updatedAtMs: Date.now(),
+          }, { merge: true });
+          return;
+        }
+        if (resolutionStatus === "approved") {
+          promotedApprovedRewardDoes += item.amountDoes;
+        }
+      });
+
+      provisionalRewardDoes = pendingRewardDoes;
+      approvedRewardDoes = Math.max(0, rewardAmountDoes - provisionalRewardPool) + promotedApprovedRewardDoes;
+    } else if (approvedEntryDoes <= 0 && provisionalEntryDoes > 0) {
+      approvedRewardDoes = 0;
+      provisionalRewardDoes = rewardAmountDoes;
+    }
+
+    console.log("[BALANCE_DEBUG][FUNCTIONS][claimWinReward] reward split", JSON.stringify({
+      uid,
+      roomId,
+      rewardAmountDoes,
+      approvedEntryDoes,
+      provisionalEntryDoes,
+      provisionalSources,
+      approvedRewardDoes,
+      provisionalRewardDoes,
+    }));
+
     const walletMutation = await applyWalletMutationTx(tx, {
       uid,
       email,
       type: "game_reward",
       note: `Gain de partie (${roomId})`,
       amountDoes: rewardAmountDoes,
+      approvedRewardDoes,
+      provisionalRewardDoes,
       amountGourdes: 0,
       deltaDoes: rewardAmountDoes,
       deltaExchangedGourdes: 0,
     });
+    console.log("[BALANCE_DEBUG][FUNCTIONS][claimWinReward] wallet mutation", JSON.stringify({
+      uid,
+      roomId,
+      rewardAmountDoes,
+      afterDoes: safeInt(walletMutation.afterDoes),
+      approvedRewardDoes,
+      provisionalRewardDoes,
+    }));
 
     tx.set(settlementRef, {
       uid,
@@ -4388,6 +5145,8 @@ exports.claimWinReward = publicOnCall("claimWinReward", async (request) => {
       rewardGranted: true,
       rewardAmountDoes,
       does: walletMutation.afterDoes,
+      approvedRewardDoes,
+      provisionalRewardDoes,
     };
   });
 
@@ -5160,13 +5919,23 @@ exports.getPublicRuntimeConfigSecure = publicOnCall("getPublicRuntimeConfigSecur
     appCheckConfigured: !!String(settings.appCheckSiteKey || "").trim(),
     dashboardWebPushPublicKey: String(pushConfig.publicKey || ""),
     dashboardWebPushEnabled: !!String(pushConfig.publicKey || "").trim(),
+    provisionalDepositsEnabled: isProvisionalFundingEnabled(settings),
   };
 });
 
 exports.getShareSitePromoStatus = publicOnCall("getShareSitePromoStatus", async (request) => {
   const { uid } = assertAuth(request);
-  const snap = await shareSitePromoRef(uid).get();
-  return buildShareSitePromoResponse(snap.exists ? (snap.data() || {}) : {}, Date.now());
+  const [snap, walletSnap] = await Promise.all([
+    shareSitePromoRef(uid).get(),
+    walletRef(uid).get(),
+  ]);
+  const walletData = walletSnap.exists ? (walletSnap.data() || {}) : {};
+  const response = buildShareSitePromoResponse(snap.exists ? (snap.data() || {}) : {}, Date.now());
+  return {
+    ...response,
+    accountFrozen: walletData.accountFrozen === true,
+    freezeReason: String(walletData.freezeReason || ""),
+  };
 });
 
 exports.recordShareSitePromo = publicOnCall("recordShareSitePromo", async (request) => {
@@ -5184,6 +5953,8 @@ exports.recordShareSitePromo = publicOnCall("recordShareSitePromo", async (reque
       tx.get(promoRef),
       tx.get(walletRef(uid)),
     ]);
+    const walletData = walletSnap.exists ? (walletSnap.data() || {}) : {};
+    assertWalletNotFrozen(walletData);
     const nowMs = Date.now();
     const nextState = normalizeShareSitePromoState(promoSnap.exists ? (promoSnap.data() || {}) : {}, nowMs);
 
@@ -5223,7 +5994,7 @@ exports.recordShareSitePromo = publicOnCall("recordShareSitePromo", async (reque
 
       await applyWalletMutationTx(tx, {
         uid,
-        email: email || String(walletSnap.data()?.email || ""),
+        email: email || String(walletData.email || ""),
         type: "share_reward_bonus",
         note: "Bonus partage du site",
         amountDoes: SHARE_SITE_PROMO_REWARD_DOES,
@@ -5535,64 +6306,111 @@ exports.createOrderSecure = publicOnCall("createOrderSecure", async (request) =>
   }
 
   const settings = await getSettingsSnapshotData();
+  const provisionalDepositsEnabled = isProvisionalFundingEnabled(settings);
   const orderRef = db.collection(CLIENTS_COLLECTION).doc(uid).collection("orders").doc();
   const nowIso = new Date().toISOString();
   const nowMs = Date.now();
   const clientRef = walletRef(uid);
-  const clientSnap = await clientRef.get();
-  const clientData = clientSnap.exists ? (clientSnap.data() || {}) : {};
-  const orderData = {
-    uid,
-    clientId: uid,
-    clientUid: uid,
-    amount: amountHtg,
-    methodId,
-    methodName: publicMethod.name,
-    methodDetails: {
-      name: publicMethod.name,
-      accountName: publicMethod.accountName,
-      phoneNumber: publicMethod.phoneNumber,
-    },
-    status: "pending",
-    uniqueCode: `VLX-${crypto.randomBytes(4).toString("hex").toUpperCase()}-${Date.now().toString(36).toUpperCase()}`,
-    proofRef,
-    customerName,
-    customerEmail,
-    customerPhone,
-    extractedText: sanitizeText(payload.extractedText || "", MAX_PUBLIC_TEXT_LENGTH),
-    extractedTextStatus: ["pending", "success", "empty", "failed"].includes(String(payload.extractedTextStatus || ""))
-      ? String(payload.extractedTextStatus)
-      : "pending",
-    createdAtMs: nowMs,
-    createdAt: nowIso,
-    expiresAt: new Date(Date.now() + (settings.verificationHours * 60 * 60 * 1000)).toISOString(),
-    updatedAt: nowIso,
-    deviceId: sanitizeText(clientData.deviceId || "", 120),
-    appVersion: sanitizeText(clientData.appVersion || "", 48),
-    country: sanitizeText(clientData.country || "", 48),
-    browser: sanitizeText(clientData.browser || "", 120),
-    ipHash: sanitizeText(clientData.ipHash || "", 64),
-    utmSource: sanitizeText(clientData.utmSource || "", 80),
-    utmCampaign: sanitizeText(clientData.utmCampaign || "", 120),
-    landingPage: sanitizeText(clientData.landingPage || "", 240),
-    creativeId: sanitizeText(clientData.creativeId || "", 120),
-  };
-  await clientRef.set({
-    uid,
-    email,
-    name: customerName || sanitizeText(clientData.name || "", 80) || sanitizeText(String(email || "").split("@")[0], 80) || "Player",
-    phone: customerPhone || sanitizePhone(clientData.phone || ""),
-    lastSeenAt: admin.firestore.FieldValue.serverTimestamp(),
-    lastSeenAtMs: nowMs,
-    updatedAt: admin.firestore.FieldValue.serverTimestamp(),
-    ...(clientSnap.exists ? {} : { createdAt: admin.firestore.FieldValue.serverTimestamp() }),
-  }, { merge: true });
-  await orderRef.set(orderData, { merge: true });
+  await db.runTransaction(async (tx) => {
+    const [clientSnap, ordersSnap, withdrawalsSnap] = await Promise.all([
+      tx.get(clientRef),
+      tx.get(db.collection(CLIENTS_COLLECTION).doc(uid).collection("orders")),
+      tx.get(db.collection(CLIENTS_COLLECTION).doc(uid).collection("withdrawals")),
+    ]);
+    const clientData = clientSnap.exists ? (clientSnap.data() || {}) : {};
+    assertWalletNotFrozen(clientData);
+
+    const orderData = {
+      uid,
+      clientId: uid,
+      clientUid: uid,
+      amount: amountHtg,
+      methodId,
+      methodName: publicMethod.name,
+      methodDetails: {
+        name: publicMethod.name,
+        accountName: publicMethod.accountName,
+        phoneNumber: publicMethod.phoneNumber,
+      },
+      status: "pending",
+      uniqueCode: `VLX-${crypto.randomBytes(4).toString("hex").toUpperCase()}-${Date.now().toString(36).toUpperCase()}`,
+      proofRef,
+      customerName,
+      customerEmail,
+      customerPhone,
+      extractedText: sanitizeText(payload.extractedText || "", MAX_PUBLIC_TEXT_LENGTH),
+      extractedTextStatus: ["pending", "success", "empty", "failed"].includes(String(payload.extractedTextStatus || ""))
+        ? String(payload.extractedTextStatus)
+        : "pending",
+      createdAtMs: nowMs,
+      createdAt: nowIso,
+      expiresAt: new Date(Date.now() + (settings.verificationHours * 60 * 60 * 1000)).toISOString(),
+      updatedAt: nowIso,
+      updatedAtMs: nowMs,
+      deviceId: sanitizeText(clientData.deviceId || "", 120),
+      appVersion: sanitizeText(clientData.appVersion || "", 48),
+      country: sanitizeText(clientData.country || "", 48),
+      browser: sanitizeText(clientData.browser || "", 120),
+      ipHash: sanitizeText(clientData.ipHash || "", 64),
+      utmSource: sanitizeText(clientData.utmSource || "", 80),
+      utmCampaign: sanitizeText(clientData.utmCampaign || "", 120),
+      landingPage: sanitizeText(clientData.landingPage || "", 240),
+      creativeId: sanitizeText(clientData.creativeId || "", 120),
+    };
+
+    if (provisionalDepositsEnabled) {
+      Object.assign(orderData, {
+        fundingVersion: PROVISIONAL_FUNDING_VERSION,
+        creditMode: PROVISIONAL_CREDIT_MODE,
+        resolutionStatus: "pending",
+        approvedAmountHtg: 0,
+        provisionalHtgRemaining: amountHtg,
+        provisionalHtgConverted: 0,
+        provisionalDoesRemaining: 0,
+        provisionalDoesPlayed: 0,
+        provisionalGainDoes: 0,
+        rejectedReason: "",
+        resolvedAtMs: 0,
+        fundingSettledAtMs: 0,
+        creditedProvisionallyAtMs: nowMs,
+      });
+    }
+
+    const nextWallet = {
+      uid,
+      email,
+      name: customerName || sanitizeText(clientData.name || "", 80) || sanitizeText(String(email || "").split("@")[0], 80) || "Player",
+      phone: customerPhone || sanitizePhone(clientData.phone || ""),
+      lastSeenAt: admin.firestore.FieldValue.serverTimestamp(),
+      lastSeenAtMs: nowMs,
+      updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      ...(clientSnap.exists ? {} : { createdAt: admin.firestore.FieldValue.serverTimestamp() }),
+    };
+
+    if (provisionalDepositsEnabled) {
+      const fundingSnapshot = buildWalletFundingSnapshot({
+        orders: [
+          ...ordersSnap.docs.map((item) => item.data() || {}),
+          orderData,
+        ],
+        withdrawals: withdrawalsSnap.docs.map((item) => item.data() || {}),
+        walletData: clientData,
+      });
+      Object.assign(nextWallet, buildFundingWalletPatch(fundingSnapshot));
+    }
+
+    tx.set(clientRef, nextWallet, { merge: true });
+    tx.set(orderRef, orderData, { merge: true });
+  });
 
   return {
     ok: true,
     orderId: orderRef.id,
-    status: orderData.status,
+    status: "pending",
+    creditedProvisionally: provisionalDepositsEnabled,
+    message: provisionalDepositsEnabled
+      ? "Ton dépôt est en cours d'examen. Tu peux jouer avec ce solde, mais tu ne peux pas le retirer tant qu'il n'est pas validé."
+      : "Votre demande est en cours de vérification.",
   };
 });
 
@@ -5686,19 +6504,22 @@ exports.createWithdrawalSecure = publicOnCall("createWithdrawalSecure", async (r
     throw new HttpsError("invalid-argument", "Retrait invalide.");
   }
 
-  const [ordersSnap, withdrawalsSnap, clientSnap] = await Promise.all([
-    db.collection(CLIENTS_COLLECTION).doc(uid).collection("orders").where("status", "==", "approved").get(),
+  const [ordersSnap, withdrawalsSnap, clientSnap, xchangesSnap] = await Promise.all([
+    db.collection(CLIENTS_COLLECTION).doc(uid).collection("orders").get(),
     db.collection(CLIENTS_COLLECTION).doc(uid).collection("withdrawals").get(),
     db.collection(CLIENTS_COLLECTION).doc(uid).get(),
+    walletHistoryRef(uid).get(),
   ]);
 
   const clientData = clientSnap.exists ? (clientSnap.data() || {}) : {};
-  const walletSummary = computeWalletAvailableGourdes({
+  assertWalletNotFrozen(clientData);
+  const walletSummary = buildWalletFundingSnapshot({
     orders: ordersSnap.docs.map((item) => item.data() || {}),
     withdrawals: withdrawalsSnap.docs.map((item) => item.data() || {}),
-    exchangedGourdes: clientData.exchangedGourdes,
+    walletData: clientData,
+    exchangeHistory: xchangesSnap.docs.map((item) => item.data() || {}),
   });
-  const available = walletSummary.availableBalanceHtg;
+  const available = walletSummary.withdrawableHtg;
 
   console.log("[WITHDRAWAL_DEBUG] summary", JSON.stringify({
     uid,
@@ -5723,7 +6544,7 @@ exports.createWithdrawalSecure = publicOnCall("createWithdrawalSecure", async (r
 
   const ref = db.collection(CLIENTS_COLLECTION).doc(uid).collection("withdrawals").doc();
   const nowIso = new Date().toISOString();
-  await ref.set({
+  const withdrawalPayload = {
     uid,
     clientId: uid,
     clientUid: uid,
@@ -5739,13 +6560,25 @@ exports.createWithdrawalSecure = publicOnCall("createWithdrawalSecure", async (r
     customerPhone,
     createdAt: nowIso,
     updatedAt: nowIso,
-  }, { merge: true });
+  };
+  await ref.set(withdrawalPayload, { merge: true });
+
+  const nextFundingSnapshot = buildWalletFundingSnapshot({
+    orders: ordersSnap.docs.map((item) => item.data() || {}),
+    withdrawals: [
+      ...withdrawalsSnap.docs.map((item) => item.data() || {}),
+      withdrawalPayload,
+    ],
+    walletData: clientData,
+    exchangeHistory: xchangesSnap.docs.map((item) => item.data() || {}),
+  });
 
   await walletRef(uid).set({
     uid,
     email,
     name: customerName || sanitizeText(String(email || "").split("@")[0], 80) || "Player",
     phone: customerPhone,
+    ...buildFundingWalletPatch(nextFundingSnapshot),
     updatedAt: admin.firestore.FieldValue.serverTimestamp(),
   }, { merge: true });
 
@@ -5785,6 +6618,307 @@ exports.orderClientActionSecure = publicOnCall("orderClientActionSecure", async 
 
   await ref.set(updates, { merge: true });
   return { ok: true };
+});
+
+exports.getDepositFundingStatusSecure = publicOnCall("getDepositFundingStatusSecure", async (request) => {
+  const { uid } = assertAuth(request);
+  const [ordersSnap, withdrawalsSnap, walletSnap, xchangesSnap] = await Promise.all([
+    db.collection(CLIENTS_COLLECTION).doc(uid).collection("orders").get(),
+    db.collection(CLIENTS_COLLECTION).doc(uid).collection("withdrawals").get(),
+    walletRef(uid).get(),
+    walletHistoryRef(uid).get(),
+  ]);
+  const walletData = walletSnap.exists ? (walletSnap.data() || {}) : {};
+  const fundingSnapshot = buildWalletFundingSnapshot({
+    orders: ordersSnap.docs.map((item) => item.data() || {}),
+    withdrawals: withdrawalsSnap.docs.map((item) => item.data() || {}),
+    walletData,
+    exchangeHistory: xchangesSnap.docs.map((item) => item.data() || {}),
+  });
+
+  return {
+    ...fundingSnapshot,
+    accountFrozen: walletData.accountFrozen === true,
+    freezeReason: String(walletData.freezeReason || ""),
+    rejectedDepositStrikeCount: safeInt(walletData.rejectedDepositStrikeCount),
+    pendingOrders: ordersSnap.docs
+      .map((item) => ({ id: item.id, ...(item.data() || {}) }))
+      .filter((item) => getOrderResolutionStatus(item) === "pending" && isFundingV2Order(item))
+      .map((item) => ({
+        id: item.id,
+        amountHtg: computeOrderAmount(item),
+        provisionalHtgRemaining: safeInt(item.provisionalHtgRemaining),
+        provisionalDoesRemaining: safeInt(item.provisionalDoesRemaining),
+        provisionalGainDoes: safeInt(item.provisionalGainDoes),
+        createdAtMs: safeInt(item.createdAtMs),
+        status: String(item.status || "pending"),
+      })),
+  };
+});
+
+exports.resolveDepositReviewSecure = publicOnCall("resolveDepositReviewSecure", async (request) => {
+  assertFinanceAdmin(request);
+  const payload = request.data && typeof request.data === "object" ? request.data : {};
+  const orderId = sanitizeText(payload.orderId || "", 160);
+  const clientId = sanitizeText(payload.clientId || payload.uid || "", 160);
+  const decision = String(payload.decision || "").trim().toLowerCase();
+  const reason = sanitizeText(payload.reason || "", 240);
+
+  if (!orderId || (decision !== "approve" && decision !== "reject")) {
+    throw new HttpsError("invalid-argument", "Payload de validation invalide.");
+  }
+
+  let orderDoc = null;
+  if (clientId) {
+    const directRef = db.collection(CLIENTS_COLLECTION).doc(clientId).collection("orders").doc(orderId);
+    const directSnap = await directRef.get();
+    if (directSnap.exists) orderDoc = directSnap;
+  }
+  if (!orderDoc) {
+    const groupSnap = await db.collectionGroup("orders")
+      .where(admin.firestore.FieldPath.documentId(), "==", orderId)
+      .limit(1)
+      .get();
+    if (!groupSnap.empty) {
+      orderDoc = groupSnap.docs[0];
+    }
+  }
+  if (!orderDoc) {
+    throw new HttpsError("not-found", "Dépôt introuvable.");
+  }
+
+  const ownerRef = orderDoc.ref.parent.parent;
+  const ownerUid = String(ownerRef?.id || "").trim();
+  if (!ownerUid) {
+    throw new HttpsError("failed-precondition", "Compte dépôt introuvable.");
+  }
+
+  const result = await db.runTransaction(async (tx) => {
+    const [orderSnap, walletSnap, ordersSnap, withdrawalsSnap, xchangesSnap] = await Promise.all([
+      tx.get(orderDoc.ref),
+      tx.get(walletRef(ownerUid)),
+      tx.get(db.collection(CLIENTS_COLLECTION).doc(ownerUid).collection("orders")),
+      tx.get(db.collection(CLIENTS_COLLECTION).doc(ownerUid).collection("withdrawals")),
+      tx.get(walletHistoryRef(ownerUid)),
+    ]);
+
+    if (!orderSnap.exists) {
+      throw new HttpsError("not-found", "Dépôt introuvable.");
+    }
+
+    const orderData = orderSnap.data() || {};
+    const walletData = walletSnap.exists ? (walletSnap.data() || {}) : {};
+    const resolutionStatus = getOrderResolutionStatus(orderData);
+    const fundingNeedsSettlement = isFundingV2Order(orderData)
+      && safeInt(orderData.fundingSettledAtMs) <= 0;
+    const nowIso = new Date().toISOString();
+    const nowMs = Date.now();
+    const orderAmountHtg = computeOrderAmount(orderData);
+
+    if (resolutionStatus === decision && !fundingNeedsSettlement) {
+      const fundingSnapshot = buildWalletFundingSnapshot({
+        orders: ordersSnap.docs.map((item) => item.data() || {}),
+        withdrawals: withdrawalsSnap.docs.map((item) => item.data() || {}),
+        walletData,
+        exchangeHistory: xchangesSnap.docs.map((item) => item.data() || {}),
+      });
+      return {
+        ok: true,
+        orderId,
+        uid: ownerUid,
+        status: String(orderData.status || resolutionStatus),
+        resolutionStatus,
+        ...fundingSnapshot,
+        accountFrozen: walletData.accountFrozen === true,
+        rejectedDepositStrikeCount: safeInt(walletData.rejectedDepositStrikeCount),
+      };
+    }
+
+    let nextOrder = {
+      ...orderData,
+      updatedAt: nowIso,
+      updatedAtMs: nowMs,
+      resolvedAtMs: nowMs,
+    };
+    let nextWallet = {
+      ...walletData,
+      uid: ownerUid,
+      email: String(walletData.email || orderData.customerEmail || ""),
+      updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+    };
+
+    const beforeDoes = safeInt(walletData.doesBalance);
+    const beforeProvisionalDoes = safeInt(walletData.doesProvisionalBalance);
+    const beforeApprovedDoes = safeInt(
+      typeof walletData.doesApprovedBalance === "number"
+        ? walletData.doesApprovedBalance
+        : Math.max(0, beforeDoes - beforeProvisionalDoes)
+    );
+    const beforePendingFromXchange = safeInt(walletData.pendingPlayFromXchangeDoes);
+    const beforePendingFromReferral = safeInt(walletData.pendingPlayFromReferralDoes);
+    const beforePendingPlayTotal = beforePendingFromXchange + beforePendingFromReferral;
+    const beforeExchangeableDoes = safeInt(
+      typeof walletData.exchangeableDoesAvailable === "number"
+        ? Math.min(walletData.exchangeableDoesAvailable, beforeApprovedDoes)
+        : (beforePendingPlayTotal <= 0 ? beforeApprovedDoes : 0)
+    );
+    const otherPendingOrdersDoes = ordersSnap.docs.reduce((sum, item) => {
+      if (item.id === orderSnap.id) return sum;
+      return sum + getOrderPendingProvisionalDoesTotal(item.data() || {});
+    }, 0);
+    const orderPendingCapitalDoes = getOrderProvisionalCapitalDoesBalance(orderData);
+    const orderPendingGainDoes = safeInt(orderData.provisionalGainDoes);
+    const orderPendingTotalDoes = orderPendingCapitalDoes + orderPendingGainDoes;
+    const walletScopedPendingDoes = Math.max(0, beforeProvisionalDoes - otherPendingOrdersDoes);
+    const settledPendingTotalDoes = Math.min(orderPendingTotalDoes, walletScopedPendingDoes);
+    const settledGainDoes = Math.min(orderPendingGainDoes, settledPendingTotalDoes);
+    const settledCapitalDoes = Math.min(
+      orderPendingCapitalDoes,
+      Math.max(0, settledPendingTotalDoes - settledGainDoes)
+    );
+
+    console.log("[BALANCE_DEBUG][FUNCTIONS][resolveDepositReview] reconcile", JSON.stringify({
+      uid: ownerUid,
+      orderId,
+      decision,
+      beforeProvisionalDoes,
+      otherPendingOrdersDoes,
+      orderPendingCapitalDoes,
+      orderPendingGainDoes,
+      orderPendingTotalDoes,
+      walletScopedPendingDoes,
+      settledCapitalDoes,
+      settledGainDoes,
+      settledPendingTotalDoes,
+    }));
+
+    if (decision === "approve") {
+      const promoteCapitalDoes = settledCapitalDoes;
+      const promoteGainDoes = settledGainDoes;
+      const promoteDoes = promoteCapitalDoes + promoteGainDoes;
+      const totalConvertedDoes = safeInt(orderData.provisionalHtgConverted) * RATE_HTG_TO_DOES;
+      const unlockedFromPlayedDoes = Math.max(0, totalConvertedDoes - promoteCapitalDoes);
+      nextOrder = {
+        ...nextOrder,
+        status: "approved",
+        resolutionStatus: "approved",
+        approvedAmountHtg: orderAmountHtg,
+        rejectedReason: "",
+        provisionalDoesRemaining: promoteCapitalDoes,
+        provisionalGainDoes: promoteGainDoes,
+        fundingSettledAtMs: nowMs,
+      };
+      nextWallet.doesApprovedBalance = beforeApprovedDoes + promoteDoes;
+      nextWallet.doesProvisionalBalance = Math.max(0, beforeProvisionalDoes - promoteDoes);
+      nextWallet.doesBalance = safeInt(nextWallet.doesApprovedBalance) + safeInt(nextWallet.doesProvisionalBalance);
+      nextWallet.exchangedGourdes = safeSignedInt(walletData.exchangedGourdes) + safeInt(orderData.provisionalHtgConverted);
+      nextWallet.totalExchangedHtgEver = safeInt(walletData.totalExchangedHtgEver) + safeInt(orderData.provisionalHtgConverted);
+      nextWallet.pendingPlayFromXchangeDoes = beforePendingFromXchange + promoteCapitalDoes;
+      nextWallet.pendingPlayFromReferralDoes = beforePendingFromReferral;
+      nextWallet.exchangeableDoesAvailable = beforeExchangeableDoes + unlockedFromPlayedDoes;
+    } else {
+      const removeDoes = settledPendingTotalDoes;
+      const nextStrikeCount = safeInt(walletData.rejectedDepositStrikeCount) + (resolutionStatus === "rejected" ? 0 : 1);
+      const shouldFreeze = nextStrikeCount >= ACCOUNT_FREEZE_REJECT_THRESHOLD;
+      nextOrder = {
+        ...nextOrder,
+        status: "rejected",
+        resolutionStatus: "rejected",
+        approvedAmountHtg: 0,
+        rejectedReason: reason || "Dépôt refusé",
+        provisionalDoesRemaining: settledCapitalDoes,
+        provisionalGainDoes: settledGainDoes,
+        fundingSettledAtMs: nowMs,
+      };
+      nextWallet.doesApprovedBalance = beforeApprovedDoes;
+      nextWallet.doesProvisionalBalance = Math.max(0, beforeProvisionalDoes - removeDoes);
+      nextWallet.doesBalance = safeInt(nextWallet.doesApprovedBalance) + safeInt(nextWallet.doesProvisionalBalance);
+      nextWallet.rejectedDepositStrikeCount = nextStrikeCount;
+      nextWallet.accountFrozen = shouldFreeze;
+      nextWallet.freezeReason = shouldFreeze ? "3_rejected_deposits" : String(walletData.freezeReason || "");
+      nextWallet.frozenAtMs = shouldFreeze ? nowMs : safeInt(walletData.frozenAtMs);
+      nextWallet.pendingPlayFromXchangeDoes = beforePendingFromXchange;
+      nextWallet.pendingPlayFromReferralDoes = beforePendingFromReferral;
+      nextWallet.exchangeableDoesAvailable = beforeExchangeableDoes;
+    }
+
+    if ((safeInt(nextWallet.pendingPlayFromXchangeDoes) + safeInt(nextWallet.pendingPlayFromReferralDoes)) <= 0) {
+      nextWallet.exchangeableDoesAvailable = safeInt(nextWallet.doesApprovedBalance);
+    } else {
+      nextWallet.exchangeableDoesAvailable = Math.min(
+        safeInt(nextWallet.doesApprovedBalance),
+        safeInt(nextWallet.exchangeableDoesAvailable)
+      );
+    }
+
+    const nextOrders = ordersSnap.docs.map((item) => (
+      item.id === orderSnap.id ? nextOrder : (item.data() || {})
+    ));
+    const fundingSnapshot = buildWalletFundingSnapshot({
+      orders: nextOrders,
+      withdrawals: withdrawalsSnap.docs.map((item) => item.data() || {}),
+      walletData: nextWallet,
+      exchangeHistory: xchangesSnap.docs.map((item) => item.data() || {}),
+    });
+
+    tx.set(orderSnap.ref, nextOrder, { merge: true });
+    tx.set(walletRef(ownerUid), {
+      ...buildFundingWalletPatch(fundingSnapshot),
+      doesApprovedBalance: safeInt(nextWallet.doesApprovedBalance),
+      doesProvisionalBalance: safeInt(nextWallet.doesProvisionalBalance),
+      doesBalance: safeInt(nextWallet.doesBalance),
+      exchangeableDoesAvailable: safeInt(nextWallet.exchangeableDoesAvailable),
+      exchangedGourdes: safeSignedInt(nextWallet.exchangedGourdes),
+      pendingPlayFromXchangeDoes: safeInt(nextWallet.pendingPlayFromXchangeDoes),
+      pendingPlayFromReferralDoes: safeInt(nextWallet.pendingPlayFromReferralDoes),
+      totalExchangedHtgEver: safeInt(nextWallet.totalExchangedHtgEver),
+      rejectedDepositStrikeCount: safeInt(nextWallet.rejectedDepositStrikeCount),
+      accountFrozen: nextWallet.accountFrozen === true,
+      freezeReason: String(nextWallet.freezeReason || ""),
+      frozenAtMs: safeInt(nextWallet.frozenAtMs),
+      updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+    }, { merge: true });
+
+    return {
+      ok: true,
+      orderId,
+      uid: ownerUid,
+      status: nextOrder.status,
+      resolutionStatus: nextOrder.resolutionStatus,
+      ...fundingSnapshot,
+      accountFrozen: nextWallet.accountFrozen === true,
+      rejectedDepositStrikeCount: safeInt(nextWallet.rejectedDepositStrikeCount),
+    };
+  });
+
+  return result;
+});
+
+exports.unfreezeClientAccountSecure = publicOnCall("unfreezeClientAccountSecure", async (request) => {
+  assertFinanceAdmin(request);
+  const payload = request.data && typeof request.data === "object" ? request.data : {};
+  const uid = sanitizeText(payload.uid || "", 160);
+  const reason = sanitizeText(payload.reason || "", 240);
+
+  if (!uid) {
+    throw new HttpsError("invalid-argument", "uid requis.");
+  }
+
+  await walletRef(uid).set({
+    accountFrozen: false,
+    freezeReason: "",
+    rejectedDepositStrikeCount: 0,
+    unfrozenAtMs: Date.now(),
+    unfreezeReason: reason || "",
+    updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+  }, { merge: true });
+
+  return {
+    ok: true,
+    uid,
+    accountFrozen: false,
+    rejectedDepositStrikeCount: 0,
+  };
 });
 
 exports.markChatSeenSecure = publicOnCall("markChatSeenSecure", async (request) => {

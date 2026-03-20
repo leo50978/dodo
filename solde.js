@@ -11,6 +11,7 @@ import {
 } from "./firebase-init.js";
 import { orderClientActionSecure } from "./secure-functions.js";
 const BALANCE_DEBUG = true;
+const DEPOSIT_INFO_DISMISSED_KEY = "domino_deposit_info_hidden_v1";
 
 let stopOrdersListener = null;
 let stopWithdrawalsListener = null;
@@ -146,6 +147,187 @@ function openPaymentDepositDirectly(amount = 500) {
   return true;
 }
 
+function ensureDepositInfoModal() {
+  const existing = document.getElementById("depositInfoModalOverlay");
+  if (existing) return existing;
+
+  const overlay = document.createElement("div");
+  overlay.id = "depositInfoModalOverlay";
+  overlay.className = "fixed inset-0 z-[3150] hidden items-end justify-center bg-[#160708]/72 px-[max(12px,env(safe-area-inset-left))] pb-[max(12px,env(safe-area-inset-bottom))] pt-[max(12px,env(safe-area-inset-top))] backdrop-blur-sm sm:items-center sm:px-4 sm:py-4";
+  overlay.innerHTML = `
+    <div id="depositInfoModalPanel" class="w-full max-w-lg max-h-full overflow-y-auto rounded-[28px] border border-[#ff8a8a]/30 bg-[linear-gradient(180deg,rgba(87,17,22,0.98),rgba(44,9,13,0.98))] p-4 text-white shadow-[0_-18px_38px_rgba(34,8,11,0.5)] backdrop-blur-xl sm:max-h-[min(88vh,760px)] sm:rounded-[32px] sm:p-6 sm:shadow-[16px_18px_42px_rgba(22,6,9,0.48)]">
+      <div class="flex items-start justify-between gap-3">
+        <div class="min-w-0">
+          <div class="inline-flex items-center gap-2 rounded-full border border-[#ff9b9b]/25 bg-white/8 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.18em] text-[#ffd0d0]">
+            <i class="fa-solid fa-triangle-exclamation text-[12px]"></i>
+            Avertissement important
+          </div>
+          <h3 class="mt-3 text-xl font-bold text-white sm:text-2xl">Avant de faire ton depot</h3>
+        </div>
+        <button id="depositInfoClose" type="button" class="grid h-10 w-10 shrink-0 place-items-center rounded-full border border-white/15 bg-white/10 text-white">
+          <i class="fa-solid fa-xmark"></i>
+        </button>
+      </div>
+
+      <div class="mt-4 rounded-[24px] border border-[#ff9c9c]/20 bg-white/8 p-4 sm:p-5">
+        <div class="flex items-start gap-3">
+          <div class="grid h-11 w-11 shrink-0 place-items-center rounded-2xl border border-[#ff9c9c]/20 bg-[#ff6b6b]/14 text-[#ffd8d8]">
+            <i class="fa-solid fa-shield-halved text-lg"></i>
+          </div>
+          <div class="min-w-0">
+            <p class="text-sm leading-7 text-white/92">
+              <span class="font-semibold text-white">Attention:</span> si tu envoies un faux depot, un depot vole, un faux document, ou si tu fais une tentative d'arnaque ou de vol, tu peux perdre definitivement ton compte, ton solde, tes gains et l'acces a la plateforme. Le vol, l'arnaque et la fraude peuvent aussi avoir des consequences avec la justice.
+            </p>
+            <button id="depositInfoTermsLink" type="button" class="mt-3 inline-flex items-center gap-2 text-sm font-semibold text-sky-300 underline decoration-sky-300/80 underline-offset-4">
+              <i class="fa-solid fa-book-open text-[13px]"></i>
+              Lire les conditions d'utilisation
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <div class="mt-5 grid gap-3 sm:grid-cols-2">
+        <button id="depositInfoHide" type="button" class="h-11 rounded-2xl border border-white/15 bg-white/10 text-sm font-semibold text-white">
+          Ne plus afficher ce message
+        </button>
+        <button id="depositInfoContinue" type="button" class="h-11 rounded-2xl border border-[#ff8a8a]/35 bg-[#c62828] text-sm font-semibold text-white shadow-[10px_12px_22px_rgba(96,17,17,0.34)]">
+          Je comprends
+        </button>
+      </div>
+    </div>
+  `;
+
+  document.body.appendChild(overlay);
+
+  const panel = overlay.querySelector("#depositInfoModalPanel");
+  const closeBtn = overlay.querySelector("#depositInfoClose");
+  const hideBtn = overlay.querySelector("#depositInfoHide");
+  const continueBtn = overlay.querySelector("#depositInfoContinue");
+  const termsBtn = overlay.querySelector("#depositInfoTermsLink");
+
+  const close = () => {
+    overlay.classList.add("hidden");
+    overlay.classList.remove("flex");
+    document.body.classList.remove("overflow-hidden");
+  };
+
+  const open = ({ onContinue } = {}) => {
+    overlay.__onContinue = typeof onContinue === "function" ? onContinue : null;
+    overlay.classList.remove("hidden");
+    overlay.classList.add("flex");
+    document.body.classList.add("overflow-hidden");
+  };
+
+  const handleContinue = () => {
+    const callback = typeof overlay.__onContinue === "function" ? overlay.__onContinue : null;
+    close();
+    overlay.__onContinue = null;
+    if (callback) callback();
+  };
+
+  const handleHideForever = () => {
+    try {
+      localStorage.setItem(DEPOSIT_INFO_DISMISSED_KEY, "1");
+    } catch (_) {
+    }
+    handleContinue();
+  };
+
+  overlay.addEventListener("click", (ev) => {
+    if (ev.target === overlay) close();
+  });
+  if (panel) panel.addEventListener("click", (ev) => ev.stopPropagation());
+  if (closeBtn) closeBtn.addEventListener("click", close);
+  if (hideBtn) hideBtn.addEventListener("click", handleHideForever);
+  if (continueBtn) continueBtn.addEventListener("click", handleContinue);
+  if (termsBtn) {
+    termsBtn.addEventListener("click", () => {
+      const termsOverlay = ensureDepositTermsModal();
+      if (typeof termsOverlay.__openDepositTerms === "function") {
+        termsOverlay.__openDepositTerms();
+      }
+    });
+  }
+
+  overlay.__openDepositInfo = open;
+  return overlay;
+}
+
+function ensureDepositTermsModal() {
+  const existing = document.getElementById("depositTermsModalOverlay");
+  if (existing) return existing;
+
+  const overlay = document.createElement("div");
+  overlay.id = "depositTermsModalOverlay";
+  overlay.className = "fixed inset-0 z-[3160] hidden items-end justify-center bg-[#071120]/72 px-[max(12px,env(safe-area-inset-left))] pb-[max(12px,env(safe-area-inset-bottom))] pt-[max(12px,env(safe-area-inset-top))] backdrop-blur-sm sm:items-center sm:px-4 sm:py-4";
+  overlay.innerHTML = `
+    <div id="depositTermsModalPanel" class="w-full max-w-xl max-h-full overflow-y-auto rounded-[28px] border border-white/15 bg-[linear-gradient(180deg,rgba(32,48,76,0.98),rgba(13,21,36,0.98))] p-4 text-white shadow-[0_-18px_40px_rgba(5,10,18,0.48)] backdrop-blur-xl sm:max-h-[min(88vh,760px)] sm:rounded-[32px] sm:p-6">
+      <div class="flex items-start justify-between gap-3">
+        <div class="min-w-0">
+          <div class="inline-flex items-center gap-2 rounded-full border border-sky-300/20 bg-sky-400/10 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.18em] text-sky-200">
+            <i class="fa-solid fa-file-shield text-[12px]"></i>
+            Conditions d'utilisation
+          </div>
+          <h3 class="mt-3 text-xl font-bold text-white sm:text-2xl">Depot, fraude et securite</h3>
+        </div>
+        <button id="depositTermsClose" type="button" class="grid h-10 w-10 shrink-0 place-items-center rounded-full border border-white/15 bg-white/10 text-white">
+          <i class="fa-solid fa-xmark"></i>
+        </button>
+      </div>
+
+      <div class="mt-4 space-y-3 text-sm leading-7 text-white/88">
+        <p>
+          Quand tu envoies un depot, la plateforme peut verifier la transaction avant validation finale.
+        </p>
+        <p>
+          Tout depot faux, vole, conteste, ou appuye par un faux document est considere comme une tentative de fraude.
+        </p>
+        <p>
+          En cas de fraude, d'arnaque, de vol ou de tentative de vol, ton compte peut etre suspendu ou ferme definitivement, et le solde, les Does et les gains lies au depot peuvent etre annules.
+        </p>
+        <p>
+          Le vol, l'arnaque, la fraude et l'usage de faux peuvent egalement entrainer des suites avec la justice selon le dossier.
+        </p>
+        <p>
+          En continuant, tu reconnais avoir lu ces conditions et accepter les controles de securite de la plateforme.
+        </p>
+      </div>
+
+      <button id="depositTermsOk" type="button" class="mt-5 h-11 w-full rounded-2xl border border-sky-300/20 bg-sky-400/12 text-sm font-semibold text-white">
+        J'ai lu
+      </button>
+    </div>
+  `;
+
+  document.body.appendChild(overlay);
+
+  const panel = overlay.querySelector("#depositTermsModalPanel");
+  const closeBtn = overlay.querySelector("#depositTermsClose");
+  const okBtn = overlay.querySelector("#depositTermsOk");
+
+  const close = () => {
+    overlay.classList.add("hidden");
+    overlay.classList.remove("flex");
+    document.body.classList.remove("overflow-hidden");
+  };
+
+  const open = () => {
+    overlay.classList.remove("hidden");
+    overlay.classList.add("flex");
+    document.body.classList.add("overflow-hidden");
+  };
+
+  overlay.addEventListener("click", (ev) => {
+    if (ev.target === overlay) close();
+  });
+  if (panel) panel.addEventListener("click", (ev) => ev.stopPropagation());
+  if (closeBtn) closeBtn.addEventListener("click", close);
+  if (okBtn) okBtn.addEventListener("click", close);
+
+  overlay.__openDepositTerms = open;
+  return overlay;
+}
+
 function updateSoldBadge(balanceValue) {
   const badge = document.getElementById("soldBadge");
   const baseBalance = Number(balanceValue || 0);
@@ -199,6 +381,10 @@ function getOrderUiStatus(order) {
 function renderOrderCard(order) {
   const kind = order.type === "withdrawal" ? "withdrawal" : "order";
   const status = getOrderUiStatus(order);
+  const isProvisionallyCredited = kind === "order"
+    && Number(order?.fundingVersion || 0) >= 2
+    && String(order?.creditMode || "") === "provisional"
+    && String(order?.resolutionStatus || order?.status || "pending") === "pending";
   const code = escapeHtml(order.uniqueCode || order.id || "-");
   const amountValue = kind === "withdrawal"
     ? computeReservedWithdrawalAmount(order)
@@ -210,6 +396,17 @@ function renderOrderCard(order) {
 
   let badgeClass = "bg-[#a16a28]/30 text-[#ffd7a7]";
   let badgeLabel = "En attente";
+  let extraHint = "";
+
+  if (isProvisionallyCredited) {
+    badgeClass = "bg-[#2b4f79]/40 text-[#b8dcff]";
+    badgeLabel = "En examen";
+    extraHint = `
+      <div class="mt-3 rounded-xl bg-[#2b4f79]/25 p-3 text-xs text-[#d7e8ff]">
+        Dépôt crédité provisoirement. Tu peux jouer avec ce solde, mais il reste non retirable tant qu'il n'est pas validé.
+      </div>
+    `;
+  }
 
   if (status === "review") {
     badgeClass = "bg-[#2b4f79]/40 text-[#b8dcff]";
@@ -234,6 +431,8 @@ function renderOrderCard(order) {
         <p>Montant: <span class="font-semibold">${amountPrefix}${amount}</span></p>
         <p>Méthode: ${escapeHtml(order.methodName || "-")}</p>
       </div>
+
+      ${extraHint}
 
       ${status === "rejected" ? `
         <div class="mt-3 rounded-xl bg-[#7a2b2b]/25 p-3 text-xs text-[#ffd1d1]">
@@ -624,10 +823,26 @@ function ensureSoldeModal() {
 export function mountSoldeModal(options = {}) {
   const { triggerSelector = "#soldBadge" } = options;
   const overlay = ensureSoldeModal();
+  const infoOverlay = ensureDepositInfoModal();
   const trigger = document.querySelector(triggerSelector);
 
   if (trigger && overlay.__openSolde) {
     trigger.addEventListener("click", () => {
+      let hideInfoMessage = false;
+      try {
+        hideInfoMessage = localStorage.getItem(DEPOSIT_INFO_DISMISSED_KEY) === "1";
+      } catch (_) {
+      }
+      if (hideInfoMessage) {
+        overlay.__openSolde();
+        return;
+      }
+      if (typeof infoOverlay.__openDepositInfo === "function") {
+        infoOverlay.__openDepositInfo({
+          onContinue: () => overlay.__openSolde(),
+        });
+        return;
+      }
       overlay.__openSolde();
     });
   }

@@ -1430,10 +1430,12 @@ async function handleEndedRoom(roomData) {
     if (rewardRes?.rewardGranted === true) {
       writeSettlement(roomId, user.uid, { entryPaid: true, rewardPaid: true });
       setStatus(`Victoire: +${rewardAmountDoes} Does.`);
+      await ensureXchangeState(user.uid);
       refreshDoesHud();
     } else {
       writeSettlement(roomId, user.uid, { entryPaid: true, rewardPaid: true });
       setStatus("Gain déjà validé.");
+      await ensureXchangeState(user.uid);
       refreshDoesHud();
     }
   } catch (err) {
@@ -2120,6 +2122,7 @@ async function startMatchmaking() {
     if (!matchRes || matchRes.ok !== true || !matchRes.roomId) {
       throw new Error("Impossible de rejoindre une partie.");
     }
+    await ensureXchangeState(user.uid);
     refreshDoesHud();
     clearSubs();
 

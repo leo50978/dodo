@@ -36,6 +36,7 @@ const DEFAULT_GAME_STAKE_OPTIONS = Object.freeze([
 let page2ChatLatestUnsub = null;
 let page2ChatSeenUnsub = null;
 let page2SupportThreadUnsub = null;
+let page2ClientStatusUnsub = null;
 let page2PresenceVisibilityBound = false;
 let page2PresenceUser = null;
 let page2PresenceTick = null;
@@ -421,6 +422,10 @@ function stopPage2ChatWatchers() {
     page2SupportThreadUnsub();
     page2SupportThreadUnsub = null;
   }
+  if (page2ClientStatusUnsub) {
+    page2ClientStatusUnsub();
+    page2ClientStatusUnsub = null;
+  }
 }
 
 function tsToMs(value) {
@@ -674,6 +679,9 @@ export function renderPage2(user, options = {}) {
 
         <section class="flex shrink-0 justify-center px-6 pb-[max(1rem,env(safe-area-inset-bottom))] pt-4 sm:pt-6">
           <div class="flex w-full max-w-[780px] flex-col items-center gap-3">
+            <div id="page2FrozenBanner" class="hidden w-full rounded-[18px] border border-[#ff7c7c]/30 bg-[#6f1d1b]/38 px-4 py-3 text-sm text-[#ffe0df] shadow-[8px_8px_18px_rgba(53,15,14,0.35),-6px_-6px_14px_rgba(137,64,61,0.12)] backdrop-blur-md">
+              <p id="page2FrozenBannerText" class="leading-6">Ton compte a été temporairement gelé après plusieurs dépôts refusés. Contacte l'assistance.</p>
+            </div>
             <button id="startGameBtn" type="button" class="h-14 w-full rounded-[18px] border border-[#ffb26e] bg-[#F57C00] px-8 text-base font-semibold text-white shadow-[9px_9px_20px_rgba(155,78,25,0.45),-7px_-7px_16px_rgba(255,173,96,0.2)] transition hover:-translate-y-0.5">
                 LANCER UNE PARTIE
             </button>
@@ -920,10 +928,47 @@ export function renderPage2(user, options = {}) {
   const sharePromoPendingText = document.getElementById("sharePromoPendingText");
   const sharePromoConfirmBtn = document.getElementById("sharePromoConfirmBtn");
   const sharePromoConfirmBtnLabel = document.getElementById("sharePromoConfirmBtnLabel");
+  const page2FrozenBanner = document.getElementById("page2FrozenBanner");
+  const page2FrozenBannerText = document.getElementById("page2FrozenBannerText");
   let sharePromoState = null;
   let sharePromoStatusPromise = null;
   let sharePromoActionInFlight = false;
   let pendingShareSource = "";
+  let page2AccountFrozen = false;
+
+  const setFrozenActionState = (btn, frozen) => {
+    if (!btn) return;
+    btn.disabled = frozen === true;
+    btn.classList.toggle("opacity-60", frozen === true);
+    btn.classList.toggle("cursor-not-allowed", frozen === true);
+    btn.classList.toggle("pointer-events-none", frozen === true);
+    btn.setAttribute("aria-disabled", frozen === true ? "true" : "false");
+  };
+
+  const applyPage2AccountState = (clientData = {}) => {
+    page2AccountFrozen = clientData?.accountFrozen === true;
+    const frozenMessage = page2AccountFrozen
+      ? "Ton compte a été temporairement gelé après plusieurs dépôts refusés. Dépôt, parties, tournois et bonus sont bloqués jusqu'au dégel."
+      : "";
+
+    if (page2FrozenBanner) {
+      page2FrozenBanner.classList.toggle("hidden", page2AccountFrozen !== true);
+    }
+    if (page2FrozenBannerText) {
+      page2FrozenBannerText.textContent = frozenMessage;
+    }
+
+    setFrozenActionState(soldBadgeBtn, page2AccountFrozen);
+    setFrozenActionState(startGameBtn, page2AccountFrozen);
+    setFrozenActionState(tournamentBtn, page2AccountFrozen);
+    setFrozenActionState(sharePromoBtn, page2AccountFrozen);
+
+    if (page2AccountFrozen) {
+      closeSharePromo();
+      closeStakeSelection();
+      closeTournamentIntro();
+    }
+  };
 
   const clearSharePromoCountdownTimer = () => {
     if (!page2SharePromoCountdownTimer) return;
@@ -1114,6 +1159,9 @@ export function renderPage2(user, options = {}) {
     if (!sharePromoStatusPromise) {
       sharePromoStatusPromise = getShareSitePromoStatusSecure({})
         .then((result) => {
+          if (result?.accountFrozen === true) {
+            page2AccountFrozen = true;
+          }
           applySharePromoState(result);
           return result;
         })
@@ -1268,6 +1316,7 @@ export function renderPage2(user, options = {}) {
 
   if (startGameBtn) {
     startGameBtn.addEventListener("click", () => {
+      if (page2AccountFrozen) return;
       if (!isAuthenticated) {
         showGlobalLoading("Redirection vers la connexion...");
         window.location.href = "./auth.html";
@@ -1307,6 +1356,7 @@ export function renderPage2(user, options = {}) {
 
   if (tournamentBtn) {
     tournamentBtn.addEventListener("click", () => {
+      if (page2AccountFrozen) return;
       if (hasSeenTournamentIntro()) {
         continueToTournament();
         return;
@@ -1317,6 +1367,7 @@ export function renderPage2(user, options = {}) {
 
   if (sharePromoBtn) {
     sharePromoBtn.addEventListener("click", () => {
+      if (page2AccountFrozen) return;
       if (!isAuthenticated) {
         showGlobalLoading("Connexion requise pour le bonus...");
         window.location.href = "./auth.html";
@@ -1345,7 +1396,7 @@ export function renderPage2(user, options = {}) {
   });
   sharePromoTargetGrid?.addEventListener("click", async (event) => {
     const btn = event.target.closest("[data-share-target]");
-    if (!btn || sharePromoActionInFlight || sharePromoState?.isCoolingDown) return;
+    if (!btn || sharePromoActionInFlight || sharePromoState?.isCoolingDown || page2AccountFrozen) return;
     const targetId = String(btn.getAttribute("data-share-target") || "").trim();
     if (!targetId) return;
     try {
@@ -1362,7 +1413,7 @@ export function renderPage2(user, options = {}) {
     }
   });
   sharePromoConfirmBtn?.addEventListener("click", async () => {
-    if (sharePromoActionInFlight || !hasConfirmedAuth || !pendingShareSource) return;
+    if (sharePromoActionInFlight || !hasConfirmedAuth || !pendingShareSource || page2AccountFrozen) return;
     if (sharePromoState?.isCoolingDown) return;
     try {
       setSharePromoActionLoading(true, "Validation du bonus...");
@@ -1454,6 +1505,21 @@ export function renderPage2(user, options = {}) {
   }
 
   bindDeferredModalTrigger(soldBadgeBtn, () => ensureSoldeUiReady("#soldBadge"), "Chargement du solde...");
+  applyPage2AccountState({});
+
+  if (hasConfirmedAuth) {
+    page2ClientStatusUnsub = onSnapshot(
+      doc(db, "clients", incomingUid),
+      (snap) => {
+        const clientData = snap.exists() ? (snap.data() || {}) : {};
+        applyPage2AccountState(clientData);
+      },
+      (error) => {
+        console.error("Erreur listener statut compte accueil:", error);
+        applyPage2AccountState({});
+      }
+    );
+  }
 
   const effectiveUser = hasConfirmedAuth ? user : null;
   renderSharePromoTargets();

@@ -93,6 +93,17 @@ function sanitizeAsset(value) {
   return fileName;
 }
 
+function getPaymentFriendlyErrorMessage(error) {
+  if (error?.code === 'account-frozen') {
+    return error?.message || "Ton compte a été temporairement gelé après plusieurs dépôts refusés. Contacte l'assistance.";
+  }
+  const message = String(error?.message || '').trim();
+  if (message) {
+    return message;
+  }
+  return 'Une erreur est survenue. Veuillez réessayer.';
+}
+
 class PaymentModal {
   constructor(options = {}) {
     this.options = {
@@ -122,6 +133,7 @@ class PaymentModal {
     this.extractedText = '';
     this.extractedTextStatus = 'pending';
     this.isSubmitted = false;
+    this.confirmationMessage = "";
     this.isCompleted = false;
     
     this.init();
@@ -835,7 +847,7 @@ class PaymentModal {
   
   renderConfirmationStep(step) {
     this.startCountdown();
-    const safeMessage = escapeHtml(step?.message || 'Votre demande est en cours de vérification. Elle sera traitée sous 12 heures.');
+    const safeMessage = escapeHtml(this.confirmationMessage || step?.message || 'Votre demande est en cours de vérification. Elle sera traitée sous 12 heures.');
     
     return `
       <div style="text-align: center; padding: 1rem 0;">
@@ -857,7 +869,7 @@ class PaymentModal {
         <p style="color: #8B7E6B; margin-bottom: 2rem;">
           ${safeMessage}
         </p>
-        
+
         <div style="
           background: white;
           border-radius: 1rem;
@@ -1100,7 +1112,7 @@ class PaymentModal {
         nextBtn.disabled = false;
         nextBtn.innerHTML = step.buttonText || 'Continuer';
       }
-      alert('Une erreur est survenue. Veuillez réessayer.');
+      alert(getPaymentFriendlyErrorMessage(error));
     }
   }
   
@@ -1255,6 +1267,7 @@ class PaymentModal {
         extractedText: this.extractedText,
         extractedTextStatus: this.extractedTextStatus,
       });
+      this.confirmationMessage = String(response?.message || "").trim();
       const orderId = response?.orderId || '';
       
       document.dispatchEvent(new CustomEvent('orderSaved', {

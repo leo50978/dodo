@@ -10,6 +10,7 @@ import {
 } from "./firebase-init.js";
 import {
   createWithdrawalSecure,
+  getDepositFundingStatusSecure,
   getPublicPaymentOptionsSecure,
 } from "./secure-functions.js";
 import { waitForBalanceHydration } from "./solde.js";
@@ -90,7 +91,7 @@ async function resolveWithdrawalUiState(uid) {
   const localState = getLocalWithdrawalUiState(uid);
   const ruleStatus = await getWithdrawalRuleStatus(uid);
   const withdrawableHtg = ruleStatus.canWithdraw
-    ? localState.localAvailableHtg
+    ? safeInt(typeof ruleStatus.withdrawableHtg === "number" ? ruleStatus.withdrawableHtg : localState.localAvailableHtg)
     : 0;
 
   if (BALANCE_DEBUG) {
@@ -144,33 +145,65 @@ export async function getWithdrawalRuleStatus(uid) {
     where("status", "==", "approved")
   );
 
-  const [ordersSnap, clientSnap] = await Promise.all([
+  const [ordersSnap, clientSnap, fundingStatus] = await Promise.all([
     getDocs(approvedOrdersQuery),
     getDoc(doc(db, "clients", uid)),
+    getDepositFundingStatusSecure({}).catch(() => null),
   ]);
 
-  const approvedDepositsHtg = ordersSnap.docs.reduce((sum, item) => {
+  const approvedDepositsHtgFallback = ordersSnap.docs.reduce((sum, item) => {
     const data = item.data() || {};
     return sum + computeOrderAmount(data);
   }, 0);
 
   const clientData = clientSnap.exists() ? (clientSnap.data() || {}) : {};
-  let convertedHtg = safeInt(clientData.totalExchangedHtgEver);
+  let convertedHtgFallback = safeInt(clientData.totalExchangedHtgEver);
   if (typeof clientData.totalExchangedHtgEver !== "number") {
     const xchangesSnap = await getDocs(collection(db, "clients", uid, "xchanges"));
-    convertedHtg = xchangesSnap.docs.reduce((sum, item) => {
+    convertedHtgFallback = xchangesSnap.docs.reduce((sum, item) => {
       const data = item.data() || {};
       if (data.type !== "xchange_buy") return sum;
       return sum + safeInt(data.amountGourdes);
     }, 0);
   }
-  const remainingToExchangeHtg = Math.max(0, safeInt(approvedDepositsHtg) - convertedHtg);
+
+  const approvedDepositsHtg = safeInt(
+    typeof fundingStatus?.approvedDepositsHtg === "number"
+      ? fundingStatus.approvedDepositsHtg
+      : approvedDepositsHtgFallback
+  );
+  const convertedHtg = safeInt(
+    typeof fundingStatus?.totalExchangedApprovedHtg === "number"
+      ? fundingStatus.totalExchangedApprovedHtg
+      : convertedHtgFallback
+  );
+  const remainingToExchangeHtg = safeInt(
+    typeof fundingStatus?.remainingToExchangeHtg === "number"
+      ? fundingStatus.remainingToExchangeHtg
+      : Math.max(0, approvedDepositsHtg - convertedHtg)
+  );
+  const accountFrozen = fundingStatus?.accountFrozen === true || clientData.accountFrozen === true;
+  const withdrawableHtg = accountFrozen
+    ? 0
+    : safeInt(
+      typeof fundingStatus?.withdrawableHtg === "number"
+        ? fundingStatus.withdrawableHtg
+        : clientData.withdrawableHtg
+    );
 
   return {
-    approvedDepositsHtg: safeInt(approvedDepositsHtg),
+    approvedDepositsHtg,
     convertedHtg,
     remainingToExchangeHtg,
-    canWithdraw: remainingToExchangeHtg <= 0,
+    canWithdraw: !accountFrozen && withdrawableHtg > 0,
+    withdrawableHtg,
+    accountFrozen,
+    freezeReason: String(fundingStatus?.freezeReason || clientData.freezeReason || ""),
+    provisionalHtgAvailable: safeInt(
+      typeof fundingStatus?.provisionalHtgAvailable === "number"
+        ? fundingStatus.provisionalHtgAvailable
+        : clientData.provisionalHtgAvailable
+    ),
   };
 }
 
@@ -231,6 +264,11 @@ function showRetraitRuleModal(payload = {}) {
 
   overlay.classList.remove("hidden");
   overlay.classList.add("flex");
+}
+
+function hasPendingExamWithdrawalLock(ruleStatus = {}) {
+  return safeInt(ruleStatus?.provisionalHtgAvailable) > 0
+    && safeInt(ruleStatus?.remainingToExchangeHtg) <= 0;
 }
 
 async function loadActiveMethods() {
@@ -492,12 +530,37 @@ function ensureRetraitModal() {
           });
         }
 
+        if (ruleStatus.accountFrozen) {
+          showRetraitRuleModal({
+            title: "Compte gelé",
+            message: "Ton compte a été temporairement gelé après plusieurs dépôts refusés.",
+            lines: ["Contacte l'assistance pour demander un dégel."],
+          });
+          if (errorEl) errorEl.textContent = "Compte gelé. Contacte l'assistance.";
+          return;
+        }
+
         if (amount > available) {
           if (errorEl) errorEl.textContent = "Montant supérieur au solde disponible.";
           return;
         }
 
         if (!ruleStatus.canWithdraw) {
+          if (hasPendingExamWithdrawalLock(ruleStatus)) {
+            showRetraitRuleModal({
+              title: "Retrait en attente",
+              message: "Une partie de ton solde est encore en cours d'examen. Elle reste jouable, mais elle n'est pas retirable pour le moment.",
+              lines: [
+                `En examen: ${formatAmount(ruleStatus.provisionalHtgAvailable)}`,
+                `Retirable maintenant: ${formatAmount(available)}`,
+                "Attends la validation du dépôt pour débloquer cette partie du solde.",
+              ],
+            });
+            if (errorEl) {
+              errorEl.textContent = "Une partie du solde est encore en examen et reste bloquée pour le retrait.";
+            }
+            return;
+          }
           showRetraitRuleModal({
             title: "Retrait bloqué",
             message: "Tu dois d'abord convertir la totalité de tes dépôts en Does avant un retrait.",
@@ -558,6 +621,13 @@ function ensureRetraitModal() {
           message: err?.message || "",
           err,
         });
+        if (err?.code === "account-frozen") {
+          showRetraitRuleModal({
+            title: "Compte gelé",
+            message: err?.message || "Ton compte a été temporairement gelé après plusieurs dépôts refusés.",
+            lines: ["Contacte l'assistance pour demander un dégel."],
+          });
+        }
         if (errorEl) errorEl.textContent = err?.message || "Impossible de soumettre la demande.";
       }
     });
