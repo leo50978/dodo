@@ -10,8 +10,11 @@ import {
 } from "./firebase-init.js";
 import {
   createWithdrawalSecure,
+  getDepositFundingStatusSecure,
   getPublicPaymentOptionsSecure,
 } from "./secure-functions.js";
+import { waitForBalanceHydration } from "./solde.js";
+import { getXchangeState } from "./xchange.js";
 const MIN_WITHDRAWAL_HTG = 50;
 const BALANCE_DEBUG = true;
 
@@ -33,9 +36,83 @@ function formatAmount(value) {
   }).format(amount);
 }
 
+function bindHideOnErrorImages(root) {
+  if (!root) return;
+  root.querySelectorAll('img[data-hide-on-error="1"]').forEach((img) => {
+    if (img.dataset.errorBound === "1") return;
+    img.dataset.errorBound = "1";
+    img.addEventListener("error", () => {
+      img.style.display = "none";
+    });
+  });
+}
+
 function safeInt(value) {
   const n = Number(value);
   return Number.isFinite(n) ? Math.max(0, Math.floor(n)) : 0;
+}
+
+function getBalanceBaseForUi() {
+  const base = window.__userBaseBalance;
+  const fallback = window.__userBalance;
+  if (base === null || typeof base === "undefined" || Number.isNaN(Number(base))) {
+    return Number(fallback || 0);
+  }
+  return Number(base);
+}
+
+function getLocalWithdrawalUiState(uid) {
+  const baseForUi = getBalanceBaseForUi();
+  const xState = getXchangeState(baseForUi, uid);
+  const localAvailableHtg = Math.max(0, Number(xState?.availableGourdes || 0));
+
+  if (BALANCE_DEBUG) {
+    console.log("[BALANCE_DEBUG][RETRAIT] local ui state", {
+      uid: uid || null,
+      baseForUi,
+      __userBaseBalance: window.__userBaseBalance,
+      __userBalance: window.__userBalance,
+      exchangedGourdes: Number(xState?.exchangedGourdes || 0),
+      localAvailableHtg,
+      does: Number(xState?.does || 0),
+      walletLoaded: xState?.loaded === true,
+    });
+  }
+
+  return {
+    uid,
+    baseForUi,
+    xState,
+    localAvailableHtg,
+  };
+}
+
+async function resolveWithdrawalUiState(uid) {
+  const localState = getLocalWithdrawalUiState(uid);
+  const ruleStatus = await getWithdrawalRuleStatus(uid);
+  const withdrawableHtg = ruleStatus.canWithdraw
+    ? safeInt(typeof ruleStatus.withdrawableHtg === "number" ? ruleStatus.withdrawableHtg : localState.localAvailableHtg)
+    : 0;
+
+  if (BALANCE_DEBUG) {
+    console.log("[BALANCE_DEBUG][RETRAIT] resolved withdrawal state", {
+      uid: uid || null,
+      baseForUi: localState.baseForUi,
+      localAvailableHtg: localState.localAvailableHtg,
+      exchangedGourdes: Number(localState.xState?.exchangedGourdes || 0),
+      approvedDepositsHtg: ruleStatus.approvedDepositsHtg,
+      convertedHtg: ruleStatus.convertedHtg,
+      remainingToExchangeHtg: ruleStatus.remainingToExchangeHtg,
+      canWithdraw: ruleStatus.canWithdraw,
+      withdrawableHtg,
+    });
+  }
+
+  return {
+    ...localState,
+    ruleStatus,
+    withdrawableHtg,
+  };
 }
 
 function resolveMethodAssetPath(value) {
@@ -62,39 +139,71 @@ function computeOrderAmount(order) {
   }, 0));
 }
 
-async function getWithdrawalRuleStatus(uid) {
+export async function getWithdrawalRuleStatus(uid) {
   const approvedOrdersQuery = query(
     collection(db, "clients", uid, "orders"),
     where("status", "==", "approved")
   );
 
-  const [ordersSnap, clientSnap] = await Promise.all([
+  const [ordersSnap, clientSnap, fundingStatus] = await Promise.all([
     getDocs(approvedOrdersQuery),
     getDoc(doc(db, "clients", uid)),
+    getDepositFundingStatusSecure({}).catch(() => null),
   ]);
 
-  const approvedDepositsHtg = ordersSnap.docs.reduce((sum, item) => {
+  const approvedDepositsHtgFallback = ordersSnap.docs.reduce((sum, item) => {
     const data = item.data() || {};
     return sum + computeOrderAmount(data);
   }, 0);
 
   const clientData = clientSnap.exists() ? (clientSnap.data() || {}) : {};
-  let convertedHtg = safeInt(clientData.totalExchangedHtgEver);
+  let convertedHtgFallback = safeInt(clientData.totalExchangedHtgEver);
   if (typeof clientData.totalExchangedHtgEver !== "number") {
     const xchangesSnap = await getDocs(collection(db, "clients", uid, "xchanges"));
-    convertedHtg = xchangesSnap.docs.reduce((sum, item) => {
+    convertedHtgFallback = xchangesSnap.docs.reduce((sum, item) => {
       const data = item.data() || {};
       if (data.type !== "xchange_buy") return sum;
       return sum + safeInt(data.amountGourdes);
     }, 0);
   }
-  const remainingToExchangeHtg = Math.max(0, safeInt(approvedDepositsHtg) - convertedHtg);
+
+  const approvedDepositsHtg = safeInt(
+    typeof fundingStatus?.approvedDepositsHtg === "number"
+      ? fundingStatus.approvedDepositsHtg
+      : approvedDepositsHtgFallback
+  );
+  const convertedHtg = safeInt(
+    typeof fundingStatus?.totalExchangedApprovedHtg === "number"
+      ? fundingStatus.totalExchangedApprovedHtg
+      : convertedHtgFallback
+  );
+  const remainingToExchangeHtg = safeInt(
+    typeof fundingStatus?.remainingToExchangeHtg === "number"
+      ? fundingStatus.remainingToExchangeHtg
+      : Math.max(0, approvedDepositsHtg - convertedHtg)
+  );
+  const accountFrozen = fundingStatus?.accountFrozen === true || clientData.accountFrozen === true;
+  const withdrawableHtg = accountFrozen
+    ? 0
+    : safeInt(
+      typeof fundingStatus?.withdrawableHtg === "number"
+        ? fundingStatus.withdrawableHtg
+        : clientData.withdrawableHtg
+    );
 
   return {
-    approvedDepositsHtg: safeInt(approvedDepositsHtg),
+    approvedDepositsHtg,
     convertedHtg,
     remainingToExchangeHtg,
-    canWithdraw: remainingToExchangeHtg <= 0,
+    canWithdraw: !accountFrozen && withdrawableHtg > 0,
+    withdrawableHtg,
+    accountFrozen,
+    freezeReason: String(fundingStatus?.freezeReason || clientData.freezeReason || ""),
+    provisionalHtgAvailable: safeInt(
+      typeof fundingStatus?.provisionalHtgAvailable === "number"
+        ? fundingStatus.provisionalHtgAvailable
+        : clientData.provisionalHtgAvailable
+    ),
   };
 }
 
@@ -155,6 +264,11 @@ function showRetraitRuleModal(payload = {}) {
 
   overlay.classList.remove("hidden");
   overlay.classList.add("flex");
+}
+
+function hasPendingExamWithdrawalLock(ruleStatus = {}) {
+  return safeInt(ruleStatus?.provisionalHtgAvailable) > 0
+    && safeInt(ruleStatus?.remainingToExchangeHtg) <= 0;
 }
 
 async function loadActiveMethods() {
@@ -235,6 +349,7 @@ function ensureRetraitModal() {
   let step = 1;
   let selectedMethod = null;
   let methods = [];
+  let availabilityToken = 0;
 
   const close = () => {
     overlay.classList.add("hidden");
@@ -250,6 +365,50 @@ function ensureRetraitModal() {
     if (nextBtn) nextBtn.textContent = step === 1 ? "Suivant" : "Soumettre";
   };
 
+  const refreshAvailability = async () => {
+    const user = auth.currentUser;
+    if (!user?.uid) {
+      if (availableEl) availableEl.textContent = formatAmount(0);
+      return {
+        uid: "",
+        baseForUi: 0,
+        xState: getXchangeState(0),
+        ruleStatus: null,
+        localAvailableHtg: 0,
+        withdrawableHtg: 0,
+      };
+    }
+
+    const hydrated = await waitForBalanceHydration(user.uid, 2600);
+    if (BALANCE_DEBUG) {
+      console.log("[BALANCE_DEBUG][RETRAIT] balance hydration before availability", {
+        uid: user.uid,
+        hydrated,
+      });
+    }
+
+    const localState = getLocalWithdrawalUiState(user.uid);
+    if (availableEl) availableEl.textContent = formatAmount(localState.localAvailableHtg);
+
+    const token = ++availabilityToken;
+    try {
+      const resolvedState = await resolveWithdrawalUiState(user.uid);
+      if (token !== availabilityToken) return resolvedState;
+      if (availableEl) availableEl.textContent = formatAmount(resolvedState.withdrawableHtg);
+      return resolvedState;
+    } catch (err) {
+      console.error("Erreur calcul disponibilité retrait modal:", err);
+      if (token === availabilityToken && availableEl) {
+        availableEl.textContent = formatAmount(localState.localAvailableHtg);
+      }
+      return {
+        ...localState,
+        ruleStatus: null,
+        withdrawableHtg: localState.localAvailableHtg,
+      };
+    }
+  };
+
   const renderMethods = () => {
     if (!methodsEl) return;
     if (!methods.length) {
@@ -262,7 +421,7 @@ function ensureRetraitModal() {
       <button type="button" data-method-id="${escapeHtml(m.id)}" class="retrait-method w-full rounded-xl border border-white/20 bg-white/10 p-3 text-left text-white transition hover:bg-white/15">
         <div class="flex items-center gap-3">
           ${imagePath ? `
-            <img src="${escapeHtml(imagePath)}" alt="${escapeHtml(m.name || "Méthode")}" class="h-10 w-10 rounded-xl object-cover border border-white/15 bg-white/10" onerror="this.style.display='none'">
+            <img src="${escapeHtml(imagePath)}" alt="${escapeHtml(m.name || "Méthode")}" class="h-10 w-10 rounded-xl object-cover border border-white/15 bg-white/10" data-hide-on-error="1">
           ` : `
             <div class="grid h-10 w-10 place-items-center rounded-xl border border-white/15 bg-white/10">
               <i class="fa-solid fa-wallet text-white/80"></i>
@@ -273,6 +432,7 @@ function ensureRetraitModal() {
       </button>
     `;
     }).join("");
+    bindHideOnErrorImages(methodsEl);
 
     methodsEl.querySelectorAll(".retrait-method").forEach((btn) => {
       btn.addEventListener("click", () => {
@@ -293,17 +453,6 @@ function ensureRetraitModal() {
       return;
     }
 
-    const available = safeInt(window.__userBalance || 0);
-    if (BALANCE_DEBUG) {
-      console.log("[BALANCE_DEBUG][RETRAIT] open modal", {
-        uid: user.uid,
-        __userBaseBalance: window.__userBaseBalance,
-        __userBalance: window.__userBalance,
-        availableShown: available,
-      });
-    }
-    if (availableEl) availableEl.textContent = formatAmount(available);
-
     selectedMethod = null;
     methods = [];
     if (amountInput) amountInput.value = "";
@@ -315,6 +464,7 @@ function ensureRetraitModal() {
     setStep(1);
     overlay.classList.remove("hidden");
     overlay.classList.add("flex");
+    void refreshAvailability();
 
     try {
       methods = await loadActiveMethods();
@@ -348,27 +498,12 @@ function ensureRetraitModal() {
       }
 
       const amount = safeInt(amountInput?.value || 0);
-      const available = safeInt(window.__userBalance || 0);
       const firstName = String(firstNameInput?.value || "").trim();
       const lastName = String(lastNameInput?.value || "").trim();
       const phone = String(phoneInput?.value || "").trim();
-      if (BALANCE_DEBUG) {
-        console.log("[BALANCE_DEBUG][RETRAIT] submit attempt", {
-          uid: user.uid,
-          amount,
-          availableAtSubmit: available,
-          __userBaseBalance: window.__userBaseBalance,
-          __userBalance: window.__userBalance,
-          selectedMethod: selectedMethod?.id || null,
-        });
-      }
 
       if (amount < MIN_WITHDRAWAL_HTG) {
         if (errorEl) errorEl.textContent = `Le montant minimum est ${MIN_WITHDRAWAL_HTG} HTG.`;
-        return;
-      }
-      if (amount > available) {
-        if (errorEl) errorEl.textContent = "Montant supérieur au solde disponible.";
         return;
       }
       if (!firstName || !lastName || !phone) {
@@ -376,9 +511,56 @@ function ensureRetraitModal() {
         return;
       }
 
+      const availability = await refreshAvailability();
+      const available = safeInt(availability?.withdrawableHtg || 0);
       try {
-        const ruleStatus = await getWithdrawalRuleStatus(user.uid);
+        const ruleStatus = availability?.ruleStatus || await getWithdrawalRuleStatus(user.uid);
+        if (BALANCE_DEBUG) {
+          console.log("[BALANCE_DEBUG][RETRAIT] submit attempt", {
+            uid: user.uid,
+            amount,
+            availableAtSubmit: available,
+            baseForUi: availability?.baseForUi ?? getBalanceBaseForUi(),
+            localAvailableHtg: availability?.localAvailableHtg ?? 0,
+            __userBaseBalance: window.__userBaseBalance,
+            __userBalance: window.__userBalance,
+            exchangedGourdes: Number(availability?.xState?.exchangedGourdes || 0),
+            selectedMethod: selectedMethod?.id || null,
+            ruleStatus,
+          });
+        }
+
+        if (ruleStatus.accountFrozen) {
+          showRetraitRuleModal({
+            title: "Compte gelé",
+            message: "Ton compte a été temporairement gelé après plusieurs dépôts refusés.",
+            lines: ["Contacte l'assistance pour demander un dégel."],
+          });
+          if (errorEl) errorEl.textContent = "Compte gelé. Contacte l'assistance.";
+          return;
+        }
+
+        if (amount > available) {
+          if (errorEl) errorEl.textContent = "Montant supérieur au solde disponible.";
+          return;
+        }
+
         if (!ruleStatus.canWithdraw) {
+          if (hasPendingExamWithdrawalLock(ruleStatus)) {
+            showRetraitRuleModal({
+              title: "Retrait en attente",
+              message: "Une partie de ton solde est encore en cours d'examen. Elle reste jouable, mais elle n'est pas retirable pour le moment.",
+              lines: [
+                `En examen: ${formatAmount(ruleStatus.provisionalHtgAvailable)}`,
+                `Retirable maintenant: ${formatAmount(available)}`,
+                "Attends la validation du dépôt pour débloquer cette partie du solde.",
+              ],
+            });
+            if (errorEl) {
+              errorEl.textContent = "Une partie du solde est encore en examen et reste bloquée pour le retrait.";
+            }
+            return;
+          }
           showRetraitRuleModal({
             title: "Retrait bloqué",
             message: "Tu dois d'abord convertir la totalité de tes dépôts en Does avant un retrait.",
@@ -434,8 +616,19 @@ function ensureRetraitModal() {
 
         close();
       } catch (err) {
-        console.error("Erreur soumission retrait:", err);
-        if (errorEl) errorEl.textContent = "Impossible de soumettre la demande.";
+        console.error("Erreur soumission retrait:", {
+          code: err?.code || "",
+          message: err?.message || "",
+          err,
+        });
+        if (err?.code === "account-frozen") {
+          showRetraitRuleModal({
+            title: "Compte gelé",
+            message: err?.message || "Ton compte a été temporairement gelé après plusieurs dépôts refusés.",
+            lines: ["Contacte l'assistance pour demander un dégel."],
+          });
+        }
+        if (errorEl) errorEl.textContent = err?.message || "Impossible de soumettre la demande.";
       }
     });
   }
@@ -452,6 +645,16 @@ function ensureRetraitModal() {
     if (ev.target === overlay) close();
   });
   if (panel) panel.addEventListener("click", (ev) => ev.stopPropagation());
+  window.addEventListener("userBalanceUpdated", () => {
+    if (!overlay.classList.contains("hidden")) {
+      void refreshAvailability();
+    }
+  });
+  window.addEventListener("xchangeUpdated", () => {
+    if (!overlay.classList.contains("hidden")) {
+      void refreshAvailability();
+    }
+  });
 
   overlay.__openRetrait = open;
   return overlay;

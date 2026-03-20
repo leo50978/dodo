@@ -33,6 +33,7 @@
     Opciones['ElementoRaiz']            elemento del HTML donde se creará el canvas                     (POR DEFECTO es 'document.body')
     Opciones['Pausar']                  si es true, pausará la animación si la web pierde el foco.      (TRUE POR DEFECTO)
     Opciones['ColorFondo']              color del fondo en HEX (SOLO para THREE.js)                     (POR DEFECTO es '0x312E35' gris oscuro) 
+    Opciones['AlphaFondo']              opacidad del fondo del renderer THREE (1 por defecto, 0 transparente)
     Opciones['CapturaEjemplo']          nombre del archivo que contiene la captura de pantalla          (Enlazará a '/Web/Graficos/250x200_')
     Opciones['ForzarLandscape']         fuerza al dispositivo movil para mostrarse apaisado (NO FUNCIONA BIEN!!!!)
 */
@@ -60,6 +61,7 @@ var ObjetoCanvas = function(Opciones) {
         ElementoRaiz            : "",
         Pausar                  : true,             // Pausar si el canvas está en segundo plano
         ColorFondo              : 0x312E35,         // Color del fondo por defecto (solo si usas THREE.js)
+        AlphaFondo              : 1,
         CapturaEjemplo          : "",
         ForzarLandscape         : false             // Fuerza al dispositivo movil para que se muestre solo apaisado
     };
@@ -191,15 +193,20 @@ ObjetoCanvas.prototype.IniciarObjetoCanvas = function() {
             console.log("ObjetoCanvas iniciado en modo 2d");
         }
         else if (this.OpcionesCanvas.Tipo.toLowerCase() === 'three') {
+            var RendererOptions = {
+                canvas : this.Canvas,
+                alpha  : (this.OpcionesCanvas.AlphaFondo < 1)
+            };
             if (ObjetoNavegador.EsMovil() === true) { // El antialias no va con el samsung galaxy alpha...
-               this.Context = new THREE.WebGLRenderer({ canvas : this.Canvas });    // Contexto THREE.JS
+               this.Context = new THREE.WebGLRenderer(RendererOptions);    // Contexto THREE.JS
                 console.log("ObjetoCanvas iniciado en modo THREE sin antialias");
             }
             else {
-               this.Context = new THREE.WebGLRenderer({ canvas : this.Canvas, antialias : true });    // Contexto THREE.JS
+               RendererOptions.antialias = true;
+               this.Context = new THREE.WebGLRenderer(RendererOptions);    // Contexto THREE.JS
                 console.log("ObjetoCanvas iniciado en modo THREE con antialias");
             }
-            this.Context.setClearColor(this.OpcionesCanvas.ColorFondo, 1);    // Color del fondo
+            this.Context.setClearColor(this.OpcionesCanvas.ColorFondo, this.OpcionesCanvas.AlphaFondo);    // Color del fondo
         }
     }
     catch ( error ) {

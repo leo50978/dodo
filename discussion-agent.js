@@ -162,6 +162,7 @@ function renderMessages(entries) {
     const senderKey = String(data.senderKey || data.uid || data.guestId || "");
     const mine = senderKey && senderKey === viewerKey;
     const isAgent = String(data.senderRole || "") === "agent";
+    const isPinned = data.pinned === true;
 
     const row = document.createElement("div");
     row.className = `row ${mine ? "mine" : "other"}${isAgent ? " agent" : ""}`;
@@ -172,7 +173,7 @@ function renderMessages(entries) {
     if (!mine || isAgent) {
       const author = document.createElement("p");
       author.className = "author";
-      author.textContent = String(data.displayName || (isAgent ? "Agent Dominoes" : "Utilisateur"));
+      author.textContent = `${isPinned ? "📌 " : ""}${String(data.displayName || (isAgent ? "Agent Dominoes" : "Utilisateur"))}`;
       bubble.appendChild(author);
     }
 
@@ -189,7 +190,7 @@ function renderMessages(entries) {
 
     const meta = document.createElement("div");
     meta.className = "meta";
-    meta.textContent = formatMessageTime(data.createdAt || data.createdAtMs);
+    meta.textContent = `${isPinned ? "Épinglé · " : ""}${formatMessageTime(data.createdAt || data.createdAtMs)}`;
     bubble.appendChild(meta);
 
     row.appendChild(bubble);
@@ -198,6 +199,20 @@ function renderMessages(entries) {
 
   messagesWrap.appendChild(frag);
   scrollToBottom(keepBottom);
+}
+
+function mergePinnedEntries(entries = []) {
+  return [...entries].sort((left, right) => {
+    const leftPinned = left?.data?.pinned === true;
+    const rightPinned = right?.data?.pinned === true;
+    if (leftPinned !== rightPinned) return leftPinned ? -1 : 1;
+    if (leftPinned && rightPinned) {
+      const rightPinnedAt = Number(right?.data?.pinnedAtMs || 0);
+      const leftPinnedAt = Number(left?.data?.pinnedAtMs || 0);
+      if (rightPinnedAt !== leftPinnedAt) return rightPinnedAt - leftPinnedAt;
+    }
+    return Number(left?.data?.createdAtMs || 0) - Number(right?.data?.createdAtMs || 0);
+  });
 }
 
 function stopRefreshLoop() {
@@ -252,7 +267,7 @@ async function refreshThreadMessages(forceSeen = false) {
       data: item,
     }));
 
-    renderMessages(entries);
+    renderMessages(mergePinnedEntries(entries));
 
     const thread = result?.thread && typeof result.thread === "object" ? result.thread : null;
     if (identityEl) {

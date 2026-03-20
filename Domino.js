@@ -59,6 +59,7 @@ var DominoThree = function() {
         'ElementoRaiz'              : "",                // ID de la etiqueta que se usara como raÃ­z para todo el HTML del objeto canvas. Si no se especifica ninguna, se usara el body.
         'Pausar'                    : false,             // Pausa el canvas si la pestaÃ±a no tiene el foco del teclado
         'ColorFondo'                : 0x2F354A,
+        'AlphaFondo'                : 0,
         'CapturaEjemplo'            : "Domino.png",      // Captura de pantalla para el ejemplo a "NuevoCanvas2D.png" se le aÃ±adirÃ¡ "https://devildrey33.github.io/Graficos/250x200_"
         'ForzarLandscape'           : false              // Fuerza al dispositivo movil para que se muestre solo apaisado
     }) === false) { return false; }
@@ -79,24 +80,51 @@ DominoThree.prototype = Object.assign( Object.create(ObjetoCanvas.prototype) , {
     // FunciÃ³n que se llama al redimensionar el documento
     Redimensionar   : function() {  
         if (typeof(this.Camara) === "undefined") return;
+        this.ActualizarCamaraResponsive();
+
+        if (this.Context && typeof(this.Context.setPixelRatio) === "function") {
+            var dpr = (typeof(window.devicePixelRatio) === "number" && window.devicePixelRatio > 0) ? window.devicePixelRatio : 1;
+            var maxDpr = (this.EsMovilVisual === true) ? 1.55 : 2;
+            this.Context.setPixelRatio(Math.min(dpr, maxDpr));
+        }
+
+        if (typeof(this.ActualizarCalidadTexturas) === "function") {
+            this.ActualizarCalidadTexturas();
+        }
+    },
+    ActualizarCamaraResponsive : function() {
+        if (typeof(this.Camara) === "undefined") return;
         this.EsMovilVisual = this.EsPantallaMovil();
         var portrait = (window.innerHeight > window.innerWidth);
-        var mobileCameraBackOffset = 0.7;
+        var mobileCameraBackOffset = 2.0;
         var distancia = 10;
         var altura = 10;
         var fov = 75;
+        var distanciaBaseMovil = 0;
+        var alturaBaseMovil = 0;
+        var zoomAplicado = 0;
 
         if (this.EsMovilVisual === true) {
             if (portrait) {
-                distancia = 11.5 + mobileCameraBackOffset;
-                altura = 8.4;
-                fov = 68;
+                distanciaBaseMovil = 13.2 + mobileCameraBackOffset;
+                alturaBaseMovil = 8.9;
+                fov = 72;
             }
             else {
-                distancia = 7.8 + mobileCameraBackOffset;
-                altura = 7.2;
-                fov = 64;
+                distanciaBaseMovil = 9.4 + mobileCameraBackOffset;
+                alturaBaseMovil = 7.7;
+                fov = 68;
             }
+
+            distancia = Math.min(
+                distanciaBaseMovil + (portrait ? 4.8 : 4.2),
+                Math.max(
+                    distanciaBaseMovil - (portrait ? 1.1 : 0.9),
+                    distanciaBaseMovil + this.ZoomMovilOffset
+                )
+            );
+            zoomAplicado = distancia - distanciaBaseMovil;
+            altura = alturaBaseMovil + (zoomAplicado * (portrait ? 0.26 : 0.2));
         }
         else if (portrait) {
             distancia = 18;
@@ -107,12 +135,6 @@ DominoThree.prototype = Object.assign( Object.create(ObjetoCanvas.prototype) , {
         this.Camara.updateProjectionMatrix();
         this.Camara.position.set(0, altura, this.Camara.Rotacion.Distancia);
         this.Camara.lookAt(this.Camara.Rotacion.MirarHacia);
-
-        if (this.Context && typeof(this.Context.setPixelRatio) === "function") {
-            var dpr = (typeof(window.devicePixelRatio) === "number" && window.devicePixelRatio > 0) ? window.devicePixelRatio : 1;
-            var maxDpr = (this.EsMovilVisual === true) ? 1.15 : 2;
-            this.Context.setPixelRatio(Math.min(dpr, maxDpr));
-        }
     },
     // FunciÃ³n que se llama al hacer scroll en el documento    
     Scroll          : function() {    },
@@ -137,6 +159,11 @@ DominoThree.prototype = Object.assign( Object.create(ObjetoCanvas.prototype) , {
     MouseLeave      : function(Evento) { },
     // FunciÃ³n que se llama al presionar la pantalla
     TouchStart      : function(Evento) { 
+        if (Evento && Evento.touches && Evento.touches.length >= 2) {
+            if (Evento.cancelable === true) Evento.preventDefault();
+            this.IniciarPinchZoom(Evento);
+            return;
+        }
         this.MouseMovido = true;
         this.PosMouse.x =   ( Evento.touches[0].clientX / window.innerWidth ) * 2 - 1;
 	this.PosMouse.y = - ( Evento.touches[0].clientY / window.innerHeight ) * 2 + 1;        
@@ -147,6 +174,11 @@ DominoThree.prototype = Object.assign( Object.create(ObjetoCanvas.prototype) , {
     
     // FunciÃ³n que se llama al mover la presiÃ³n sobre la pantalla
     TouchMove      : function(Evento) { 
+        if (this.PinchZoom.Activa === true || (Evento && Evento.touches && Evento.touches.length >= 2)) {
+            if (Evento.cancelable === true) Evento.preventDefault();
+            this.ActualizarPinchZoom(Evento);
+            return;
+        }
         this.MouseMovido = true;
         this.PosMouse.x =   ( Evento.touches[0].clientX / window.innerWidth ) * 2 - 1;
 	this.PosMouse.y = - ( Evento.touches[0].clientY / window.innerHeight ) * 2 + 1;
@@ -154,6 +186,12 @@ DominoThree.prototype = Object.assign( Object.create(ObjetoCanvas.prototype) , {
     },    
     
     TouchEnd      : function(Evento) { 
+        if (this.PinchZoom.Activa === true) {
+            if (!Evento.touches || Evento.touches.length < 2) {
+                this.PinchZoom.Activa = false;
+            }
+            return;
+        }
 /*        this.MouseMovido = true;
         this.PosMouse.x =   ( Evento.touches[0].clientX / window.innerWidth ) * 2 - 1;
 	this.PosMouse.y = - ( Evento.touches[0].clientY / window.innerHeight ) * 2 + 1;        */
@@ -176,7 +214,237 @@ DominoThree.prototype = Object.assign( Object.create(ObjetoCanvas.prototype) , {
     PuntoDrag       : new THREE.Vector3(),
     DragActiva      : false,
     DragInfo        : { idx : -1, rama : "", ox : 0, oz : 0 },
+    ZoomMovilOffset : 0,
+    PinchZoom       : { Activa : false, DistanciaInicial : 0, ZoomInicial : 0 },
+    OperaGlowTexture: null,
+    MesaTextura     : null,
+    LucesJugadores  : [],
 //    Opciones        : new Domino_Opciones(),
+    ObtenerDistanciaTouches : function(Evento) {
+        if (!Evento || !Evento.touches || Evento.touches.length < 2) return 0;
+        var dx = Evento.touches[0].clientX - Evento.touches[1].clientX;
+        var dy = Evento.touches[0].clientY - Evento.touches[1].clientY;
+        return Math.sqrt((dx * dx) + (dy * dy));
+    },
+    CancelarDrag : function() {
+        if (this.DragActiva === false || this.DragInfo.idx < 0) return;
+        if (typeof(this.Partida.Ficha[this.DragInfo.idx]) !== "undefined") {
+            var F = this.Partida.Ficha[this.DragInfo.idx].Ficha;
+            F.position.set(this.DragInfo.ox, F.position.y, this.DragInfo.oz);
+        }
+        this.DragActiva = false;
+        this.DragInfo.idx = -1;
+        this.DragInfo.rama = "";
+    },
+    IniciarPinchZoom : function(Evento) {
+        if (this.EsMovilVisual !== true) return;
+        var distancia = this.ObtenerDistanciaTouches(Evento);
+        if (distancia <= 0) return;
+        this.CancelarDrag();
+        this.PinchZoom.Activa = true;
+        this.PinchZoom.DistanciaInicial = distancia;
+        this.PinchZoom.ZoomInicial = this.ZoomMovilOffset;
+    },
+    ActualizarPinchZoom : function(Evento) {
+        if (this.EsMovilVisual !== true || this.PinchZoom.Activa !== true) return;
+        var distancia = this.ObtenerDistanciaTouches(Evento);
+        if (distancia <= 0 || this.PinchZoom.DistanciaInicial <= 0) return;
+        var sensibilidad = (window.innerHeight > window.innerWidth) ? 120 : 105;
+        var delta = (distancia - this.PinchZoom.DistanciaInicial) / sensibilidad;
+        this.ZoomMovilOffset = this.PinchZoom.ZoomInicial - delta;
+        this.ActualizarCamaraResponsive();
+    },
+    ActualizarCalidadTexturas : function() {
+        if (!this.Context || !this.Context.capabilities || !Texturas || !Array.isArray(Texturas.Textura)) return;
+
+        var maxAnisotropy = 1;
+        if (typeof(this.Context.capabilities.getMaxAnisotropy) === "function") {
+            maxAnisotropy = Math.max(1, this.Context.capabilities.getMaxAnisotropy());
+        }
+        var targetAnisotropy = (this.EsMovilVisual === true) ? Math.min(maxAnisotropy, 4) : Math.min(maxAnisotropy, 8);
+
+        for (var i = 0; i < Texturas.Textura.length; i++) {
+            if (!Texturas.Textura[i]) continue;
+            Texturas.Textura[i].magFilter = THREE.LinearFilter;
+            Texturas.Textura[i].minFilter = THREE.LinearMipMapLinearFilter || THREE.LinearFilter;
+            Texturas.Textura[i].generateMipmaps = true;
+            Texturas.Textura[i].anisotropy = targetAnisotropy;
+            Texturas.Textura[i].needsUpdate = true;
+        }
+    },
+    CrearTexturaOperaGlow : function() {
+        if (this.OperaGlowTexture !== null) return this.OperaGlowTexture;
+
+        var Canvas = document.createElement("canvas");
+        Canvas.width = 256;
+        Canvas.height = 256;
+        var Ctx = Canvas.getContext("2d");
+        var Grad = Ctx.createRadialGradient(128, 128, 18, 128, 128, 128);
+        Grad.addColorStop(0, "rgba(255, 248, 228, 0.95)");
+        Grad.addColorStop(0.28, "rgba(255, 230, 168, 0.56)");
+        Grad.addColorStop(0.58, "rgba(255, 211, 118, 0.22)");
+        Grad.addColorStop(1, "rgba(255, 211, 118, 0)");
+        Ctx.fillStyle = Grad;
+        Ctx.fillRect(0, 0, Canvas.width, Canvas.height);
+
+        this.OperaGlowTexture = new THREE.Texture(Canvas);
+        this.OperaGlowTexture.needsUpdate = true;
+        this.OperaGlowTexture.minFilter = THREE.LinearFilter;
+        this.OperaGlowTexture.magFilter = THREE.LinearFilter;
+        this.OperaGlowTexture.generateMipmaps = false;
+        return this.OperaGlowTexture;
+    },
+    CrearTexturaMadera : function() {
+        if (this.MesaTextura !== null) return this.MesaTextura;
+
+        var Canvas = document.createElement("canvas");
+        Canvas.width = 1024;
+        Canvas.height = 1024;
+        var Ctx = Canvas.getContext("2d");
+        var Grad = Ctx.createLinearGradient(0, 0, 0, Canvas.height);
+        Grad.addColorStop(0, "#b98553");
+        Grad.addColorStop(0.44, "#996238");
+        Grad.addColorStop(1, "#6b4122");
+        Ctx.fillStyle = Grad;
+        Ctx.fillRect(0, 0, Canvas.width, Canvas.height);
+
+        for (var i = 0; i < 5; i++) {
+            var boardX = 120 + (i * 155);
+            Ctx.fillStyle = "rgba(68, 38, 18, 0.16)";
+            Ctx.fillRect(boardX, 40, 8, Canvas.height - 80);
+            Ctx.fillStyle = "rgba(255, 220, 175, 0.045)";
+            Ctx.fillRect(boardX + 9, 40, 2, Canvas.height - 80);
+        }
+
+        for (var j = 0; j < 220; j++) {
+            var y = (j / 220) * Canvas.height;
+            var alpha = 0.028 + Math.random() * 0.042;
+            Ctx.fillStyle = "rgba(74, 40, 18, " + alpha + ")";
+            Ctx.fillRect(0, y, Canvas.width, 2 + Math.random() * 6);
+        }
+
+        for (var n = 0; n < 1800; n++) {
+            var x = Math.random() * Canvas.width;
+            var yy = Math.random() * Canvas.height;
+            var w = 18 + Math.random() * 90;
+            var h = 0.5 + Math.random() * 1.5;
+            Ctx.fillStyle = Math.random() > 0.5 ? "rgba(255, 231, 189, 0.05)" : "rgba(46, 23, 10, 0.05)";
+            Ctx.fillRect(x, yy, w, h);
+        }
+
+        Ctx.strokeStyle = "rgba(58, 30, 14, 0.38)";
+        Ctx.lineWidth = 16;
+        Ctx.strokeRect(42, 42, Canvas.width - 84, Canvas.height - 84);
+        Ctx.lineWidth = 6;
+        Ctx.strokeRect(92, 92, Canvas.width - 184, Canvas.height - 184);
+        Ctx.lineWidth = 3;
+        Ctx.strokeStyle = "rgba(255, 228, 188, 0.16)";
+        Ctx.strokeRect(102, 102, Canvas.width - 204, Canvas.height - 204);
+
+        this.MesaTextura = new THREE.Texture(Canvas);
+        this.MesaTextura.needsUpdate = true;
+        this.MesaTextura.wrapS = THREE.RepeatWrapping;
+        this.MesaTextura.wrapT = THREE.RepeatWrapping;
+        this.MesaTextura.repeat.set(1.12, 1.02);
+        this.MesaTextura.minFilter = THREE.LinearMipMapLinearFilter || THREE.LinearFilter;
+        this.MesaTextura.magFilter = THREE.LinearFilter;
+        return this.MesaTextura;
+    },
+    CrearMesaEscena : function() {
+        if (typeof(this.Escena) === "undefined") return;
+
+        var WoodTexture = this.CrearTexturaMadera();
+        if (this.Context && this.Context.capabilities && typeof(this.Context.capabilities.getMaxAnisotropy) === "function") {
+            WoodTexture.anisotropy = Math.min(8, Math.max(1, this.Context.capabilities.getMaxAnisotropy()));
+        }
+
+        this.Suelo = new THREE.Mesh(
+            new THREE.PlaneGeometry(38, 24),
+            new THREE.MeshPhongMaterial({
+                map: WoodTexture,
+                color: 0xc88a57,
+                specular: 0x7f4a28,
+                shininess: 30,
+                transparent: true,
+                opacity: 0.96
+            })
+        );
+        this.Suelo.rotation.x = -Math.PI / 2;
+        this.Suelo.position.y = -0.12;
+        this.Suelo.position.z = -3.2;
+        this.Suelo.castShadow = false;
+        this.Suelo.receiveShadow = true;
+        this.Escena.add(this.Suelo);
+    },
+    CrearLuzJugadorVisual : function(Config) {
+        var Grupo = new THREE.Group();
+        var GlowTexture = this.CrearTexturaOperaGlow();
+        var Halo = new THREE.Mesh(
+            new THREE.PlaneGeometry(Config.haloW, Config.haloH),
+            new THREE.MeshBasicMaterial({
+                map         : GlowTexture,
+                color       : 0xffedb3,
+                transparent : true,
+                opacity     : Config.haloOpacity,
+                depthWrite  : false,
+                blending    : THREE.AdditiveBlending,
+                side        : THREE.DoubleSide
+            })
+        );
+        Halo.rotation.x = -Math.PI / 2;
+        Halo.position.y = 0.12;
+        Halo.renderOrder = 1;
+        Halo.raycast = function() {};
+        Grupo.add(Halo);
+
+        var Haz = new THREE.Mesh(
+            new THREE.ConeGeometry(Config.haloRadius, Config.hazAlto, 18, 1, true),
+            new THREE.MeshBasicMaterial({
+                color       : 0xfff4cf,
+                transparent : true,
+                opacity     : Config.hazOpacity,
+                depthWrite  : false,
+                blending    : THREE.AdditiveBlending,
+                side        : THREE.DoubleSide
+            })
+        );
+        Haz.position.y = (Config.hazAlto / 2) + 0.1;
+        Haz.renderOrder = 1;
+        Haz.raycast = function() {};
+        Grupo.add(Haz);
+
+        Grupo.position.set(Config.x, 0, Config.z);
+        Grupo.visible = false;
+        return Grupo;
+    },
+    CrearLucesJugadores : function() {
+        if (this.LucesJugadores.length > 0 || typeof(this.Escena) === "undefined") return;
+
+        var Configs = [
+            { x : 0,   z : 5.5,   haloW : 12.6, haloH : 4.8,  haloRadius : 4.15, hazAlto : 7.8, haloOpacity : 0.23, hazOpacity : 0.08 },
+            { x : 15,  z : -2.75, haloW : 4.8,  haloH : 12.6, haloRadius : 4.15, hazAlto : 7.8, haloOpacity : 0.21, hazOpacity : 0.08 },
+            { x : 0,   z : -12,   haloW : 12.6, haloH : 4.8,  haloRadius : 4.15, hazAlto : 7.8, haloOpacity : 0.2,  hazOpacity : 0.075 },
+            { x : -15, z : -2.75, haloW : 4.8,  haloH : 12.6, haloRadius : 4.15, hazAlto : 7.8, haloOpacity : 0.21, hazOpacity : 0.08 }
+        ];
+
+        for (var i = 0; i < Configs.length; i++) {
+            var Luz = this.CrearLuzJugadorVisual(Configs[i]);
+            this.LucesJugadores.push(Luz);
+            this.Escena.add(Luz);
+        }
+    },
+    ActualizarLucesJugadoresVisibilidad : function() {
+        if (!Array.isArray(this.LucesJugadores) || this.LucesJugadores.length === 0) return;
+
+        var Visible = true;
+        if (this.Partida && this.Partida.Opciones && this.Partida.Opciones.LucesJugadores === "false") {
+            Visible = false;
+        }
+
+        for (var i = 0; i < this.LucesJugadores.length; i++) {
+            this.LucesJugadores[i].visible = Visible;
+        }
+    },
     
     // FunciÃ³n que inicia el ejemplo
     Iniciar         : function() {       
@@ -185,6 +453,9 @@ DominoThree.prototype = Object.assign( Object.create(ObjetoCanvas.prototype) , {
         
         // VERSIÃN DEL JUEGO A MANO
         document.getElementById("VersionDomino").innerHTML = this.VersionDomino;
+        if (this.Cabecera && this.Cabecera.style) {
+            this.Cabecera.style.touchAction = "none";
+        }
         
         // Fijo el modo landscape (NO VA...)
 //        screen.orientation.lock("landscape");
@@ -218,51 +489,16 @@ DominoThree.prototype = Object.assign( Object.create(ObjetoCanvas.prototype) , {
         this.Escena.add(this.Camara);
         this.Camara.lookAt(this.Camara.Rotacion.MirarHacia); 
 
-        // Plano de suelo con look glass/neumorphism
-        this.Suelo = new THREE.Mesh(
-            new THREE.PlaneGeometry(300, 300),
-            new THREE.MeshPhongMaterial({
-                color: 0x3f4766,
-                specular: 0xffffff,
-                shininess: 85,
-                emissive: 0x12182a,
-                transparent: true,
-                opacity: 0.94
-            })
-        );
-        this.Suelo.rotation.x = -Math.PI / 2;
-        this.Suelo.position.y = -0.2;
-        //this.Suelo.position.x = -25;
-        this.Suelo.position.z = 15;
-        this.Suelo.castShadow = false;
-        this.Suelo.receiveShadow = true;
-        this.Escena.add(this.Suelo);
+        this.CrearMesaEscena();
 
-        // Capa brillante (verre) para reforzar l'effet glassmorphism
-        this.SueloBrillo = new THREE.Mesh(
-            new THREE.PlaneGeometry(240, 240),
-            new THREE.MeshPhongMaterial({
-                color: 0x7e90bc,
-                specular: 0xffffff,
-                shininess: 120,
-                transparent: true,
-                opacity: 0.16,
-                side: THREE.DoubleSide
-            })
-        );
-        this.SueloBrillo.rotation.x = -Math.PI / 2;
-        this.SueloBrillo.position.y = -0.19;
-        this.SueloBrillo.position.z = 15;
-        this.SueloBrillo.castShadow = false;
-        this.SueloBrillo.receiveShadow = false;
-        this.Escena.add(this.SueloBrillo);
-        
         // Inicio las texturas del domino
         Texturas.Iniciar();
 
         this.CrearLuces();
         this.Partida.Opciones.Iniciar();
         UI.Iniciar();
+        this.CrearLucesJugadores();
+        this.ActualizarLucesJugadoresVisibilidad();
         
         this.Redimensionar();
 //        this.Camara.Rotar();
@@ -338,32 +574,15 @@ DominoThree.prototype = Object.assign( Object.create(ObjetoCanvas.prototype) , {
     
     
     CrearLuces : function() {
-        // Luz direccional
-        this.DirLight = new THREE.DirectionalLight( 0xfff1e0, 0.281 );
-        this.DirLight.position.set( 0, 40, -30 ); //.normalize();
-//        this.DirLight.position.multiplyScalar( 20 );
-        this.DirLight.castShadow = true;
-        var shadowSize = (this.EsMovilVisual === true) ? 1024 : 2048;
-        this.DirLight.shadow.mapSize.width = shadowSize;
-        this.DirLight.shadow.mapSize.height = shadowSize;
-        var d = 40;
-        this.DirLight.shadow.camera.left = -d;
-        this.DirLight.shadow.camera.right = d;
-        this.DirLight.shadow.camera.top = d;
-        this.DirLight.shadow.camera.bottom = -d;
-        this.DirLight.shadow.camera.far = (this.EsMovilVisual === true) ? 180 : 3500;
-//        this.DirLight.target = this.Ficha.Ficha;
-        this.Escena.add( this.DirLight );
-        
         // Luz de ambiente  
-        this.HemiLight = new THREE.HemisphereLight( 0xeeeeee, 0xffffff, 0.7 );
-        this.HemiLight.color.setHSL( 0.6, 0.6, 0.6 );
-        this.HemiLight.groundColor.setHSL( 0.095, 1, 0.75 );
+        this.HemiLight = new THREE.HemisphereLight( 0xfff0d8, 0x8d5a31, 0.95 );
+        this.HemiLight.color.setHSL( 0.11, 0.75, 0.86 );
+        this.HemiLight.groundColor.setHSL( 0.08, 0.65, 0.44 );
         this.HemiLight.position.set( 0, 0, 0 );
-        this.Escena.add( this.HemiLight );                 
+        this.Escena.add( this.HemiLight );
     },
         
-    // Mueve la luz y la cÃ¡mara al jugador especificado
+    // Mantiene la orientacion de la camara del turno sin desplazar la luz direccional.
     AnimarLuz       : function(NumJugador) {
         if (typeof(this.AniLuz) !== "undefined") {
             this.AniLuz.Terminar();
@@ -392,15 +611,11 @@ DominoThree.prototype = Object.assign( Object.create(ObjetoCanvas.prototype) , {
                 break;
         }
         this.AniLuz = Animaciones.CrearAnimacion([
-                    { Paso : { PX : this.DirLight.position.x , PZ : this.DirLight.position.z, RZ : this.Camara.rotation.y  } },
-                    { Paso : { PX : PosX,                      PZ : PosZ                    , RZ : RotZ  }, Tiempo : 400, FuncionTiempo : FuncionesTiempo.SinInOut }
+                    { Paso : { RZ : this.Camara.rotation.y } },
+                    { Paso : { RZ : RotZ }, Tiempo : 400, FuncionTiempo : FuncionesTiempo.SinInOut }
             ], { FuncionActualizar : function(Valores) { 
-                    this.DirLight.position.set(Valores.PX, 40, Valores.PZ);                    
-                    this.DirLight.lookAt(this.Camara.Rotacion.MirarHacia);
                     this.Camara.rotation.y = Valores.RZ;
                     this.Camara.lookAt(this.Camara.Rotacion.MirarHacia);
-                    //this.DirLight.needUpdate = true;
-//                    this.DirLight.position.multiplyScalar( 20 );
             }.bind(this) });
         this.AniLuz.Iniciar();
     },

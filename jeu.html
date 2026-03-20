@@ -18,10 +18,10 @@
         <link rel="shortcut icon" href="/favicon.ico" />
         <link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png" />
         <link rel="manifest" href="/site.webmanifest" />
-        <meta name="firebase-app-check-site-key" content="REPLACE_WITH_RECAPTCHA_V3_SITE_KEY" />
+        <meta name="firebase-app-check-site-key" content="6Lc80IAsAAAAAD1dmys7iHV4bu8DeWdbYeM86y8D" />
         <meta
           http-equiv="Content-Security-Policy"
-          content="default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval' 'wasm-unsafe-eval' https://www.gstatic.com https://apis.google.com https://cdn.tailwindcss.com https://cdnjs.cloudflare.com https://cdn.jsdelivr.net https://unpkg.com https://www.google.com https://www.recaptcha.net; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com https://cdnjs.cloudflare.com https://www.gstatic.com; font-src 'self' https://fonts.gstatic.com https://cdnjs.cloudflare.com data:; img-src 'self' data: https: blob:; connect-src 'self' data: blob: https://*.googleapis.com https://apis.google.com https://firestore.googleapis.com https://identitytoolkit.googleapis.com https://securetoken.googleapis.com https://firebaseinstallations.googleapis.com https://content-firebaseappcheck.googleapis.com https://www.gstatic.com https://www.google.com https://accounts.google.com https://does-2c234.firebaseapp.com https://does-2c234.web.app https://www.recaptcha.net https://us-central1-does-2c234.cloudfunctions.net https://*.cloudfunctions.net https://cdn.jsdelivr.net https://unpkg.com; frame-src https://www.google.com https://accounts.google.com https://apis.google.com https://www.gstatic.com https://does-2c234.firebaseapp.com https://does-2c234.web.app https://www.recaptcha.net; worker-src 'self' blob: https://cdn.jsdelivr.net https://unpkg.com; object-src 'none'; base-uri 'self';"
+          content="default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval' 'wasm-unsafe-eval' https://www.gstatic.com https://apis.google.com https://cdn.tailwindcss.com https://cdnjs.cloudflare.com https://cdn.jsdelivr.net https://unpkg.com https://www.google.com https://www.recaptcha.net; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com https://cdnjs.cloudflare.com https://www.gstatic.com; font-src 'self' https://fonts.gstatic.com https://cdnjs.cloudflare.com data:; img-src 'self' data: https: blob:; connect-src 'self' data: blob: https://*.googleapis.com https://apis.google.com https://firestore.googleapis.com https://identitytoolkit.googleapis.com https://securetoken.googleapis.com https://firebaseinstallations.googleapis.com https://content-firebaseappcheck.googleapis.com https://www.gstatic.com https://www.google.com https://accounts.google.com https://does-2c234.firebaseapp.com https://does-2c234.web.app https://www.recaptcha.net https://us-central1-does-2c234.cloudfunctions.net https://*.cloudfunctions.net https://cdn.jsdelivr.net https://unpkg.com; frame-src https://www.google.com https://accounts.google.com https://apis.google.com https://www.gstatic.com https://does-2c234.firebaseapp.com https://does-2c234.web.app https://www.recaptcha.net; worker-src 'self' blob: https://cdn.jsdelivr.net https://unpkg.com; object-src 'none'; base-uri 'self'; form-action 'self'; upgrade-insecure-requests; block-all-mixed-content;"
         />
         <title>Domino-lakay</title>
         <script src="https://cdn.tailwindcss.com"></script>
@@ -50,12 +50,45 @@
                 margin: 0;
                 width: 100%;
                 height: 100%;
-                background: #0b1120;
+                background: #2b180d;
                 overscroll-behavior: none;
             }
 
             body {
                 overflow: hidden;
+            }
+
+            #GamePhotoBackdrop {
+                position: fixed;
+                inset: 0;
+                z-index: 0;
+                background-image:
+                    linear-gradient(180deg, rgba(30, 15, 8, 0.28), rgba(24, 14, 8, 0.42)),
+                    radial-gradient(circle at center, rgba(255, 214, 148, 0.08), rgba(0, 0, 0, 0.18)),
+                    url("./jui.png");
+                background-size: cover;
+                background-position: center center;
+                background-repeat: no-repeat;
+                transform: scale(1.03);
+                filter: saturate(1.02) contrast(1.02);
+            }
+
+            #GamePhotoBackdrop::after {
+                content: "";
+                position: absolute;
+                inset: 0;
+                background:
+                    linear-gradient(180deg, rgba(13, 9, 5, 0.05), rgba(13, 9, 5, 0.18)),
+                    radial-gradient(circle at center, rgba(255, 222, 171, 0.06), rgba(0, 0, 0, 0.24));
+                pointer-events: none;
+            }
+
+            #ObjetoCanvas {
+                z-index: 1 !important;
+            }
+
+            #Cabecera_Canvas {
+                background: transparent !important;
             }
 
             @media (orientation: portrait) {
@@ -77,6 +110,8 @@
         </style>
     </head>
     <body>
+        <div id="GamePhotoBackdrop" aria-hidden="true"></div>
+
         <div id="MatchLoadingOverlay" class="fixed inset-0 z-[2500] hidden items-center justify-center bg-black/45 p-4 backdrop-blur-md">
             <div id="MatchLoadingPanel" class="w-[min(92vw,30rem)] rounded-3xl border border-white/20 bg-[#3F4766]/60 p-5 text-center text-white shadow-[14px_14px_34px_rgba(16,23,40,0.5),-10px_-10px_24px_rgba(112,126,165,0.2)] backdrop-blur-xl">
                 <div id="MatchLoadingTitle" class="text-lg font-bold tracking-wide">Recherche de partie...</div>
@@ -136,7 +171,7 @@
             Quitter salle
         </button>
 
-        <button id="FullscreenToggleBtn" type="button" class="fixed left-3 top-14 z-[2465] grid h-10 w-10 place-items-center rounded-2xl border border-white/20 bg-[#3F4766]/70 text-white shadow-[10px_10px_24px_rgba(16,23,40,0.45),-8px_-8px_18px_rgba(112,126,165,0.18)] backdrop-blur-xl transition hover:bg-[#4a5376]/80" aria-label="Passer en plein ecran" title="Passer en plein ecran">
+        <button id="FullscreenToggleBtn" type="button" class="fixed bottom-4 right-3 z-[2465] grid h-10 w-10 place-items-center rounded-2xl border border-white/20 bg-[#3F4766]/70 text-white shadow-[10px_10px_24px_rgba(16,23,40,0.45),-8px_-8px_18px_rgba(112,126,165,0.18)] backdrop-blur-xl transition hover:bg-[#4a5376]/80" aria-label="Passer en plein ecran" title="Passer en plein ecran">
             <svg id="FullscreenToggleIcon" xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
                 <path d="M8 3H5a2 2 0 0 0-2 2v3"></path>
                 <path d="M16 3h3a2 2 0 0 1 2 2v3"></path>
@@ -145,24 +180,32 @@
             </svg>
         </button>
 
-        <div id="FullscreenHint" class="pointer-events-none fixed left-3 top-[6.5rem] z-[2466] hidden rounded-xl border border-amber-300/35 bg-black/45 px-3 py-2 text-xs font-semibold text-amber-100 shadow-[8px_8px_18px_rgba(16,23,40,0.5),-6px_-6px_14px_rgba(112,126,165,0.18)] backdrop-blur-xl">
+        <div id="FullscreenHint" class="pointer-events-none fixed bottom-16 right-3 z-[2466] hidden rounded-xl border border-amber-300/35 bg-black/45 px-3 py-2 text-xs font-semibold text-amber-100 shadow-[8px_8px_18px_rgba(16,23,40,0.5),-6px_-6px_14px_rgba(112,126,165,0.18)] backdrop-blur-xl">
             Plein ecran non supporte sur cet appareil.
         </div>
+
+        <button id="PlayerLightsToggleBtn" type="button" class="fixed bottom-4 left-3 z-[2465] inline-flex h-10 items-center gap-2 rounded-2xl border border-white/20 bg-[#3F4766]/70 px-3 text-xs font-semibold tracking-wide text-white shadow-[10px_10px_24px_rgba(16,23,40,0.45),-8px_-8px_18px_rgba(112,126,165,0.18)] backdrop-blur-xl transition hover:bg-[#4a5376]/80" aria-label="Activer ou couper les lumières des joueurs" title="Activer ou couper les lumières des joueurs">
+            <span id="PlayerLightsToggleText">Lumieres ON</span>
+        </button>
 
         <div id="OnlineUsersHud" class="pointer-events-none fixed left-1/2 top-3 z-[2468] -translate-x-1/2 rounded-2xl border border-emerald-300/35 bg-emerald-500/15 px-4 py-2 text-xs font-bold tracking-wide text-emerald-200 shadow-[10px_10px_24px_rgba(16,23,40,0.45),-8px_-8px_18px_rgba(112,126,165,0.18)] backdrop-blur-xl sm:text-sm">
             Utilisateurs en ligne: 30 000
         </div>
 
-        <div id="LocalTurnHud" class="fixed right-3 top-3 z-[2700] rounded-2xl border border-white/20 bg-[#3F4766]/65 px-3 py-2 text-white shadow-[10px_10px_24px_rgba(16,23,40,0.45),-8px_-8px_18px_rgba(112,126,165,0.18)] backdrop-blur-xl">
-            <div id="LocalTurnLabel" class="text-[11px] font-semibold uppercase tracking-wide text-white/80">En attente</div>
-            <div id="LocalTurnValue" class="mt-0.5 text-lg font-bold leading-none">--</div>
-            <div class="mt-2 h-1.5 w-28 overflow-hidden rounded-full border border-white/20 bg-white/10">
-                <span id="LocalTurnBar" class="block h-full w-full rounded-full bg-gradient-to-r from-orange-500 to-amber-300 transition-all duration-300"></span>
+        <div id="LocalTurnHud" class="fixed right-1 top-1 z-[2700] max-w-[4.9rem] rounded-xl border border-white/15 bg-[#3F4766]/48 px-1.5 py-1 text-white shadow-[10px_10px_24px_rgba(16,23,40,0.45),-8px_-8px_18px_rgba(112,126,165,0.18)] backdrop-blur-xl sm:right-3 sm:top-3 sm:max-w-none sm:rounded-2xl sm:border-white/20 sm:bg-[#3F4766]/65 sm:px-3 sm:py-2">
+            <div class="flex items-start justify-between gap-1.5 sm:block">
+                <div class="min-w-0 flex-1">
+                    <div id="LocalTurnLabel" class="hidden text-[11px] font-semibold uppercase tracking-wide text-white/80 sm:block">En attente</div>
+                    <div id="LocalTurnValue" class="text-[13px] font-bold leading-none sm:mt-0.5 sm:text-lg">--</div>
+                </div>
+                <div class="inline-flex shrink-0 items-center gap-1 rounded-lg border border-white/15 bg-white/10 px-1 py-0.5 shadow-[inset_4px_4px_8px_rgba(18,24,38,0.35),inset_-4px_-4px_8px_rgba(110,124,163,0.18)] sm:mt-2 sm:gap-1.5 sm:rounded-xl sm:border-white/20 sm:px-2 sm:py-1">
+                    <img src="./does.png" alt="Does" class="h-3 w-3 rounded-full object-cover sm:h-4 sm:w-4" onerror="this.style.display='none'" />
+                    <span class="hidden text-[10px] font-semibold uppercase tracking-wide text-white/75 sm:inline">Does</span>
+                    <span id="LocalDoesValue" class="text-[10px] font-bold text-white sm:text-xs">0</span>
+                </div>
             </div>
-            <div class="mt-2 inline-flex items-center gap-1.5 rounded-xl border border-white/20 bg-white/10 px-2 py-1 shadow-[inset_4px_4px_8px_rgba(18,24,38,0.35),inset_-4px_-4px_8px_rgba(110,124,163,0.18)]">
-                <img src="./does.png" alt="Does" class="h-4 w-4 rounded-full object-cover" onerror="this.style.display='none'" />
-                <span class="text-[10px] font-semibold uppercase tracking-wide text-white/75">Does</span>
-                <span id="LocalDoesValue" class="text-xs font-bold text-white">0</span>
+            <div class="mt-1 h-[3px] w-12 overflow-hidden rounded-full border border-white/15 bg-white/10 sm:mt-2 sm:h-1.5 sm:w-28 sm:border-white/20">
+                <span id="LocalTurnBar" class="block h-full w-full rounded-full bg-gradient-to-r from-orange-500 to-amber-300 transition-all duration-300"></span>
             </div>
         </div>
 

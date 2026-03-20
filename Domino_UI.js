@@ -111,6 +111,16 @@ var Domino_UI = function() {
         document.getElementById("Opciones_Ayuda").onclick = function() {
             Domino.Partida.Opciones.AsignarAyuda(document.getElementById("Opciones_Ayuda").checked);
         };
+
+        // Boton luces de jugadores
+        document.getElementById("PlayerLightsToggleBtn").onclick = function() {
+            var Activo = (Domino.Partida.Opciones.LucesJugadores === "true");
+            Domino.Partida.Opciones.AsignarLucesJugadores(!Activo);
+            if (typeof(Domino.ActualizarLucesJugadoresVisibilidad) === "function") {
+                Domino.ActualizarLucesJugadoresVisibilidad();
+            }
+            UI.ActualizarBotonLucesJugadores();
+        };
         
         // Botones para cambiar el idioma
         // Boton English
@@ -138,8 +148,22 @@ var Domino_UI = function() {
         
         // Modo solo: no hay objetivo por puntos
         document.getElementById("BloquePuntosPartida").style.display = "none";
+        this.ActualizarBotonLucesJugadores();
                 
         this.MostrarEmpezar();
+    };
+
+    this.ActualizarBotonLucesJugadores = function() {
+        var Btn = document.getElementById("PlayerLightsToggleBtn");
+        var Txt = document.getElementById("PlayerLightsToggleText");
+        if (!Btn || !Txt) return;
+
+        var Activo = (Domino.Partida.Opciones.LucesJugadores === "true");
+        Txt.textContent = Activo ? "Lumieres ON" : "Lumieres OFF";
+        Btn.setAttribute("aria-pressed", Activo ? "true" : "false");
+        Btn.classList.toggle("bg-[#4d5b88]/80", Activo);
+        Btn.classList.toggle("border-amber-300/40", Activo);
+        Btn.classList.toggle("text-amber-100", Activo);
     };
     
     // Mostrar menú para empezar una partida
@@ -290,9 +314,26 @@ var Domino_UI = function() {
         document.getElementById("Historial").setAttribute("Visible", "false");
     };
     
-    this.MostrarGanador = function (GanadorSeat, Motif)  {
+    this.MostrarGanador = function (GanadorSeat, Motif, Options)  {
         var WinnerSeat = (typeof(GanadorSeat) === "number") ? GanadorSeat : 0;
+        var Opts = (Options && typeof(Options) === "object") ? Options : {};
+        var ServerConfirmed = (Opts.serverConfirmed === true);
         var Rnd = Math.floor(10000 + Math.random() * 90000);
+        try {
+            var Partida = (window.Domino && window.Domino.Partida) ? window.Domino.Partida : null;
+            var PayloadWinner = {
+                ts: new Date().toISOString(),
+                winnerSeat: WinnerSeat,
+                motif: Motif || "",
+                serverConfirmed: ServerConfirmed,
+                hasPartida: !!Partida,
+                siguienteAccionSeq: Partida ? Partida.SiguienteAccionSeq : -1,
+                manoTerminada: Partida ? Partida.ManoTerminada : false,
+                hayAnimacionColocar: Partida && typeof(Partida.HayAnimacionColocarActiva) === "function" ? Partida.HayAnimacionColocarActiva() : false
+            };
+            console.log("[DOMINO_UI_DEBUG] MostrarGanador " + JSON.stringify(PayloadWinner), PayloadWinner);
+        } catch (_) {
+        }
 
         var Overlay = document.getElementById("GameEndOverlay");
         var WinnerEl = document.getElementById("GameEndWinnerText");
@@ -399,6 +440,15 @@ var Domino_UI = function() {
             Overlay.classList.remove("flex");
         }
 
+        if (window.Domino && window.Domino.Partida && window.Domino.Partida.Multijugador === true && ServerConfirmed !== true) {
+            if (InfoEl) InfoEl.innerHTML = "Fin de partie détectée. Validation serveur en cours...";
+            document.getElementById("MarcoTerminado").setAttribute("visible", "false");
+            if (window.LogiqueJeu && typeof window.LogiqueJeu.onGameEnded === "function") {
+                window.LogiqueJeu.onGameEnded(WinnerSeat);
+            }
+            return;
+        }
+
         clearTimeout(this._WinnerOverlayTimer || 0);
         this._WinnerOverlayTimer = setTimeout(function() {
             if (!Overlay) return;
@@ -432,7 +482,7 @@ var Domino_UI = function() {
 
         document.getElementById("MarcoTerminado").setAttribute("visible", "false");
 
-        if (window.LogiqueJeu && typeof window.LogiqueJeu.onGameEnded === "function") {
+        if (ServerConfirmed !== true && window.LogiqueJeu && typeof window.LogiqueJeu.onGameEnded === "function") {
             window.LogiqueJeu.onGameEnded(WinnerSeat);
         }
     };

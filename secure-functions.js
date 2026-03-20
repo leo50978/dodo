@@ -48,6 +48,14 @@ export async function ensureRoomReadySecure(payload = {}) {
   return invokeCallable("ensureRoomReady", payload, "Impossible de demarrer la partie.");
 }
 
+export async function touchRoomPresenceSecure(payload = {}) {
+  return invokeCallable("touchRoomPresence", payload, "Impossible de mettre à jour la présence.");
+}
+
+export async function ackRoomStartSeenSecure(payload = {}) {
+  return invokeCallable("ackRoomStartSeen", payload, "Impossible de synchroniser le démarrage de la partie.");
+}
+
 export async function leaveRoomSecure(payload = {}) {
   return invokeCallable("leaveRoom", payload, "Impossible de quitter la salle.");
 }
@@ -94,6 +102,26 @@ export async function getPublicPaymentOptionsSecure(payload = {}) {
 
 export async function getPublicGameStakeOptionsSecure(payload = {}) {
   return invokeCallable("getPublicGameStakeOptionsSecure", payload, "Impossible de charger les mises de partie.");
+}
+
+export async function getShareSitePromoStatusSecure(payload = {}) {
+  return invokeCallable("getShareSitePromoStatus", payload, "Impossible de charger le bonus de partage.");
+}
+
+export async function recordShareSitePromoSecure(payload = {}) {
+  return invokeCallable("recordShareSitePromo", payload, "Impossible d'enregistrer le partage.");
+}
+
+export async function getDepositFundingStatusSecure(payload = {}) {
+  return invokeCallable("getDepositFundingStatusSecure", payload, "Impossible de charger l'état du dépôt.");
+}
+
+export async function resolveDepositReviewSecure(payload = {}) {
+  return invokeCallable("resolveDepositReviewSecure", payload, "Impossible de résoudre le dépôt.");
+}
+
+export async function unfreezeClientAccountSecure(payload = {}) {
+  return invokeCallable("unfreezeClientAccountSecure", payload, "Impossible de dégeler le compte.");
 }
 
 export async function getGlobalAnalyticsSnapshotSecure(payload = {}) {

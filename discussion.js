@@ -5,6 +5,7 @@ import {
   query,
   orderBy,
   limit,
+  where,
   onSnapshot,
   onAuthStateChanged,
 } from "./firebase-init.js";
@@ -20,8 +21,11 @@ const LAST_SEEN_THROTTLE_MS = 4500;
 
 let currentUser = null;
 let channelUnsub = null;
+let channelPinnedUnsub = null;
 let pendingFile = null;
 let lastSeenWriteAt = 0;
+let recentChannelEntries = [];
+let pinnedChannelEntries = [];
 
 const guestIdentity = getGuestIdentity();
 
@@ -153,6 +157,7 @@ function renderMessages(entries) {
     const senderKey = String(data.senderKey || data.uid || data.guestId || "");
     const mine = senderKey && senderKey === viewerKey;
     const isAgent = String(data.senderRole || "") === "agent";
+    const isPinned = data.pinned === true;
 
     const row = document.createElement("div");
     row.className = `row ${mine ? "mine" : "other"}${isAgent ? " agent" : ""}`;
@@ -163,7 +168,7 @@ function renderMessages(entries) {
     if (!mine || isAgent) {
       const author = document.createElement("p");
       author.className = "author";
-      author.textContent = String(data.displayName || (isAgent ? "Agent Dominoes" : "Utilisateur"));
+      author.textContent = `${isPinned ? "📌 " : ""}${String(data.displayName || (isAgent ? "Agent Dominoes" : "Utilisateur"))}`;
       bubble.appendChild(author);
     }
 
@@ -180,7 +185,7 @@ function renderMessages(entries) {
 
     const meta = document.createElement("div");
     meta.className = "meta";
-    meta.textContent = formatMessageTime(data.createdAt || data.createdAtMs);
+    meta.textContent = `${isPinned ? "Épinglé · " : ""}${formatMessageTime(data.createdAt || data.createdAtMs)}`;
     bubble.appendChild(meta);
 
     row.appendChild(bubble);
@@ -189,6 +194,26 @@ function renderMessages(entries) {
 
   messagesWrap.appendChild(frag);
   scrollToBottom(keepBottom);
+}
+
+function mergePinnedEntries(recentEntries = [], pinnedEntries = []) {
+  const byId = new Map();
+  [...recentEntries, ...pinnedEntries].forEach((entry) => {
+    const id = String(entry?.id || "").trim();
+    if (!id) return;
+    byId.set(id, entry);
+  });
+  return Array.from(byId.values()).sort((left, right) => {
+    const leftPinned = left?.data?.pinned === true;
+    const rightPinned = right?.data?.pinned === true;
+    if (leftPinned !== rightPinned) return leftPinned ? -1 : 1;
+    if (leftPinned && rightPinned) {
+      const rightPinnedAt = Number(right?.data?.pinnedAtMs || 0);
+      const leftPinnedAt = Number(left?.data?.pinnedAtMs || 0);
+      if (rightPinnedAt !== leftPinnedAt) return rightPinnedAt - leftPinnedAt;
+    }
+    return Number(left?.data?.createdAtMs || 0) - Number(right?.data?.createdAtMs || 0);
+  });
 }
 
 function applyReadOnlyMode() {
@@ -213,7 +238,7 @@ function applyReadOnlyMode() {
   }
   if (filePreviewEl) filePreviewEl.classList.remove("visible");
   if (composerStatusEl) {
-    setComposerStatus("Le canal public est en lecture seule. Utilise \"Discuter avec un agent\" pour écrire.", "neutral");
+    setComposerStatus("Le canal public est en lecture seule pour les utilisateurs.", "neutral");
   }
 }
 
@@ -235,26 +260,51 @@ function watchChannel() {
     channelUnsub();
     channelUnsub = null;
   }
+  if (channelPinnedUnsub) {
+    channelPinnedUnsub();
+    channelPinnedUnsub = null;
+  }
 
   setLiveStatus("Connexion au canal...", "neutral");
+
+  const renderChannel = async () => {
+    renderMessages(mergePinnedEntries(recentChannelEntries, pinnedChannelEntries));
+    const label = currentUser?.uid
+      ? `Canal actif • Connecte en tant que ${currentUser.displayName || currentUser.email || "joueur"}`
+      : `Canal actif • ${guestIdentity.displayName}`;
+    setLiveStatus(label, "ok");
+    await markChatSeen();
+  };
 
   channelUnsub = onSnapshot(
     query(collection(db, CHAT_COLLECTION), orderBy("createdAtMs", "desc"), limit(CHANNEL_LIMIT)),
     async (snapshot) => {
-      const entries = snapshot.docs.map((item) => ({
+      recentChannelEntries = snapshot.docs.map((item) => ({
         id: item.id,
         data: item.data() || {},
-      })).reverse();
-      renderMessages(entries);
-      const label = currentUser?.uid
-        ? `Canal actif • Connecte en tant que ${currentUser.displayName || currentUser.email || "joueur"}`
-        : `Canal actif • ${guestIdentity.displayName}`;
-      setLiveStatus(label, "ok");
-      await markChatSeen();
+      }));
+      await renderChannel();
     },
     (error) => {
       console.error("[DISCUSSION] watchChannel error", error);
       setLiveStatus("Canal indisponible", "error");
+    }
+  );
+
+  channelPinnedUnsub = onSnapshot(
+    query(
+      collection(db, CHAT_COLLECTION),
+      where("pinned", "==", true)
+    ),
+    async (snapshot) => {
+      pinnedChannelEntries = snapshot.docs.map((item) => ({
+        id: item.id,
+        data: item.data() || {},
+      }));
+      await renderChannel();
+    },
+    (error) => {
+      console.error("[DISCUSSION] watchPinnedChannel error", error);
     }
   );
 }
