@@ -800,6 +800,27 @@ export function renderPage2(user, options = {}) {
   `);
 
   pageShell.insertAdjacentHTML("beforeend", `
+    <div id="sharePromoSuccessOverlay" class="fixed inset-0 z-[3458] hidden items-end justify-center bg-[#12192b]/70 px-[max(12px,env(safe-area-inset-left))] pb-[max(12px,env(safe-area-inset-bottom))] pt-[max(12px,env(safe-area-inset-top))] backdrop-blur-sm sm:items-center sm:px-4 sm:py-4">
+      <div id="sharePromoSuccessPanel" class="w-full rounded-[28px] border border-[#ffb26e]/30 bg-[linear-gradient(180deg,rgba(86,101,142,0.98),rgba(57,67,99,0.98))] px-4 pb-[max(1rem,env(safe-area-inset-bottom))] pt-5 text-white shadow-[0_-16px_38px_rgba(12,18,31,0.42)] sm:max-w-md sm:rounded-[30px] sm:border-white/20 sm:px-6 sm:pb-6 sm:pt-6 sm:shadow-[14px_14px_34px_rgba(16,23,40,0.5),-10px_-10px_24px_rgba(112,126,165,0.2)]">
+        <div class="mx-auto flex h-14 w-14 items-center justify-center rounded-[20px] border border-[#ffcf9f]/45 bg-[#F57C00]/22 text-[#ffe1c4] shadow-[inset_4px_4px_10px_rgba(20,28,45,0.42),inset_-4px_-4px_10px_rgba(123,137,180,0.18)]">
+          <i class="fa-solid fa-gift text-xl"></i>
+        </div>
+        <h3 class="mt-4 text-center text-[1.28rem] font-bold leading-tight sm:text-[1.45rem]">Bonus recu avec succes</h3>
+        <p id="sharePromoSuccessMessage" class="mt-3 text-center text-sm leading-6 text-white/88">
+          Tu as gagne avec succes 100 Does.
+        </p>
+        <div class="mt-4 rounded-[22px] border border-white/12 bg-white/8 p-4 text-center shadow-[inset_4px_4px_10px_rgba(20,28,45,0.28),inset_-4px_-4px_10px_rgba(123,137,180,0.08)]">
+          <p class="text-xs font-semibold uppercase tracking-[0.18em] text-white/56">Prochain bonus</p>
+          <p id="sharePromoSuccessCooldown" class="mt-2 text-sm font-semibold text-[#ffd7b2]">Disponible de nouveau dans 3 jours</p>
+        </div>
+        <button id="sharePromoSuccessCloseBtn" type="button" class="mt-5 h-12 w-full rounded-[18px] border border-[#ffb26e] bg-[#F57C00] text-sm font-semibold text-white shadow-[9px_9px_20px_rgba(155,78,25,0.45),-7px_-7px_16px_rgba(255,173,96,0.2)] transition hover:-translate-y-0.5">
+          Compris
+        </button>
+      </div>
+    </div>
+  `);
+
+  pageShell.insertAdjacentHTML("beforeend", `
     <div id="doesRequiredOverlay" class="fixed inset-0 z-[3450] hidden items-center justify-center bg-black/50 p-4 backdrop-blur-sm">
       <div class="w-full max-w-md rounded-3xl border border-white/20 bg-[#3F4766]/75 p-5 text-white shadow-[14px_14px_34px_rgba(16,23,40,0.5),-10px_-10px_24px_rgba(112,126,165,0.2)] backdrop-blur-xl sm:p-6">
         <h3 class="text-xl font-bold">Solde Does insuffisant</h3>
@@ -928,6 +949,11 @@ export function renderPage2(user, options = {}) {
   const sharePromoPendingText = document.getElementById("sharePromoPendingText");
   const sharePromoConfirmBtn = document.getElementById("sharePromoConfirmBtn");
   const sharePromoConfirmBtnLabel = document.getElementById("sharePromoConfirmBtnLabel");
+  const sharePromoSuccessOverlay = document.getElementById("sharePromoSuccessOverlay");
+  const sharePromoSuccessPanel = document.getElementById("sharePromoSuccessPanel");
+  const sharePromoSuccessMessage = document.getElementById("sharePromoSuccessMessage");
+  const sharePromoSuccessCooldown = document.getElementById("sharePromoSuccessCooldown");
+  const sharePromoSuccessCloseBtn = document.getElementById("sharePromoSuccessCloseBtn");
   const page2FrozenBanner = document.getElementById("page2FrozenBanner");
   const page2FrozenBannerText = document.getElementById("page2FrozenBannerText");
   let sharePromoState = null;
@@ -988,6 +1014,11 @@ export function renderPage2(user, options = {}) {
 
     if (sharePromoCooldownText) {
       sharePromoCooldownText.textContent = cooldownLabel;
+    }
+    if (sharePromoSuccessCooldown) {
+      sharePromoSuccessCooldown.textContent = isCoolingDown
+        ? `Disponible de nouveau dans ${formatPromoCountdown(remainingMs)}`
+        : "Disponible de nouveau dans 3 jours";
     }
     if (sharePromoBtnMeta) {
       const shareCount = Math.max(0, Number(state.shareCount) || 0);
@@ -1085,7 +1116,11 @@ export function renderPage2(user, options = {}) {
 
     if (sharePromoStatusText) {
       if (rewardGranted && isCoolingDown) {
-        sharePromoStatusText.textContent = `Bravo, tes ${SHARE_SITE_PROMO_REWARD_DOES} Does bonus ont deja ete credites.`;
+        const remainingMs = Math.max(
+          0,
+          Number(state.cooldownUntilMs) - Date.now() || Number(state.cooldownRemainingMs) || 0,
+        );
+        sharePromoStatusText.textContent = `Tu as deja gagne tes ${SHARE_SITE_PROMO_REWARD_DOES} Does. Reviens dans ${formatPromoCountdown(remainingMs)} pour relancer un nouveau cycle.`;
       } else if (remainingCount <= 0) {
         sharePromoStatusText.textContent = "Bonus valide. Le prochain cycle sera disponible apres le delai.";
       } else if (shareCount > 0) {
@@ -1190,6 +1225,26 @@ export function renderPage2(user, options = {}) {
     sharePromoOverlay.classList.add("hidden");
     sharePromoOverlay.classList.remove("flex");
     document.body.classList.remove("overflow-hidden");
+  };
+
+  const openSharePromoSuccess = (state = {}) => {
+    if (!sharePromoSuccessOverlay) return;
+    if (sharePromoSuccessMessage) {
+      sharePromoSuccessMessage.textContent = `Tu as gagne avec succes ${SHARE_SITE_PROMO_REWARD_DOES} Does.`;
+    }
+    renderSharePromoCooldown(state);
+    sharePromoSuccessOverlay.classList.remove("hidden");
+    sharePromoSuccessOverlay.classList.add("flex");
+    document.body.classList.add("overflow-hidden");
+  };
+
+  const closeSharePromoSuccess = () => {
+    if (!sharePromoSuccessOverlay) return;
+    sharePromoSuccessOverlay.classList.add("hidden");
+    sharePromoSuccessOverlay.classList.remove("flex");
+    if (sharePromoOverlay?.classList.contains("hidden")) {
+      document.body.classList.remove("overflow-hidden");
+    }
   };
 
   if (logo && logoFallback) {
@@ -1366,7 +1421,7 @@ export function renderPage2(user, options = {}) {
   }
 
   if (sharePromoBtn) {
-    sharePromoBtn.addEventListener("click", () => {
+    sharePromoBtn.addEventListener("click", async () => {
       if (page2AccountFrozen) return;
       if (!isAuthenticated) {
         showGlobalLoading("Connexion requise pour le bonus...");
@@ -1381,7 +1436,11 @@ export function renderPage2(user, options = {}) {
         return;
       }
       openSharePromo();
-      void loadSharePromoStatus();
+      const status = await loadSharePromoStatus();
+      if (status?.rewardGranted === true && status?.isCoolingDown === true) {
+        closeSharePromo();
+        openSharePromoSuccess(status);
+      }
     });
   }
 
@@ -1391,7 +1450,16 @@ export function renderPage2(user, options = {}) {
       closeSharePromo();
     }
   });
+  sharePromoSuccessCloseBtn?.addEventListener("click", closeSharePromoSuccess);
+  sharePromoSuccessOverlay?.addEventListener("click", (ev) => {
+    if (ev.target === sharePromoSuccessOverlay) {
+      closeSharePromoSuccess();
+    }
+  });
   sharePromoPanel?.addEventListener("click", (ev) => {
+    ev.stopPropagation();
+  });
+  sharePromoSuccessPanel?.addEventListener("click", (ev) => {
     ev.stopPropagation();
   });
   sharePromoTargetGrid?.addEventListener("click", async (event) => {
@@ -1423,8 +1491,9 @@ export function renderPage2(user, options = {}) {
       });
       applySharePromoState(result);
       setPendingShareSource("");
-      if (result?.rewardGrantedNow && sharePromoStatusText) {
-        sharePromoStatusText.textContent = `Bravo, ${SHARE_SITE_PROMO_REWARD_DOES} Does bonus ont ete ajoutes a ton compte.`;
+      if (result?.rewardGrantedNow) {
+        closeSharePromo();
+        openSharePromoSuccess(result);
       }
     } catch (error) {
       console.error("[SHARE_PROMO] confirm failed", error);

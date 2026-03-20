@@ -12,6 +12,8 @@ import {
 import { orderClientActionSecure } from "./secure-functions.js";
 const BALANCE_DEBUG = true;
 const DEPOSIT_INFO_DISMISSED_KEY = "domino_deposit_info_hidden_v1";
+const REJECTED_ORDER_ALERT_SEEN_KEY = "domino_rejected_order_alert_seen_v1";
+const REJECTED_ORDER_SUPPORT_PHONE = "50941752992";
 
 let stopOrdersListener = null;
 let stopWithdrawalsListener = null;
@@ -20,6 +22,8 @@ let cachedWithdrawals = [];
 const MIN_DEPOSIT_HTG = 25;
 let soldeAuthUnsub = null;
 let soldeActiveUid = "";
+let activeRejectedOrderAlertId = "";
+let queuedRejectedOrderAlertIds = [];
 let balanceHydrationSession = {
   uid: "",
   ordersReady: false,
@@ -115,6 +119,43 @@ function buildClientFromAuth() {
     name: user.displayName || (user.email ? user.email.split("@")[0] : "Client"),
     email: user.email || "",
   };
+}
+
+function buildRejectedOrderAlertStorageKey(uid = "", orderId = "") {
+  const safeUid = String(uid || "").trim();
+  const safeOrderId = String(orderId || "").trim();
+  if (!safeUid || !safeOrderId) return "";
+  return `${REJECTED_ORDER_ALERT_SEEN_KEY}:${safeUid}:${safeOrderId}`;
+}
+
+function hasSeenRejectedOrderAlert(uid = "", orderId = "") {
+  const storageKey = buildRejectedOrderAlertStorageKey(uid, orderId);
+  if (!storageKey) return false;
+  try {
+    return localStorage.getItem(storageKey) === "1";
+  } catch (_) {
+    return false;
+  }
+}
+
+function markRejectedOrderAlertSeen(uid = "", orderId = "") {
+  const storageKey = buildRejectedOrderAlertStorageKey(uid, orderId);
+  if (!storageKey) return;
+  try {
+    localStorage.setItem(storageKey, "1");
+  } catch (_) {
+  }
+}
+
+function openRejectedOrderSupport() {
+  const text = encodeURIComponent(
+    "Bonjour assistance, ma demande de depot a ete rejetee et je souhaite contester cette decision."
+  );
+  const url = `https://wa.me/${REJECTED_ORDER_SUPPORT_PHONE}?text=${text}`;
+  const popup = window.open(url, "_blank", "noopener,noreferrer");
+  if (!popup) {
+    window.location.href = url;
+  }
 }
 
 function openPaymentDepositDirectly(amount = 500) {
@@ -326,6 +367,148 @@ function ensureDepositTermsModal() {
 
   overlay.__openDepositTerms = open;
   return overlay;
+}
+
+function ensureRejectedOrderAlertModal() {
+  const existing = document.getElementById("rejectedOrderAlertOverlay");
+  if (existing) return existing;
+
+  const overlay = document.createElement("div");
+  overlay.id = "rejectedOrderAlertOverlay";
+  overlay.className = "fixed inset-0 z-[3180] hidden items-end justify-center bg-[#130606]/78 px-[max(12px,env(safe-area-inset-left))] pb-[max(12px,env(safe-area-inset-bottom))] pt-[max(12px,env(safe-area-inset-top))] backdrop-blur-md sm:items-center sm:px-4 sm:py-4";
+  overlay.innerHTML = `
+    <div id="rejectedOrderAlertPanel" class="w-full max-w-lg max-h-full overflow-y-auto rounded-[28px] border border-[#ff8c8c]/28 bg-[linear-gradient(180deg,rgba(96,18,18,0.98),rgba(39,7,7,0.98))] p-4 text-white shadow-[0_-18px_42px_rgba(31,6,6,0.58)] sm:max-h-[min(88vh,760px)] sm:rounded-[32px] sm:p-6">
+      <div class="flex items-start gap-3">
+        <div class="grid h-12 w-12 shrink-0 place-items-center rounded-2xl border border-[#ffb1b1]/24 bg-white/10 text-[#ffd5d5]">
+          <i class="fa-solid fa-user-shield text-lg"></i>
+        </div>
+        <div class="min-w-0">
+          <div class="inline-flex items-center gap-2 rounded-full border border-[#ffb1b1]/20 bg-white/8 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.18em] text-[#ffd1d1]">
+            <i class="fa-solid fa-ban text-[12px]"></i>
+            Demande rejetee
+          </div>
+          <h3 class="mt-3 text-xl font-bold text-white sm:text-2xl">Ta demande a ete rejetee</h3>
+          <p id="rejectedOrderAlertCode" class="mt-2 text-xs font-semibold uppercase tracking-[0.16em] text-white/65"></p>
+        </div>
+      </div>
+
+      <div class="mt-5 rounded-[24px] border border-[#ffb1b1]/18 bg-white/8 p-4 sm:p-5">
+        <p class="text-sm leading-7 text-white/92">
+          Ta demande a ete rejetee car elle n'a pas passe les balises de securite. Elle a ete declaree comme un vol.
+        </p>
+        <p class="mt-3 text-sm leading-7 text-white/82">
+          Si ce n'est pas vrai, contacte l'assistance pour demander une verification manuelle.
+        </p>
+        <div class="mt-4 rounded-2xl border border-white/10 bg-black/10 px-4 py-3 text-sm font-semibold text-[#ffd9d9]">
+          Assistance WhatsApp: +509 4175 2992
+        </div>
+      </div>
+
+      <div class="mt-5 grid gap-3 sm:grid-cols-2">
+        <button id="rejectedOrderAlertAcknowledge" type="button" class="h-12 rounded-2xl border border-white/15 bg-white/10 text-sm font-semibold text-white">
+          Je ne le ferais plus
+        </button>
+        <button id="rejectedOrderAlertSupport" type="button" class="h-12 rounded-2xl border border-[#ff9a66]/30 bg-[#d96a13] text-sm font-semibold text-white shadow-[10px_12px_22px_rgba(103,44,9,0.34)]">
+          Contact l'assistance
+        </button>
+      </div>
+    </div>
+  `;
+
+  document.body.appendChild(overlay);
+
+  const panel = overlay.querySelector("#rejectedOrderAlertPanel");
+  const acknowledgeBtn = overlay.querySelector("#rejectedOrderAlertAcknowledge");
+  const supportBtn = overlay.querySelector("#rejectedOrderAlertSupport");
+  const codeEl = overlay.querySelector("#rejectedOrderAlertCode");
+
+  const close = () => {
+    overlay.classList.add("hidden");
+    overlay.classList.remove("flex");
+    document.body.classList.remove("overflow-hidden");
+    activeRejectedOrderAlertId = "";
+    const nextOrderId = queuedRejectedOrderAlertIds.shift();
+    if (nextOrderId) {
+      const nextOrder = cachedOrders.find((item) => item?.id === nextOrderId && item?.status === "rejected");
+      if (nextOrder) {
+        window.setTimeout(() => {
+          if (typeof overlay.__openRejectedOrderAlert === "function") {
+            overlay.__openRejectedOrderAlert(nextOrder);
+          }
+        }, 0);
+      }
+    }
+  };
+
+  const open = (order) => {
+    if (!order?.id) return;
+    activeRejectedOrderAlertId = String(order.id);
+    if (codeEl) {
+      codeEl.textContent = order.uniqueCode
+        ? `Demande ${String(order.uniqueCode)}`
+        : `Demande ${String(order.id)}`;
+    }
+    overlay.__currentOrderId = String(order.id);
+    overlay.classList.remove("hidden");
+    overlay.classList.add("flex");
+    document.body.classList.add("overflow-hidden");
+  };
+
+  const acknowledge = () => {
+    const orderId = String(overlay.__currentOrderId || "").trim();
+    if (auth.currentUser?.uid && orderId) {
+      markRejectedOrderAlertSeen(auth.currentUser.uid, orderId);
+    }
+    close();
+  };
+
+  const contactSupport = () => {
+    const orderId = String(overlay.__currentOrderId || "").trim();
+    if (auth.currentUser?.uid && orderId) {
+      markRejectedOrderAlertSeen(auth.currentUser.uid, orderId);
+    }
+    openRejectedOrderSupport();
+    close();
+  };
+
+  overlay.addEventListener("click", (ev) => {
+    if (ev.target === overlay) acknowledge();
+  });
+  if (panel) panel.addEventListener("click", (ev) => ev.stopPropagation());
+  if (acknowledgeBtn) acknowledgeBtn.addEventListener("click", acknowledge);
+  if (supportBtn) supportBtn.addEventListener("click", contactSupport);
+
+  overlay.__openRejectedOrderAlert = open;
+  return overlay;
+}
+
+function syncRejectedOrderAlerts(orders = []) {
+  const uid = String(auth.currentUser?.uid || "").trim();
+  if (!uid) return;
+
+  const rejectedOrders = (orders || [])
+    .filter((order) => order && order.status === "rejected" && !order.userHiddenByClient)
+    .sort((a, b) => new Date(b.createdAt || 0) - new Date(a.createdAt || 0));
+
+  const unseenRejected = rejectedOrders.filter((order) => !hasSeenRejectedOrderAlert(uid, order.id));
+  if (!unseenRejected.length) return;
+
+  const overlay = ensureRejectedOrderAlertModal();
+  const queuedIds = new Set(queuedRejectedOrderAlertIds);
+  unseenRejected.forEach((order) => {
+    if (String(order.id) === activeRejectedOrderAlertId) return;
+    if (queuedIds.has(String(order.id))) return;
+    queuedRejectedOrderAlertIds.push(String(order.id));
+    queuedIds.add(String(order.id));
+  });
+
+  if (!activeRejectedOrderAlertId) {
+    const nextOrderId = queuedRejectedOrderAlertIds.shift();
+    const nextOrder = unseenRejected.find((order) => String(order.id) === nextOrderId) || unseenRejected[0];
+    if (nextOrder && typeof overlay.__openRejectedOrderAlert === "function") {
+      overlay.__openRejectedOrderAlert(nextOrder);
+    }
+  }
 }
 
 function updateSoldBadge(balanceValue) {
@@ -568,6 +751,7 @@ function attachOrdersListener() {
       });
     }
     cachedOrders = orders;
+    syncRejectedOrderAlerts(orders);
     refreshBalanceFromCaches();
     markBalanceHydrationReady("orders", user.uid);
 
@@ -651,7 +835,15 @@ function ensureSoldeAuthWatcher() {
       soldeActiveUid = "";
       cachedOrders = [];
       cachedWithdrawals = [];
+      activeRejectedOrderAlertId = "";
+      queuedRejectedOrderAlertIds = [];
       detachSoldeRealtimeListeners();
+      const rejectedAlertOverlay = document.getElementById("rejectedOrderAlertOverlay");
+      if (rejectedAlertOverlay) {
+        rejectedAlertOverlay.classList.add("hidden");
+        rejectedAlertOverlay.classList.remove("flex");
+      }
+      document.body.classList.remove("overflow-hidden");
       updateSoldBadge(0);
       return;
     }
@@ -659,6 +851,8 @@ function ensureSoldeAuthWatcher() {
       return;
     }
     soldeActiveUid = nextUid;
+    activeRejectedOrderAlertId = "";
+    queuedRejectedOrderAlertIds = [];
     detachSoldeRealtimeListeners();
     attachOrdersListener();
     attachWithdrawalsListener();
