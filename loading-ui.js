@@ -1,4 +1,5 @@
 let loadingNode = null;
+let loadingRecoveryBound = false;
 
 function ensureLoadingNode() {
   if (loadingNode && document.body.contains(loadingNode)) return loadingNode;
@@ -19,7 +20,24 @@ function ensureLoadingNode() {
   return node;
 }
 
+function bindLoadingRecovery() {
+  if (loadingRecoveryBound || typeof window === "undefined") return;
+  loadingRecoveryBound = true;
+
+  window.addEventListener("pageshow", (event) => {
+    const navigationEntries = typeof performance !== "undefined"
+      && typeof performance.getEntriesByType === "function"
+      ? performance.getEntriesByType("navigation")
+      : [];
+    const navigationType = navigationEntries[0]?.type || "";
+    if (event?.persisted === true || navigationType === "back_forward") {
+      hideGlobalLoading();
+    }
+  });
+}
+
 export function showGlobalLoading(message = "Chargement...") {
+  bindLoadingRecovery();
   const node = ensureLoadingNode();
   const text = node.querySelector("#globalLoadingText");
   if (text) text.textContent = message;
@@ -28,6 +46,7 @@ export function showGlobalLoading(message = "Chargement...") {
 }
 
 export function hideGlobalLoading() {
+  bindLoadingRecovery();
   const node = ensureLoadingNode();
   node.classList.add("hidden");
   node.classList.remove("flex");
@@ -65,4 +84,3 @@ export async function withButtonLoading(button, task, options = {}) {
     button.innerHTML = previousHtml || defaultLabel;
   }
 }
-
