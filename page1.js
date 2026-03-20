@@ -45,6 +45,7 @@ const PENDING_PROMO_STORAGE_KEY = "domino_pending_promo_code";
 const PENDING_USERNAME_STORAGE_KEY = "domino_pending_username";
 const PENDING_ONECLICK_ID_STORAGE_KEY = "domino_pending_oneclick_id";
 const CLIENT_DEVICE_STORAGE_KEY = "domino_device_id_v1";
+const DEVICE_ACCOUNT_LOCK_STORAGE_KEY = "domino_device_account_lock_v1";
 const AUTH_SUCCESS_NOTICE_STORAGE_KEY = "domino_auth_success_notice_v1";
 const verificationEmailSentByUid = new Set();
 const APP_HOME_ROUTE = "./index.html";
@@ -188,6 +189,84 @@ function getOrCreateDeviceId() {
   } catch (_) {
     return `web_${Date.now().toString(36)}_${randomToken(8)}`;
   }
+}
+
+function readDeviceAccountLock() {
+  try {
+    const raw = window.localStorage?.getItem(DEVICE_ACCOUNT_LOCK_STORAGE_KEY) || "";
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    if (!parsed || typeof parsed !== "object") return null;
+    const uid = String(parsed.uid || "").trim();
+    if (!uid) return null;
+    return {
+      uid,
+      email: String(parsed.email || "").trim(),
+      source: String(parsed.source || "").trim(),
+      deviceId: String(parsed.deviceId || "").trim(),
+      createdAtMs: Number(parsed.createdAtMs || 0) || 0,
+      lastSeenAtMs: Number(parsed.lastSeenAtMs || 0) || 0,
+    };
+  } catch (_) {
+    return null;
+  }
+}
+
+function writeDeviceAccountLock(payload = {}) {
+  try {
+    window.localStorage?.setItem(DEVICE_ACCOUNT_LOCK_STORAGE_KEY, JSON.stringify(payload));
+  } catch (_) {}
+}
+
+function createDeviceAccountLockError() {
+  const error = new Error("Un compte existe déjà sur cet appareil. Connecte-toi avec ce compte ou contacte l'assistance au 50941752992.");
+  error.code = "auth/device-account-exists";
+  return error;
+}
+
+function assertSignupAllowedOnThisDevice() {
+  const existingLock = readDeviceAccountLock();
+  const currentUid = String(auth.currentUser?.uid || "").trim();
+  if (!existingLock?.uid) return;
+  if (currentUid && existingLock.uid === currentUid) return;
+  pageAuthDebug("deviceAccountLock:blockedSignup", {
+    lockUid: existingLock.uid,
+    currentUid,
+    deviceId: existingLock.deviceId,
+    source: existingLock.source,
+  });
+  throw createDeviceAccountLockError();
+}
+
+function rememberDeviceAccountOwner(user, source = "auth") {
+  const uid = String(user?.uid || "").trim();
+  if (!uid) return;
+
+  const existingLock = readDeviceAccountLock();
+  if (existingLock?.uid && existingLock.uid !== uid) {
+    pageAuthDebug("deviceAccountLock:preserveExisting", {
+      existingUid: existingLock.uid,
+      currentUid: uid,
+      source,
+    });
+    return;
+  }
+
+  const now = Date.now();
+  const nextLock = {
+    uid,
+    email: String(user?.email || existingLock?.email || "").trim(),
+    source: String(source || existingLock?.source || "auth").trim(),
+    deviceId: getOrCreateDeviceId(),
+    createdAtMs: existingLock?.createdAtMs || now,
+    lastSeenAtMs: now,
+  };
+  writeDeviceAccountLock(nextLock);
+  pageAuthDebug("deviceAccountLock:remembered", {
+    uid,
+    source: nextLock.source,
+    deviceId: nextLock.deviceId,
+  });
 }
 
 function detectBrowserName() {
@@ -797,6 +876,7 @@ async function handleAuthenticatedUser(user, explicitPromoCode = "") {
     explicitPromoCode: String(explicitPromoCode || ""),
   });
   if (!user) return;
+  rememberDeviceAccountOwner(user, "auth_success");
   showGlobalLoading("Connexion en cours...");
   clearAuthFallbackRenderTimer();
   if (userRequiresEmailVerification(user)) {
@@ -1168,32 +1248,33 @@ function bindPage1Events() {
     if (errorEl) errorEl.textContent = "";
     setForgotPasswordStatus("", "neutral");
 
-    try {
-      await withButtonLoading(submitBtn, async () => {
-        authFlowBusy = true;
-      if (authMode === "signin") {
-        savePendingPromoCode("");
-        if (signinByEmail) {
-          await loginWithEmail(identifier, password);
-        } else {
-          await loginWithUsername(usernameCandidate, password);
-        }
-        pageAuthDebug("submitAuth:signinSuccess", {
-          uid: String(auth.currentUser?.uid || ""),
-          signinByEmail,
-          username: usernameCandidate,
-        });
-        await handleAuthenticatedUser(auth.currentUser);
-      } else {
-        savePendingPromoCode(promoCode);
-        await signupWithEmail(identifier, password);
-        pageAuthDebug("submitAuth:signupSuccess", {
-          uid: String(auth.currentUser?.uid || ""),
-        });
-        await handleAuthenticatedUser(auth.currentUser, promoCode);
-      }
-      }, { loadingLabel: authMode === "signin" ? "Connexion..." : "Création..." });
-    } catch (err) {
+      try {
+        await withButtonLoading(submitBtn, async () => {
+          authFlowBusy = true;
+          if (authMode === "signin") {
+            savePendingPromoCode("");
+            if (signinByEmail) {
+              await loginWithEmail(identifier, password);
+            } else {
+              await loginWithUsername(usernameCandidate, password);
+            }
+            pageAuthDebug("submitAuth:signinSuccess", {
+              uid: String(auth.currentUser?.uid || ""),
+              signinByEmail,
+              username: usernameCandidate,
+            });
+            await handleAuthenticatedUser(auth.currentUser);
+          } else {
+            assertSignupAllowedOnThisDevice();
+            savePendingPromoCode(promoCode);
+            await signupWithEmail(identifier, password);
+            pageAuthDebug("submitAuth:signupSuccess", {
+              uid: String(auth.currentUser?.uid || ""),
+            });
+            await handleAuthenticatedUser(auth.currentUser, promoCode);
+          }
+        }, { loadingLabel: authMode === "signin" ? "Connexion..." : "Création..." });
+      } catch (err) {
       console.error("Auth error:", err);
       pageAuthDebug("submitAuth:error", {
         error: String(err?.message || err),
@@ -1369,6 +1450,7 @@ function bindPage1Events() {
       try {
         await withButtonLoading(oneClickSubmitBtn, async () => {
           pageAuthDebug("oneClickSignup:start", { username, oneClickId });
+          assertSignupAllowedOnThisDevice();
           syncOneClickDataToSignup();
           savePendingUsername(username);
           savePendingOneClickId(oneClickId);

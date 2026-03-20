@@ -10,6 +10,8 @@ import {
   updateClientProfileSecure,
   getShareSitePromoStatusSecure,
   recordShareSitePromoSecure,
+  createFriendRoomSecure,
+  joinFriendRoomByCodeSecure,
 } from "./secure-functions.js";
 import { auth, db, collection, query, orderBy, limit, onSnapshot, doc, setDoc, serverTimestamp } from "./firebase-init.js";
 
@@ -110,6 +112,23 @@ function scheduleNonCriticalTask(runId, task, delayMs = 240) {
 function openProfilePage() {
   showGlobalLoading("Ouverture du profil...");
   window.location.href = "./profil.html";
+}
+
+function normalizeInviteCode(value = "") {
+  return String(value || "")
+    .trim()
+    .toUpperCase()
+    .replace(/[^A-Z0-9_-]/g, "");
+}
+
+function buildFriendGameUrl(roomId, seatIndex, stakeDoes) {
+  const params = new URLSearchParams();
+  params.set("autostart", "1");
+  params.set("stake", String(Math.max(1, Number.parseInt(String(stakeDoes || 0), 10) || 100)));
+  params.set("friendRoomId", String(roomId || "").trim());
+  params.set("seat", String(Math.max(0, Number.parseInt(String(seatIndex || 0), 10) || 0)));
+  params.set("roomMode", "friends");
+  return `./jeu.html?${params.toString()}`;
 }
 
 function hasSeenTournamentIntro() {
@@ -859,6 +878,116 @@ export function renderPage2(user, options = {}) {
             Chargement des mises...
           </div>
         </div>
+        <div class="mt-4 border-t border-white/10 pt-4">
+          <button id="playWithFriendsBtn" type="button" class="flex h-12 w-full items-center justify-center gap-2 rounded-2xl border border-white/20 bg-white/10 text-sm font-semibold text-white transition hover:-translate-y-0.5 hover:bg-white/15">
+            <i class="fa-solid fa-user-group text-[15px]"></i>
+            <span>Jouer avec des amis</span>
+          </button>
+          <p class="mt-2 text-center text-xs text-white/62">Crée une salle privée, copie un code et invite 3 amis.</p>
+        </div>
+      </div>
+    </div>
+  `);
+
+  pageShell.insertAdjacentHTML("beforeend", `
+    <div id="friendModeOverlay" class="fixed inset-0 z-[3462] hidden items-center justify-center bg-black/55 p-4 backdrop-blur-sm">
+      <div id="friendModePanel" class="w-full max-w-md rounded-3xl border border-white/20 bg-[#3F4766]/82 p-5 text-white shadow-[14px_14px_34px_rgba(16,23,40,0.5),-10px_-10px_24px_rgba(112,126,165,0.2)] backdrop-blur-xl sm:p-6">
+        <div class="flex items-center justify-between gap-3">
+          <div>
+            <p class="text-xs font-semibold uppercase tracking-[0.2em] text-[#ffd4ab]/80">Partie entre amis</p>
+            <h3 class="mt-2 text-xl font-bold">Choisis une option</h3>
+          </div>
+          <button id="friendModeClose" type="button" class="grid h-10 w-10 place-items-center rounded-full border border-white/20 bg-white/10 text-white">
+            <i class="fa-solid fa-xmark"></i>
+          </button>
+        </div>
+        <div class="mt-5 space-y-3">
+          <button id="friendJoinOpenBtn" type="button" class="flex min-h-[58px] w-full items-center justify-between gap-3 rounded-2xl border border-white/18 bg-white/10 px-4 py-3 text-left transition hover:bg-white/15">
+            <span>
+              <span class="block text-sm font-semibold text-white">J'ai ete invite</span>
+              <span class="mt-1 block text-xs text-white/66">Entre un code recu pour rejoindre directement la salle.</span>
+            </span>
+            <i class="fa-solid fa-arrow-right text-white/70"></i>
+          </button>
+          <button id="friendCreateOpenBtn" type="button" class="flex min-h-[58px] w-full items-center justify-between gap-3 rounded-2xl border border-[#ffb26e]/35 bg-[#F57C00]/14 px-4 py-3 text-left transition hover:bg-[#F57C00]/18">
+            <span>
+              <span class="block text-sm font-semibold text-white">Creer une partie</span>
+              <span class="mt-1 block text-xs text-white/70">Choisis la mise, genere un code et invite tes amis.</span>
+            </span>
+            <i class="fa-solid fa-plus text-[#ffd8b5]"></i>
+          </button>
+        </div>
+      </div>
+    </div>
+  `);
+
+  pageShell.insertAdjacentHTML("beforeend", `
+    <div id="friendCreateOverlay" class="fixed inset-0 z-[3463] hidden items-center justify-center bg-black/55 p-4 backdrop-blur-sm">
+      <div id="friendCreatePanel" class="w-full max-w-lg rounded-3xl border border-white/20 bg-[#3F4766]/82 p-5 text-white shadow-[14px_14px_34px_rgba(16,23,40,0.5),-10px_-10px_24px_rgba(112,126,165,0.2)] backdrop-blur-xl sm:p-6">
+        <div class="flex items-center justify-between gap-3">
+          <div>
+            <p class="text-xs font-semibold uppercase tracking-[0.2em] text-[#ffd4ab]/80">Creer une partie</p>
+            <h3 class="mt-2 text-xl font-bold">Choisis la mise obligatoire</h3>
+          </div>
+          <button id="friendCreateClose" type="button" class="grid h-10 w-10 place-items-center rounded-full border border-white/20 bg-white/10 text-white">
+            <i class="fa-solid fa-xmark"></i>
+          </button>
+        </div>
+        <p class="mt-3 text-sm leading-6 text-white/84">La même mise sera prélevée quand la salle sera complète et prête à démarrer.</p>
+        <div id="friendCreateStakeGrid" class="mt-5 grid grid-cols-2 gap-3">
+          <div class="col-span-2 rounded-2xl border border-white/15 bg-white/5 px-4 py-4 text-sm text-white/70">
+            Chargement des mises...
+          </div>
+        </div>
+      </div>
+    </div>
+  `);
+
+  pageShell.insertAdjacentHTML("beforeend", `
+    <div id="friendJoinOverlay" class="fixed inset-0 z-[3464] hidden items-center justify-center bg-black/55 p-4 backdrop-blur-sm">
+      <div id="friendJoinPanel" class="w-full max-w-md rounded-3xl border border-white/20 bg-[#3F4766]/82 p-5 text-white shadow-[14px_14px_34px_rgba(16,23,40,0.5),-10px_-10px_24px_rgba(112,126,165,0.2)] backdrop-blur-xl sm:p-6">
+        <div class="flex items-center justify-between gap-3">
+          <div>
+            <p class="text-xs font-semibold uppercase tracking-[0.2em] text-[#ffd4ab]/80">Rejoindre une salle</p>
+            <h3 class="mt-2 text-xl font-bold">Entre le code d'invitation</h3>
+          </div>
+          <button id="friendJoinClose" type="button" class="grid h-10 w-10 place-items-center rounded-full border border-white/20 bg-white/10 text-white">
+            <i class="fa-solid fa-xmark"></i>
+          </button>
+        </div>
+        <p class="mt-3 text-sm leading-6 text-white/84">Le code est fourni par ton ami créateur de salle.</p>
+        <label for="friendJoinCodeInput" class="mt-4 block text-xs font-semibold uppercase tracking-[0.16em] text-white/58">Code de salle</label>
+        <input id="friendJoinCodeInput" type="text" inputmode="text" autocomplete="off" autocapitalize="characters" maxlength="12" class="mt-2 h-12 w-full rounded-2xl border border-white/18 bg-white/10 px-4 text-base font-semibold tracking-[0.3em] text-white outline-none placeholder:text-white/38 focus:border-[#ffb26e]/45 focus:bg-white/12" placeholder="ABC123" />
+        <p id="friendJoinHint" class="mt-2 min-h-[1.2rem] text-xs text-white/62">Entre le code exactement comme il t'a ete envoye.</p>
+        <button id="friendJoinSubmitBtn" type="button" class="mt-5 h-12 w-full rounded-[18px] border border-[#ffb26e] bg-[#F57C00] text-sm font-semibold text-white shadow-[9px_9px_20px_rgba(155,78,25,0.45),-7px_-7px_16px_rgba(255,173,96,0.2)] transition hover:-translate-y-0.5">
+          Rejoindre maintenant
+        </button>
+      </div>
+    </div>
+  `);
+
+  pageShell.insertAdjacentHTML("beforeend", `
+    <div id="friendCodeOverlay" class="fixed inset-0 z-[3465] hidden items-center justify-center bg-black/60 p-4 backdrop-blur-sm">
+      <div id="friendCodePanel" class="w-full max-w-md rounded-3xl border border-white/20 bg-[#3F4766]/86 p-5 text-white shadow-[14px_14px_34px_rgba(16,23,40,0.5),-10px_-10px_24px_rgba(112,126,165,0.2)] backdrop-blur-xl sm:p-6">
+        <div class="mx-auto flex h-14 w-14 items-center justify-center rounded-[20px] border border-[#ffcf9f]/45 bg-[#F57C00]/22 text-[#ffe1c4] shadow-[inset_4px_4px_10px_rgba(20,28,45,0.42),inset_-4px_-4px_10px_rgba(123,137,180,0.18)]">
+          <i class="fa-solid fa-key text-xl"></i>
+        </div>
+        <h3 class="mt-4 text-center text-[1.28rem] font-bold leading-tight">Code de salle genere</h3>
+        <p class="mt-3 text-center text-sm leading-6 text-white/86">Copie le code et envoie-le a tes amis pour qu'ils accedent au jeu.</p>
+        <div class="mt-4 rounded-[24px] border border-white/12 bg-white/8 p-4 text-center shadow-[inset_4px_4px_10px_rgba(20,28,45,0.28),inset_-4px_-4px_10px_rgba(123,137,180,0.08)]">
+          <p class="text-xs font-semibold uppercase tracking-[0.18em] text-white/56">Code prive</p>
+          <p id="friendCodeValue" class="mt-2 text-[1.8rem] font-bold tracking-[0.28em] text-[#ffd7b2]">------</p>
+          <p id="friendCodeStakeMeta" class="mt-2 text-sm text-white/70"></p>
+        </div>
+        <button id="friendCodeCopyBtn" type="button" class="mt-4 h-12 w-full rounded-[18px] border border-white/20 bg-white/10 text-sm font-semibold text-white transition hover:-translate-y-0.5 hover:bg-white/15">
+          Copier le code
+        </button>
+        <button id="friendCodeContinueBtn" type="button" class="mt-3 h-12 w-full rounded-[18px] border border-[#ffb26e] bg-[#F57C00] text-sm font-semibold text-white shadow-[9px_9px_20px_rgba(155,78,25,0.45),-7px_-7px_16px_rgba(255,173,96,0.2)] transition hover:-translate-y-0.5">
+          Oui, j'ai copie et envoye
+        </button>
+        <button id="friendCodeCloseBtn" type="button" class="mt-3 h-11 w-full rounded-2xl border border-white/20 bg-white/10 text-sm font-semibold text-white">
+          Fermer
+        </button>
       </div>
     </div>
   `);
@@ -930,6 +1059,29 @@ export function renderPage2(user, options = {}) {
   const stakeSelectionPanel = document.getElementById("stakeSelectionPanel");
   const stakeSelectionClose = document.getElementById("stakeSelectionClose");
   const stakeOptionsGrid = document.getElementById("stakeOptionsGrid");
+  const playWithFriendsBtn = document.getElementById("playWithFriendsBtn");
+  const friendModeOverlay = document.getElementById("friendModeOverlay");
+  const friendModePanel = document.getElementById("friendModePanel");
+  const friendModeClose = document.getElementById("friendModeClose");
+  const friendJoinOpenBtn = document.getElementById("friendJoinOpenBtn");
+  const friendCreateOpenBtn = document.getElementById("friendCreateOpenBtn");
+  const friendCreateOverlay = document.getElementById("friendCreateOverlay");
+  const friendCreatePanel = document.getElementById("friendCreatePanel");
+  const friendCreateClose = document.getElementById("friendCreateClose");
+  const friendCreateStakeGrid = document.getElementById("friendCreateStakeGrid");
+  const friendJoinOverlay = document.getElementById("friendJoinOverlay");
+  const friendJoinPanel = document.getElementById("friendJoinPanel");
+  const friendJoinClose = document.getElementById("friendJoinClose");
+  const friendJoinCodeInput = document.getElementById("friendJoinCodeInput");
+  const friendJoinHint = document.getElementById("friendJoinHint");
+  const friendJoinSubmitBtn = document.getElementById("friendJoinSubmitBtn");
+  const friendCodeOverlay = document.getElementById("friendCodeOverlay");
+  const friendCodePanel = document.getElementById("friendCodePanel");
+  const friendCodeValue = document.getElementById("friendCodeValue");
+  const friendCodeStakeMeta = document.getElementById("friendCodeStakeMeta");
+  const friendCodeCopyBtn = document.getElementById("friendCodeCopyBtn");
+  const friendCodeContinueBtn = document.getElementById("friendCodeContinueBtn");
+  const friendCodeCloseBtn = document.getElementById("friendCodeCloseBtn");
   const stakeUnavailableOverlay = document.getElementById("stakeUnavailableOverlay");
   const stakeUnavailablePanel = document.getElementById("stakeUnavailablePanel");
   const stakeUnavailableClose = document.getElementById("stakeUnavailableClose");
@@ -1293,6 +1445,106 @@ export function renderPage2(user, options = {}) {
     document.body.classList.remove("overflow-hidden");
   };
 
+  const friendRoomDraft = {
+    roomId: "",
+    seatIndex: 0,
+    stakeDoes: 0,
+    inviteCode: "",
+  };
+
+  const navigateToFriendRoom = (roomData = {}) => {
+    const nextRoomId = String(roomData?.roomId || friendRoomDraft.roomId || "").trim();
+    const nextSeatIndex = Number.parseInt(String(roomData?.seatIndex ?? friendRoomDraft.seatIndex ?? 0), 10) || 0;
+    const nextStakeDoes = Number.parseInt(String(roomData?.stakeDoes || friendRoomDraft.stakeDoes || 0), 10) || 100;
+    if (!nextRoomId) {
+      throw new Error("Salle privée introuvable.");
+    }
+    showGlobalLoading("Connexion des joueurs en cours...");
+    window.location.href = buildFriendGameUrl(nextRoomId, nextSeatIndex, nextStakeDoes);
+  };
+
+  const openFriendMode = () => {
+    if (!friendModeOverlay) return;
+    friendModeOverlay.classList.remove("hidden");
+    friendModeOverlay.classList.add("flex");
+    document.body.classList.add("overflow-hidden");
+  };
+
+  const closeFriendMode = () => {
+    if (!friendModeOverlay) return;
+    friendModeOverlay.classList.add("hidden");
+    friendModeOverlay.classList.remove("flex");
+    document.body.classList.remove("overflow-hidden");
+  };
+
+  const openFriendCreate = () => {
+    if (!friendCreateOverlay) return;
+    friendCreateOverlay.classList.remove("hidden");
+    friendCreateOverlay.classList.add("flex");
+    document.body.classList.add("overflow-hidden");
+  };
+
+  const closeFriendCreate = () => {
+    if (!friendCreateOverlay) return;
+    friendCreateOverlay.classList.add("hidden");
+    friendCreateOverlay.classList.remove("flex");
+    document.body.classList.remove("overflow-hidden");
+  };
+
+  const openFriendJoin = () => {
+    if (!friendJoinOverlay) return;
+    friendJoinOverlay.classList.remove("hidden");
+    friendJoinOverlay.classList.add("flex");
+    document.body.classList.add("overflow-hidden");
+    window.setTimeout(() => {
+      friendJoinCodeInput?.focus();
+      friendJoinCodeInput?.select();
+    }, 40);
+  };
+
+  const closeFriendJoin = () => {
+    if (!friendJoinOverlay) return;
+    friendJoinOverlay.classList.add("hidden");
+    friendJoinOverlay.classList.remove("flex");
+    document.body.classList.remove("overflow-hidden");
+  };
+
+  const openFriendCode = () => {
+    if (!friendCodeOverlay) return;
+    friendCodeOverlay.classList.remove("hidden");
+    friendCodeOverlay.classList.add("flex");
+    document.body.classList.add("overflow-hidden");
+  };
+
+  const closeFriendCode = () => {
+    if (!friendCodeOverlay) return;
+    friendCodeOverlay.classList.add("hidden");
+    friendCodeOverlay.classList.remove("flex");
+    document.body.classList.remove("overflow-hidden");
+  };
+
+  const renderFriendCreateStakeOptions = (options = []) => {
+    if (!friendCreateStakeGrid) return;
+    const items = normalizeGameStakeOptions(options);
+    friendCreateStakeGrid.innerHTML = items.map((option) => {
+      const enabled = option.enabled === true;
+      const classes = enabled
+        ? "friend-create-stake-btn h-14 rounded-2xl border border-[#ffb26e] bg-[#F57C00] text-sm font-semibold text-white shadow-[8px_8px_18px_rgba(163,82,27,0.45),-6px_-6px_14px_rgba(255,175,102,0.22)] transition hover:-translate-y-0.5"
+        : "friend-create-stake-btn h-14 rounded-2xl border border-white/20 bg-white/10 text-sm font-semibold text-white/65 opacity-55 cursor-not-allowed";
+      return `
+        <button
+          data-stake="${option.stakeDoes}"
+          data-available="${enabled ? "1" : "0"}"
+          type="button"
+          class="${classes}"
+        >
+          <span class="block">${option.stakeDoes} Does</span>
+          <span class="text-[11px] font-medium ${enabled ? "text-white/75" : "text-white/55"}">Gain ${option.rewardDoes} Does</span>
+        </button>
+      `;
+    }).join("");
+  };
+
   const openUnavailable = () => {
     if (!stakeUnavailableOverlay) return;
     stakeUnavailableOverlay.classList.remove("hidden");
@@ -1356,18 +1608,21 @@ export function renderPage2(user, options = {}) {
     stakeOptionsHydrationPromise = loadPublicGameStakeOptions()
       .then((options) => {
         renderStakeOptions(options);
+        renderFriendCreateStakeOptions(options);
         return options;
       })
       .catch((error) => {
         console.warn("[GAME_STAKES] render fallback", error);
         const fallback = normalizeGameStakeOptions();
         renderStakeOptions(fallback);
+        renderFriendCreateStakeOptions(fallback);
         return fallback;
       });
     return stakeOptionsHydrationPromise;
   };
 
   renderStakeOptions(currentStakeOptions);
+  renderFriendCreateStakeOptions(currentStakeOptions);
 
   if (startGameBtn) {
     startGameBtn.addEventListener("click", () => {
@@ -1389,6 +1644,179 @@ export function renderPage2(user, options = {}) {
     });
   }
 
+  playWithFriendsBtn?.addEventListener("click", async () => {
+    if (page2AccountFrozen) return;
+    if (!isAuthenticated) {
+      showGlobalLoading("Redirection vers la connexion...");
+      window.location.href = "./auth.html";
+      return;
+    }
+    if (isOptimisticAuth) {
+      showGlobalLoading("Finalisation de la session...");
+      window.setTimeout(() => {
+        hideGlobalLoading();
+      }, 1600);
+      return;
+    }
+    await ensureStakeOptionsLoaded();
+    closeStakeSelection();
+    openFriendMode();
+  });
+
+  friendCreateOpenBtn?.addEventListener("click", async () => {
+    if (page2AccountFrozen) return;
+    await ensureStakeOptionsLoaded();
+    closeFriendMode();
+    openFriendCreate();
+  });
+
+  friendJoinOpenBtn?.addEventListener("click", () => {
+    if (page2AccountFrozen) return;
+    closeFriendMode();
+    if (friendJoinCodeInput) {
+      friendJoinCodeInput.value = "";
+    }
+    if (friendJoinHint) {
+      friendJoinHint.textContent = "Entre le code exactement comme il t'a ete envoye.";
+    }
+    openFriendJoin();
+  });
+
+  friendCreateStakeGrid?.addEventListener("click", async (event) => {
+    const btn = event.target.closest(".friend-create-stake-btn");
+    if (!btn || !friendCreateStakeGrid.contains(btn)) return;
+    if (btn.getAttribute("data-available") !== "1") {
+      openUnavailable();
+      return;
+    }
+    const stakeAmount = Number(btn.getAttribute("data-stake") || 100);
+    try {
+      await withButtonLoading(btn, async () => {
+        const xchangeModule = await loadXchangeModule();
+        await xchangeModule.ensureXchangeState(user?.uid);
+        const state = xchangeModule.getXchangeState(window.__userBaseBalance || window.__userBalance || 0, user?.uid);
+        if ((state?.does || 0) < stakeAmount) {
+          closeFriendCreate();
+          if (doesRequiredOverlay) {
+            doesRequiredOverlay.classList.remove("hidden");
+            doesRequiredOverlay.classList.add("flex");
+          }
+          return;
+        }
+
+        const result = await createFriendRoomSecure({
+          stakeDoes: stakeAmount,
+          requiredHumans: 4,
+        });
+        friendRoomDraft.roomId = String(result?.roomId || "");
+        friendRoomDraft.seatIndex = Number.parseInt(String(result?.seatIndex || 0), 10) || 0;
+        friendRoomDraft.stakeDoes = Number.parseInt(String(result?.stakeDoes || stakeAmount), 10) || stakeAmount;
+        friendRoomDraft.inviteCode = String(result?.inviteCode || "").trim();
+
+        if (friendCodeValue) {
+          friendCodeValue.textContent = friendRoomDraft.inviteCode || "------";
+        }
+        if (friendCodeStakeMeta) {
+          friendCodeStakeMeta.textContent = `${friendRoomDraft.stakeDoes} Does obligatoires pour 4 joueurs.`;
+        }
+        if (friendCodeCopyBtn) {
+          friendCodeCopyBtn.textContent = "Copier le code";
+        }
+
+        closeFriendCreate();
+        openFriendCode();
+      }, { loadingLabel: "Creation..." });
+    } catch (error) {
+      console.error("[FRIEND_ROOM] create failed", error);
+      if (
+        String(error?.code || "") === "active-room-exists"
+        && String(error?.roomMode || "public") === "friends"
+        && error?.roomId
+      ) {
+        friendRoomDraft.roomId = String(error.roomId || "");
+        friendRoomDraft.seatIndex = Number.parseInt(String(error?.seatIndex || 0), 10) || 0;
+        friendRoomDraft.stakeDoes = stakeAmount;
+        closeFriendCreate();
+        navigateToFriendRoom(friendRoomDraft);
+      }
+    }
+  });
+
+  friendCodeCopyBtn?.addEventListener("click", async () => {
+    const codeToCopy = String(friendRoomDraft.inviteCode || "").trim();
+    if (!codeToCopy) return;
+    try {
+      await navigator.clipboard.writeText(codeToCopy);
+      friendCodeCopyBtn.textContent = "Code copie";
+    } catch (_) {
+      friendCodeCopyBtn.textContent = "Copie impossible";
+    }
+  });
+
+  friendCodeContinueBtn?.addEventListener("click", () => {
+    closeFriendCode();
+    navigateToFriendRoom(friendRoomDraft);
+  });
+
+  friendJoinCodeInput?.addEventListener("input", () => {
+    friendJoinCodeInput.value = normalizeInviteCode(friendJoinCodeInput.value);
+  });
+
+  friendJoinCodeInput?.addEventListener("keydown", (event) => {
+    if (event.key === "Enter") {
+      event.preventDefault();
+      friendJoinSubmitBtn?.click();
+    }
+  });
+
+  friendJoinSubmitBtn?.addEventListener("click", async () => {
+    const inviteCode = normalizeInviteCode(friendJoinCodeInput?.value || "");
+    if (!inviteCode) {
+      if (friendJoinHint) {
+        friendJoinHint.textContent = "Entre le code de ton ami pour continuer.";
+      }
+      friendJoinCodeInput?.focus();
+      return;
+    }
+
+    try {
+      await withButtonLoading(friendJoinSubmitBtn, async () => {
+        const result = await joinFriendRoomByCodeSecure({ inviteCode });
+        friendRoomDraft.roomId = String(result?.roomId || "");
+        friendRoomDraft.seatIndex = Number.parseInt(String(result?.seatIndex || 0), 10) || 0;
+        friendRoomDraft.stakeDoes = Number.parseInt(String(result?.stakeDoes || 0), 10) || 100;
+        friendRoomDraft.inviteCode = String(result?.inviteCode || inviteCode).trim();
+        closeFriendJoin();
+        navigateToFriendRoom(friendRoomDraft);
+      }, { loadingLabel: "Connexion..." });
+    } catch (error) {
+      console.error("[FRIEND_ROOM] join failed", error);
+      if (
+        String(error?.code || "") === "active-room-exists"
+        && String(error?.roomMode || "public") === "friends"
+        && error?.roomId
+      ) {
+        friendRoomDraft.roomId = String(error.roomId || "");
+        friendRoomDraft.seatIndex = Number.parseInt(String(error?.seatIndex || 0), 10) || 0;
+        friendRoomDraft.stakeDoes = Number.parseInt(String(error?.stakeDoes || friendRoomDraft.stakeDoes || 100), 10) || 100;
+        closeFriendJoin();
+        navigateToFriendRoom(friendRoomDraft);
+        return;
+      }
+      if (String(error?.message || "").toLowerCase().includes("solde does insuffisant")) {
+        closeFriendJoin();
+        if (doesRequiredOverlay) {
+          doesRequiredOverlay.classList.remove("hidden");
+          doesRequiredOverlay.classList.add("flex");
+        }
+        return;
+      }
+      if (friendJoinHint) {
+        friendJoinHint.textContent = error?.message || "Impossible de rejoindre cette salle pour le moment.";
+      }
+    }
+  });
+
   if (stakeSelectionClose) stakeSelectionClose.addEventListener("click", closeStakeSelection);
   if (stakeSelectionOverlay) {
     stakeSelectionOverlay.addEventListener("click", (ev) => {
@@ -1398,6 +1826,26 @@ export function renderPage2(user, options = {}) {
   if (stakeSelectionPanel) {
     stakeSelectionPanel.addEventListener("click", (ev) => ev.stopPropagation());
   }
+  if (friendModeClose) friendModeClose.addEventListener("click", closeFriendMode);
+  friendModeOverlay?.addEventListener("click", (ev) => {
+    if (ev.target === friendModeOverlay) closeFriendMode();
+  });
+  friendModePanel?.addEventListener("click", (ev) => ev.stopPropagation());
+  if (friendCreateClose) friendCreateClose.addEventListener("click", closeFriendCreate);
+  friendCreateOverlay?.addEventListener("click", (ev) => {
+    if (ev.target === friendCreateOverlay) closeFriendCreate();
+  });
+  friendCreatePanel?.addEventListener("click", (ev) => ev.stopPropagation());
+  if (friendJoinClose) friendJoinClose.addEventListener("click", closeFriendJoin);
+  friendJoinOverlay?.addEventListener("click", (ev) => {
+    if (ev.target === friendJoinOverlay) closeFriendJoin();
+  });
+  friendJoinPanel?.addEventListener("click", (ev) => ev.stopPropagation());
+  if (friendCodeCloseBtn) friendCodeCloseBtn.addEventListener("click", closeFriendCode);
+  friendCodeOverlay?.addEventListener("click", (ev) => {
+    if (ev.target === friendCodeOverlay) closeFriendCode();
+  });
+  friendCodePanel?.addEventListener("click", (ev) => ev.stopPropagation());
 
   if (stakeUnavailableClose) stakeUnavailableClose.addEventListener("click", closeUnavailable);
   if (stakeUnavailableOverlay) {

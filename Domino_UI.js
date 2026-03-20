@@ -416,6 +416,9 @@ var Domino_UI = function() {
                     GoBtn.disabled = false;
                     GoBtn.textContent = "Aller";
                 }
+                if (typeof window.syncFloatingHudVisibility === "function") {
+                    window.syncFloatingHudVisibility();
+                }
                 if (InfoEl) InfoEl.innerHTML = "Clique sur Aller quand tu es prêt.";
             };
         }
@@ -433,6 +436,9 @@ var Domino_UI = function() {
             GoBtn.classList.remove("block");
             GoBtn.disabled = false;
             GoBtn.textContent = "Aller";
+        }
+        if (typeof window.syncFloatingHudVisibility === "function") {
+            window.syncFloatingHudVisibility();
         }
 
         if (Overlay) {
@@ -505,6 +511,9 @@ var Domino_UI = function() {
             GoBtn.classList.add("hidden");
             GoBtn.classList.remove("block");
         }
+        if (typeof window.syncFloatingHudVisibility === "function") {
+            window.syncFloatingHudVisibility();
+        }
         if (InfoEl) InfoEl.innerHTML = "Tu peux continuer. Les autres joueurs peuvent terminer de leur cote.";
         if (Overlay) {
             Overlay.classList.remove("hidden");
@@ -535,6 +544,9 @@ var Domino_UI = function() {
         if (GoBtn) {
             GoBtn.classList.add("hidden");
             GoBtn.classList.remove("block");
+        }
+        if (typeof window.syncFloatingHudVisibility === "function") {
+            window.syncFloatingHudVisibility();
         }
     };
     

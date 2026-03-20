@@ -30,6 +30,12 @@ const ACTION_CACHE_PREFIX = "domino_actions_";
 const ROOM_DECK_CACHE_PREFIX = "domino_deck_";
 const ROOM_SETTLEMENT_PREFIX = "domino_settle_";
 const HOW_TO_PLAY_STORAGE_KEY = "domino_how_to_play_seen_v1";
+const HUD_MINIMAL_STORAGE_KEY = "domino_game_hud_minimal_v1";
+const GAME_CHAT_REACTIONS_URL = "./game-chat-messages.json";
+const GAME_CHAT_MESSAGE_SHOW_MS = 5000;
+const GAME_CHAT_MIN_DELAY_MS = 9000;
+const GAME_CHAT_MAX_DELAY_MS = 26000;
+const GAME_CHAT_PICKER_SIZE = 12;
 const DEFAULT_ENTRY_COST_DOES = 100;
 const DEFAULT_STAKE_REWARD_MULTIPLIER = 3;
 const ONLINE_USERS_MIN = 30000;
@@ -39,6 +45,11 @@ const ONLINE_USERS_WAVE_PERIOD = 29;
 const ONLINE_USERS_SEED = 0x9e3779b9;
 const URL_PARAMS = new URLSearchParams(window.location.search);
 const SHOULD_AUTOSTART = URL_PARAMS.get("autostart") === "1";
+const FRIEND_ROOM_ID_QUERY = String(URL_PARAMS.get("friendRoomId") || "").trim();
+const FRIEND_ROOM_SEAT_QUERY = (() => {
+  const parsed = Number.parseInt(String(URL_PARAMS.get("seat") || "-1"), 10);
+  return Number.isFinite(parsed) && parsed >= 0 && parsed < 4 ? parsed : -1;
+})();
 
 function resolveEntryCostDoes(searchParams) {
   const rawStake = searchParams.get("stake");
@@ -89,6 +100,10 @@ function buildAutostartUrl() {
   return `./jeu.html?autostart=1&stake=${ENTRY_COST_DOES_RESOLVED}`;
 }
 
+function isFriendRoomData(roomData = null) {
+  return String(roomData?.roomMode || "") === "friends";
+}
+
 let roomUnsub = null;
 let actionsUnsub = null;
 let roomId = null;
@@ -124,6 +139,332 @@ let startRevealAckDoneId = "";
 let deckOrderSyncRoomId = "";
 let botTurnWakeTimer = null;
 let botTurnWakeKey = "";
+let gameChatReactionsCache = null;
+let gameChatReactionsPromise = null;
+let gameChatAmbientTimer = null;
+let gameChatBannerTimer = null;
+let gameChatActiveRoomId = "";
+let gameChatBudget = 0;
+let gameChatPickerOpen = false;
+
+function readHudMinimalMode() {
+  try {
+    return window.localStorage?.getItem(HUD_MINIMAL_STORAGE_KEY) === "1";
+  } catch (_) {
+    return false;
+  }
+}
+
+function writeHudMinimalMode(isMinimal) {
+  try {
+    if (isMinimal) {
+      window.localStorage?.setItem(HUD_MINIMAL_STORAGE_KEY, "1");
+    } else {
+      window.localStorage?.removeItem(HUD_MINIMAL_STORAGE_KEY);
+    }
+  } catch (_) {
+    // Ignore storage failures and keep the live UI state only.
+  }
+}
+
+function getFallbackGameChatReactions() {
+  return [
+    "😀",
+    "😂",
+    "🔥",
+    "😤",
+    "😎",
+    "😮",
+    "👏",
+    "🤝",
+    "🥶",
+    "😅",
+    "🤨",
+    "💀",
+  ];
+}
+
+function normalizeGameChatReactions(payload) {
+  const rawList = Array.isArray(payload)
+    ? payload
+    : Array.isArray(payload?.reactions)
+      ? payload.reactions
+    : Array.isArray(payload?.messages)
+      ? payload.messages
+      : [];
+
+  const normalized = [...new Set(rawList
+    .map((item) => String(item || "").trim())
+    .map((item) => item.replace(/\s+/g, " "))
+    .filter((item) => item.length >= 1)
+    .map((item) => item.slice(0, 8)))];
+
+  return normalized.length ? normalized : getFallbackGameChatReactions();
+}
+
+async function loadGameChatReactions() {
+  if (Array.isArray(gameChatReactionsCache) && gameChatReactionsCache.length) {
+    return gameChatReactionsCache;
+  }
+  if (gameChatReactionsPromise) return gameChatReactionsPromise;
+
+  gameChatReactionsPromise = fetch(GAME_CHAT_REACTIONS_URL, { cache: "no-store" })
+    .then(async (response) => {
+      if (!response.ok) {
+        throw new Error(`game-chat-reactions:${response.status}`);
+      }
+      return response.json();
+    })
+    .then((payload) => {
+      gameChatReactionsCache = normalizeGameChatReactions(payload);
+      return gameChatReactionsCache;
+    })
+    .catch((error) => {
+      console.warn("[GAME_CHAT] fallback reactions used", error);
+      gameChatReactionsCache = getFallbackGameChatReactions();
+      return gameChatReactionsCache;
+    })
+    .finally(() => {
+      gameChatReactionsPromise = null;
+    });
+
+  return gameChatReactionsPromise;
+}
+
+function randomBetween(min, max) {
+  const safeMin = Math.max(0, Number(min) || 0);
+  const safeMax = Math.max(safeMin, Number(max) || safeMin);
+  return Math.floor(Math.random() * (safeMax - safeMin + 1)) + safeMin;
+}
+
+function pickRandomFromList(list = []) {
+  if (!Array.isArray(list) || !list.length) return "";
+  const index = randomBetween(0, list.length - 1);
+  return list[index] || "";
+}
+
+function getAmbientChatCandidates() {
+  const session = window.GameSession || null;
+  if (!session) return [];
+  const localSeat = Number.isFinite(Number(session.seatIndex)) ? Math.trunc(Number(session.seatIndex)) : -1;
+  const playerNames = Array.isArray(session.playerNames) ? session.playerNames : [];
+  const playerUids = Array.isArray(session.playerUids) ? session.playerUids : [];
+  const totalSeats = Math.max(4, playerNames.length, playerUids.length, Number(session.humans || 0) + Number(session.bots || 0));
+  const out = [];
+
+  for (let seat = 0; seat < totalSeats; seat += 1) {
+    if (seat === localSeat) continue;
+    const name = String(playerNames[seat] || "").trim();
+    out.push(name || `Jwè ${seat + 1}`);
+  }
+  return out.length ? out : ["Jwè 2", "Jwè 3", "Jwè 4"];
+}
+
+function hideGameChatBanner() {
+  if (gameChatBannerTimer) {
+    clearTimeout(gameChatBannerTimer);
+    gameChatBannerTimer = null;
+  }
+  const banner = document.getElementById("GameChatBanner");
+  if (!banner) return;
+  banner.classList.add("hidden");
+}
+
+function showGameChatBanner(author, message, tone = "ambient") {
+  const banner = document.getElementById("GameChatBanner");
+  const authorEl = document.getElementById("GameChatBannerAuthor");
+  const textEl = document.getElementById("GameChatBannerText");
+  if (!banner || !authorEl || !textEl) return;
+
+  authorEl.textContent = String(author || "Jwè");
+  textEl.textContent = String(message || "");
+  banner.dataset.tone = tone === "self" ? "self" : "ambient";
+  banner.classList.remove("hidden");
+
+  if (gameChatBannerTimer) {
+    clearTimeout(gameChatBannerTimer);
+  }
+  gameChatBannerTimer = setTimeout(() => {
+    hideGameChatBanner();
+  }, GAME_CHAT_MESSAGE_SHOW_MS);
+}
+
+function stopAmbientGameChat() {
+  if (gameChatAmbientTimer) {
+    clearTimeout(gameChatAmbientTimer);
+    gameChatAmbientTimer = null;
+  }
+  gameChatActiveRoomId = "";
+  gameChatBudget = 0;
+  hideGameChatBanner();
+  closeGameChatComposer();
+}
+
+function normalizeGameChatReaction(value) {
+  return String(value || "").replace(/\s+/g, "").trim().slice(0, 8);
+}
+
+function sendLocalGameChatReaction(rawReaction) {
+  const reaction = normalizeGameChatReaction(rawReaction);
+  if (!reaction) return false;
+  showGameChatBanner("Ou", reaction, "self");
+  return true;
+}
+
+function sampleGameChatReactions(reactions = [], size = GAME_CHAT_PICKER_SIZE) {
+  if (!Array.isArray(reactions) || !reactions.length) return [];
+  const pool = [...reactions];
+  for (let i = pool.length - 1; i > 0; i -= 1) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [pool[i], pool[j]] = [pool[j], pool[i]];
+  }
+  return pool.slice(0, Math.max(1, Math.min(size, pool.length)));
+}
+
+async function renderGameChatReactionPicker() {
+  const grid = document.getElementById("GameChatReactionGrid");
+  if (!grid) return;
+  const reactions = await loadGameChatReactions();
+  const visibleReactions = sampleGameChatReactions(reactions);
+  grid.innerHTML = visibleReactions
+    .map(
+      (reaction) => `
+        <button
+          type="button"
+          class="game-chat-reaction-btn rounded-2xl border border-white/15 bg-white/10 text-white shadow-[inset_4px_4px_10px_rgba(18,24,38,0.22),inset_-4px_-4px_10px_rgba(110,124,163,0.12)] transition hover:bg-white/16"
+          data-game-chat-reaction="${String(reaction).replace(/"/g, "&quot;")}"
+          aria-label="Envoyer ${String(reaction).replace(/"/g, "&quot;")}"
+          title="Envoyer ${String(reaction).replace(/"/g, "&quot;")}"
+        >${reaction}</button>
+      `,
+    )
+    .join("");
+}
+
+function openGameChatComposer() {
+  const session = window.GameSession || null;
+  if (!session || String(session.status || "") !== "playing") {
+    showGameChatBanner("Sistèm", "ℹ️", "ambient");
+    return;
+  }
+  const wrap = document.getElementById("GameChatReactionPicker");
+  if (!wrap) return;
+  renderGameChatReactionPicker().catch((error) => {
+    console.warn("[GAME_CHAT] picker render failed", error);
+  });
+  wrap.classList.remove("hidden");
+  gameChatPickerOpen = true;
+}
+
+function closeGameChatComposer() {
+  const wrap = document.getElementById("GameChatReactionPicker");
+  wrap?.classList.add("hidden");
+  gameChatPickerOpen = false;
+}
+
+async function emitAmbientGameChat() {
+  const session = window.GameSession || null;
+  if (!session || String(session.status || "") !== "playing") {
+    stopAmbientGameChat();
+    return;
+  }
+  if (!gameChatActiveRoomId || String(session.roomId || "") !== gameChatActiveRoomId) {
+    stopAmbientGameChat();
+    return;
+  }
+  if (gameChatBudget <= 0) {
+    gameChatAmbientTimer = null;
+    return;
+  }
+
+  const [reactions, authors] = await Promise.all([
+    loadGameChatReactions(),
+    Promise.resolve(getAmbientChatCandidates()),
+  ]);
+  const message = pickRandomFromList(reactions);
+  const author = pickRandomFromList(authors) || "Jwè";
+  if (message) {
+    showGameChatBanner(author, message, "ambient");
+  }
+  gameChatBudget -= 1;
+  if (gameChatBudget > 0) {
+    scheduleAmbientGameChat();
+  } else {
+    gameChatAmbientTimer = null;
+  }
+}
+
+function scheduleAmbientGameChat() {
+  if (gameChatAmbientTimer || !gameChatActiveRoomId || gameChatBudget <= 0) return;
+  const delay = randomBetween(GAME_CHAT_MIN_DELAY_MS, GAME_CHAT_MAX_DELAY_MS);
+  gameChatAmbientTimer = setTimeout(() => {
+    gameChatAmbientTimer = null;
+    emitAmbientGameChat().catch((error) => {
+      console.warn("[GAME_CHAT] ambient emit failed", error);
+    });
+  }, delay);
+}
+
+function startAmbientGameChatForRoom(roomData = {}) {
+  const targetRoomId = String(roomId || roomData?.id || "").trim();
+  if (!targetRoomId) return;
+  if (gameChatActiveRoomId === targetRoomId) {
+    if (!gameChatAmbientTimer && gameChatBudget > 0) scheduleAmbientGameChat();
+    return;
+  }
+  stopAmbientGameChat();
+  gameChatActiveRoomId = targetRoomId;
+  const humans = Math.max(1, Number(roomData?.humanCount || window.GameSession?.humans || 1));
+  gameChatBudget = randomBetween(Math.max(2, humans), Math.max(5, humans + 3));
+  loadGameChatReactions().catch(() => {});
+  scheduleAmbientGameChat();
+}
+
+function bindGameChatComposer() {
+  const btn = document.getElementById("GameChatComposeBtn");
+  const wrap = document.getElementById("GameChatReactionPicker");
+  const grid = document.getElementById("GameChatReactionGrid");
+  if (btn && btn.dataset.bound !== "1") {
+    btn.dataset.bound = "1";
+    btn.addEventListener("click", (event) => {
+      event.stopPropagation();
+      if (gameChatPickerOpen) {
+        closeGameChatComposer();
+      } else {
+        openGameChatComposer();
+      }
+    });
+  }
+  if (wrap && wrap.dataset.bound !== "1") {
+    wrap.dataset.bound = "1";
+    wrap.addEventListener("click", (event) => {
+      event.stopPropagation();
+    });
+  }
+  if (grid && grid.dataset.bound !== "1") {
+    grid.dataset.bound = "1";
+    grid.addEventListener("click", (event) => {
+      const target = event.target instanceof HTMLElement ? event.target.closest("[data-game-chat-reaction]") : null;
+      if (!(target instanceof HTMLElement)) return;
+      const reaction = target.dataset.gameChatReaction || "";
+      const sent = sendLocalGameChatReaction(reaction);
+      closeGameChatComposer();
+      if (!sent) hideGameChatBanner();
+    });
+  }
+  if (document.body?.dataset.gameChatBound !== "1") {
+    document.body.dataset.gameChatBound = "1";
+    document.addEventListener("click", () => {
+      if (!gameChatPickerOpen) return;
+      closeGameChatComposer();
+    });
+    document.addEventListener("keydown", (event) => {
+      if (event.key !== "Escape" || !gameChatPickerOpen) return;
+      event.preventDefault();
+      closeGameChatComposer();
+    });
+  }
+}
 
 function makeClientActionId() {
   return `act_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 10)}`;
@@ -491,6 +832,78 @@ function setFullscreenIcon(isActive) {
   `;
 }
 
+function setHudViewIcon(isMinimal) {
+  const icon = document.getElementById("HudViewToggleIcon");
+  if (!icon) return;
+  if (isMinimal) {
+    icon.innerHTML = `
+      <path d="M2 12s3.6-6 10-6c2.24 0 4.13.74 5.7 1.72"></path>
+      <path d="M20.06 16.94C18.34 18.21 15.95 19 12 19c-6.4 0-10-7-10-7a21.8 21.8 0 0 1 4.31-4.92"></path>
+      <path d="M10.58 10.58A2 2 0 0 0 10 12a2 2 0 0 0 2 2c.52 0 1-.2 1.36-.54"></path>
+      <path d="M3 3l18 18"></path>
+    `;
+    return;
+  }
+  icon.innerHTML = `
+    <path d="M2 12s3.6-6 10-6 10 6 10 6-3.6 6-10 6S2 12 2 12Z"></path>
+    <circle cx="12" cy="12" r="2.8"></circle>
+  `;
+}
+
+function syncFloatingHudVisibility() {
+  const goBtn = document.getElementById("GameEndGoBtn");
+  const hudViewBtn = document.getElementById("HudViewToggleBtn");
+  const chatBtn = document.getElementById("GameChatComposeBtn");
+  const chatPicker = document.getElementById("GameChatReactionPicker");
+  const minimalMode = document.body?.classList.contains("game-hud-minimal");
+  const goVisible = !!(goBtn && !goBtn.classList.contains("hidden"));
+
+  if (hudViewBtn) {
+    hudViewBtn.classList.toggle("hidden", goVisible);
+    hudViewBtn.classList.toggle("grid", !goVisible);
+  }
+  if (chatBtn) {
+    const shouldHide = goVisible || minimalMode;
+    chatBtn.classList.toggle("hidden", shouldHide);
+    chatBtn.classList.toggle("inline-flex", !shouldHide);
+    if (shouldHide) closeGameChatComposer();
+  }
+  if (chatPicker && (goVisible || minimalMode)) {
+    closeGameChatComposer();
+  }
+}
+
+function applyHudMinimalMode(isMinimal) {
+  document.body?.classList.toggle("game-hud-minimal", !!isMinimal);
+  const btn = document.getElementById("HudViewToggleBtn");
+  if (btn) {
+    const label = isMinimal ? "Afficher les panneaux" : "Masquer les panneaux";
+    btn.setAttribute("aria-pressed", isMinimal ? "true" : "false");
+    btn.setAttribute("aria-label", label);
+    btn.setAttribute("title", label);
+  }
+  setHudViewIcon(!!isMinimal);
+  syncFloatingHudVisibility();
+}
+
+function toggleHudMinimalMode() {
+  const nextValue = !(document.body?.classList.contains("game-hud-minimal"));
+  applyHudMinimalMode(nextValue);
+  writeHudMinimalMode(nextValue);
+}
+
+function bindHudViewToggle() {
+  const btn = document.getElementById("HudViewToggleBtn");
+  if (!btn || btn.dataset.bound === "1") return;
+  btn.dataset.bound = "1";
+  btn.addEventListener("click", () => {
+    toggleHudMinimalMode();
+  });
+  applyHudMinimalMode(readHudMinimalMode());
+}
+
+window.syncFloatingHudVisibility = syncFloatingHudVisibility;
+
 function syncFullscreenButtonState() {
   const btn = document.getElementById("FullscreenToggleBtn");
   if (!btn) return;
@@ -619,6 +1032,30 @@ function refreshDoesHud() {
   }
 }
 
+function maybeSyncFriendRoomEntryCharge(roomData) {
+  if (!roomData || !isFriendRoomData(roomData) || !roomId) return;
+  const user = auth.currentUser;
+  if (!user) return;
+
+  const funding = roomData.entryFundingByUid && typeof roomData.entryFundingByUid === "object"
+    ? roomData.entryFundingByUid[user.uid]
+    : null;
+  if (!funding) return;
+
+  const settlement = readSettlement(roomId, user.uid);
+  if (settlement?.entryPaid === true) return;
+
+  writeSettlement(roomId, user.uid, { entryPaid: true, rewardPaid: settlement?.rewardPaid === true });
+  Promise.resolve()
+    .then(async () => {
+      await ensureXchangeState(user.uid);
+      refreshDoesHud();
+    })
+    .catch((error) => {
+      console.warn("[FRIEND_ROOM] impossible de synchroniser le débit d'entrée", error);
+    });
+}
+
 function settlementKey(id, uid) {
   return `${ROOM_SETTLEMENT_PREFIX}${id || "none"}_${uid || "guest"}`;
 }
@@ -687,6 +1124,7 @@ function showReplayReturnOverlay(message) {
     goBtn.classList.add("hidden");
     goBtn.classList.remove("block");
   }
+  syncFloatingHudVisibility();
   actionsWrap.classList.remove("hidden");
   actionsWrap.classList.add("grid");
   overlay.classList.remove("hidden");
@@ -863,11 +1301,12 @@ function setTurnTimerUI(remainingSec, currentPlayer) {
       legacy.textContent = "--";
       legacy.setAttribute("Urgent", "false");
     }
-    if (!labelEl || !valueEl || !barEl) return;
-    labelEl.textContent = "En attente";
-    valueEl.textContent = "--";
-    barEl.style.width = "100%";
-    barEl.style.opacity = "0.35";
+    if (labelEl) labelEl.textContent = "En attente";
+    if (valueEl) valueEl.textContent = "--";
+    if (barEl) {
+      barEl.style.width = "100%";
+      barEl.style.opacity = "0.35";
+    }
     return;
   }
 
@@ -876,16 +1315,18 @@ function setTurnTimerUI(remainingSec, currentPlayer) {
     legacy.textContent = String(safe);
     legacy.setAttribute("Urgent", safe <= 5 ? "true" : "false");
   }
-  if (!labelEl || !valueEl || !barEl) return;
+  if (!labelEl || !valueEl) return;
   const pct = Math.max(0, Math.min(100, Math.floor((safe / (TURN_LIMIT_MS / 1000)) * 100)));
   labelEl.textContent = "Ton tour";
   valueEl.textContent = String(safe);
-  barEl.style.width = `${pct}%`;
-  barEl.style.opacity = "1";
-  barEl.classList.toggle("from-red-500", safe <= 5);
-  barEl.classList.toggle("to-rose-300", safe <= 5);
-  barEl.classList.toggle("from-orange-500", safe > 5);
-  barEl.classList.toggle("to-amber-300", safe > 5);
+  if (barEl) {
+    barEl.style.width = `${pct}%`;
+    barEl.style.opacity = "1";
+    barEl.classList.toggle("from-red-500", safe <= 5);
+    barEl.classList.toggle("to-rose-300", safe <= 5);
+    barEl.classList.toggle("from-orange-500", safe > 5);
+    barEl.classList.toggle("to-amber-300", safe > 5);
+  }
 }
 
 function tsToMs(ts) {
@@ -993,6 +1434,8 @@ function resetSessionState() {
   clearLaunchRetryTimer();
   clearRehydrationRetryTimer();
   clearBotTurnWakeTimer();
+  stopAmbientGameChat();
+  closeGameChatComposer();
   setMatchLoading(false);
   roomId = null;
   seatIndex = -1;
@@ -1315,24 +1758,42 @@ function scheduleWaitingCountdown(id, roomData) {
     }
     const liveRoom = lastRoomSnapshotData && String(roomId) === String(id) ? lastRoomSnapshotData : roomData;
     const humans = Number.isFinite(Number(liveRoom?.humanCount)) ? Number(liveRoom.humanCount) : 1;
+    const requiredHumans = Number.isFinite(Number(liveRoom?.requiredHumans))
+      ? Math.max(2, Math.min(4, Number(liveRoom.requiredHumans)))
+      : 4;
     const deadlineMs = Number.isFinite(Number(liveRoom?.waitingDeadlineMs)) ? Number(liveRoom.waitingDeadlineMs) : 0;
+    const isFriendRoom = isFriendRoomData(liveRoom);
 
-    if (humans >= 4) {
-      setStatus(`Salle en attente (${humans}/4). Tous les joueurs sont là, démarrage...`);
+    if (humans >= requiredHumans) {
+      const readyLabel = isFriendRoom
+        ? `Salle privée (${humans}/${requiredHumans}). Tous les amis sont là, démarrage...`
+        : `Salle en attente (${humans}/4). Tous les joueurs sont là, démarrage...`;
+      setStatus(readyLabel);
       kickServerStart();
       return;
     }
 
     if (deadlineMs <= 0) {
-      setStatus(`Salle en attente (${humans}/4). Le serveur prépare encore le démarrage.`);
+      const pendingLabel = isFriendRoom
+        ? `Salle privée (${humans}/${requiredHumans}). En attente des amis...`
+        : `Salle en attente (${humans}/4). Le serveur prépare encore le démarrage.`;
+      setStatus(pendingLabel);
       kickServerStart();
       return;
     }
 
     const remainingMs = Math.max(0, deadlineMs - Date.now());
     if (remainingMs <= 0) {
-      setStatus(`Salle en attente (${humans}/4). Démarrage...`);
+      const expiringLabel = isFriendRoom
+        ? `Salle privée (${humans}/${requiredHumans}). Vérification de l'invitation...`
+        : `Salle en attente (${humans}/4). Démarrage...`;
+      setStatus(expiringLabel);
       kickServerStart();
+      return;
+    }
+
+    if (isFriendRoom) {
+      setStatus(`Salle privée (${humans}/${requiredHumans}). Invite tes amis, expiration dans ${Math.ceil(remainingMs / 1000)}s.`);
       return;
     }
 
@@ -1947,11 +2408,15 @@ function launchLocalGame(roomData) {
     scheduleLaunchRetry(roomData);
     return;
   }
-  if (gameLaunched) return;
+  if (gameLaunched) {
+    startAmbientGameChatForRoom(roomData);
+    return;
+  }
   gameLaunched = true;
   clearLaunchRetryTimer();
   setLeaveRoomButtonVisible(true);
   updateOrientationGuard();
+  startAmbientGameChatForRoom(roomData);
 
   setStatus(
     `Salle ${roomId} | Mise ${window.GameSession.entryCostDoes} Does | Gain ${window.GameSession.rewardAmountDoes} Does | Seat ${seatIndex + 1} | Humains ${window.GameSession.humans} | Bots ${window.GameSession.bots}`
@@ -2015,6 +2480,7 @@ function watchRoom(id) {
 
       if (data.status === "ended") {
         clearBotTurnWakeTimer();
+        stopAmbientGameChat();
         markRoomActionsReady(id);
         clearFinalizeGameTimer();
         clearTurnTimer();
@@ -2053,6 +2519,7 @@ function watchRoom(id) {
 
       if (data.status === "playing") {
         clearTimer();
+        maybeSyncFriendRoomEntryCharge(data);
         syncGameSessionFromRoom(data);
         launchLocalGame(data);
         maybeNudgeServerForBotTurn(id, data);
@@ -2089,7 +2556,11 @@ function watchRoom(id) {
         resetSessionState();
         clearActionCache(id);
         if (window.UI) window.UI.MostrarEmpezar();
-        setStatus("Salle fermée.");
+        if (String(data.endedReason || "") === "expired") {
+          setStatus("Salle privée expirée.");
+        } else {
+          setStatus("Salle fermée.");
+        }
       }
     },
     (err) => {
@@ -2145,6 +2616,33 @@ async function startMatchmaking() {
     setLeaveRoomButtonVisible(true);
 
     watchRoom(roomId);
+  } catch (err) {
+    matchmakingBusy = false;
+    setMatchLoading(false);
+    throw err;
+  }
+}
+
+async function startFriendRoomSession() {
+  if (matchmakingBusy) return;
+  if (!ensureLandscapeReadyBeforeStart()) return;
+  if (!FRIEND_ROOM_ID_QUERY) {
+    throw new Error("Salle privée introuvable.");
+  }
+  matchmakingBusy = true;
+  setMatchLoading(true, "Connexion des joueurs en cours.");
+  try {
+    const user = requireUser();
+    await ensureXchangeState(user.uid);
+    refreshDoesHud();
+    clearSubs();
+
+    roomId = FRIEND_ROOM_ID_QUERY;
+    seatIndex = FRIEND_ROOM_SEAT_QUERY >= 0 ? FRIEND_ROOM_SEAT_QUERY : 0;
+    setStatus(`Salle privée (${roomId}). Position ${seatIndex + 1}/4.`);
+    setLeaveRoomButtonVisible(true);
+    watchRoom(roomId);
+    matchmakingBusy = false;
   } catch (err) {
     matchmakingBusy = false;
     setMatchLoading(false);
@@ -2249,10 +2747,17 @@ async function leaveRoom(options = {}) {
 async function startGameFlow() {
   if (!ensureLandscapeReadyBeforeStart()) return;
   if (!auth.currentUser) {
+    if (FRIEND_ROOM_ID_QUERY) {
+      throw new Error("Tu dois être connecté pour rejoindre cette partie privée.");
+    }
     await startMatchmaking();
     return;
   }
   await ensureHowToPlayPromptAccepted();
+  if (FRIEND_ROOM_ID_QUERY) {
+    await startFriendRoomSession();
+    return;
+  }
   await startMatchmaking();
 }
 
@@ -2303,6 +2808,7 @@ function bindStartButton() {
 
 window.LogiqueJeu = {
   startMatchmaking,
+  startFriendRoomSession,
   resumeSession,
   pushAction,
   endGameClick,
@@ -2314,6 +2820,8 @@ window.LogiqueJeu = {
 
 bindStartButton();
 bindLeaveRoomTopButton();
+bindHudViewToggle();
+bindGameChatComposer();
 bindFullscreenToggle();
 startOnlineUsersTicker();
 window.addEventListener("resize", onOrientationMaybeChanged);

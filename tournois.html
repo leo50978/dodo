@@ -464,6 +464,24 @@
       color: #e7fff2;
     }
 
+    .quick-action {
+      width: 100%;
+      margin-bottom: 14px;
+      min-height: 52px;
+      border-radius: 18px;
+      border: 1px solid rgba(245, 124, 0, 0.42);
+      background: linear-gradient(180deg, rgba(245, 124, 0, 0.95), rgba(223, 106, 0, 0.95));
+      color: #fff;
+      font-family: "Space Grotesk", system-ui, sans-serif;
+      font-size: 1rem;
+      font-weight: 700;
+      letter-spacing: -0.02em;
+    }
+
+    .quick-action:hover {
+      background: linear-gradient(180deg, rgba(255, 145, 57, 0.96), rgba(234, 116, 12, 0.96));
+    }
+
     [hidden] {
       display: none !important;
     }
@@ -515,6 +533,8 @@
       <h1 class="topbar-title">Tournoi</h1>
       <button class="btn btn-danger" id="exitTournamentBtn" type="button">Quitter le tournoi</button>
     </header>
+
+    <button class="btn quick-action" id="playNowBtn" type="button">Jouer maintenant</button>
 
     <div id="pageMessage" class="page-message" hidden></div>
 
@@ -578,6 +598,38 @@
         <div class="modal-actions">
           <button id="exitConfirmStayBtn" class="btn btn-primary" type="button">Rester dans le tournoi</button>
           <button id="exitConfirmLeaveBtn" class="btn btn-danger" type="button">Oui, quitter</button>
+        </div>
+      </div>
+    </section>
+
+    <section id="doesRequiredOverlay" class="modal-backdrop" hidden>
+      <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="doesRequiredTitle">
+        <div class="modal-warning" aria-hidden="true">!</div>
+        <h2 id="doesRequiredTitle" class="modal-title">Solde Does insuffisant</h2>
+        <p class="modal-copy">
+          Tu n'as pas assez de Does pour démarrer une partie.
+        </p>
+        <p class="modal-copy" style="margin-top:10px;">
+          Ouvre ton profil puis clique sur <strong>Xchange en crypto</strong> pour convertir ton argent en Does.
+        </p>
+        <div class="modal-actions">
+          <button id="doesRequiredOpenProfile" class="btn btn-primary" type="button">Ouvrir profil</button>
+          <button id="doesRequiredClose" class="btn" type="button">Fermer</button>
+        </div>
+      </div>
+    </section>
+
+    <section id="stakeSelectionOverlay" class="modal-backdrop" hidden>
+      <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="stakeSelectionTitle">
+        <h2 id="stakeSelectionTitle" class="modal-title">Choisis ta mise</h2>
+        <p class="modal-copy">
+          Quand tu cliques sur une mise, la partie démarre tout de suite avec ce montant.
+        </p>
+        <div id="stakeOptionsGrid" class="leaderboard-list" style="margin-top:16px;">
+          <div class="empty-state">Chargement des mises...</div>
+        </div>
+        <div class="modal-actions">
+          <button id="stakeSelectionClose" class="btn" type="button">Fermer</button>
         </div>
       </div>
     </section>

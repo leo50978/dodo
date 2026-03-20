@@ -78,6 +78,8 @@ const DEFAULT_GAME_STAKE_OPTIONS = Object.freeze([
 ]);
 const DEFAULT_BOT_DIFFICULTY = "expert";
 const ROOM_WAIT_MS = 15 * 1000;
+const FRIEND_ROOM_WAIT_MS = 10 * 60 * 1000;
+const FRIEND_ROOM_CODE_SIZE = 6;
 const ROOM_DISCONNECT_TAKEOVER_MS = 5 * 1000;
 const ROOM_DISCONNECT_GRACE_MS = 15 * 1000;
 const BOT_THINK_DELAY_MIN_MS = 1400;
@@ -3387,7 +3389,28 @@ function resolveRoomCreatedAtMs(room = {}) {
   return safeSignedInt(room.createdAtMs) || timestampToMillis(room.createdAt);
 }
 
+function isFriendRoom(room = {}) {
+  return String(room?.roomMode || "").trim() === "friends";
+}
+
+function getRoomTargetHumanCount(room = {}) {
+  const requested = safeInt(room?.requiredHumans);
+  if (requested >= 2 && requested <= 4) return requested;
+  return 4;
+}
+
+function resolveFriendRoomDeadlineMs(room = {}, nowMs = Date.now()) {
+  const explicit = safeSignedInt(room.waitingDeadlineMs);
+  if (explicit > 0) return explicit;
+  const createdAtMs = resolveRoomCreatedAtMs(room);
+  if (createdAtMs > 0) return createdAtMs + FRIEND_ROOM_WAIT_MS;
+  return nowMs + FRIEND_ROOM_WAIT_MS;
+}
+
 function resolveWaitingDeadlineMs(room = {}, nowMs = Date.now()) {
+  if (isFriendRoom(room)) {
+    return resolveFriendRoomDeadlineMs(room, nowMs);
+  }
   const explicit = safeSignedInt(room.waitingDeadlineMs);
   if (explicit > 0) return explicit;
   const createdAtMs = resolveRoomCreatedAtMs(room);
@@ -3400,7 +3423,11 @@ function shouldStartWaitingRoom(room = {}, nowMs = Date.now()) {
   const humans = Array.isArray(room.playerUids)
     ? room.playerUids.filter(Boolean).length
     : safeInt(room.humanCount);
-  if (humans >= 4) return true;
+  const requiredHumans = isFriendRoom(room)
+    ? getRoomTargetHumanCount(room)
+    : 4;
+  if (humans >= requiredHumans) return true;
+  if (isFriendRoom(room)) return false;
   return nowMs >= resolveWaitingDeadlineMs(room, nowMs);
 }
 
@@ -3446,6 +3473,7 @@ async function findActiveRoomForUser(uid) {
 
   membershipSnap.docs.forEach((docSnap) => {
     const data = docSnap.data() || {};
+    if (isFriendRoom(data)) return;
     const status = String(data.status || "");
     if (status === "playing" && !playingCandidate) {
       playingCandidate = docSnap;
@@ -3478,6 +3506,64 @@ function getRoomSeats(room) {
 function getSeatForUser(room, uid) {
   const seats = getRoomSeats(room);
   return typeof seats[uid] === "number" ? seats[uid] : -1;
+}
+
+async function generateUniqueFriendRoomInviteCode(size = FRIEND_ROOM_CODE_SIZE, maxAttempts = 18) {
+  const targetSize = Math.max(4, safeInt(size) || FRIEND_ROOM_CODE_SIZE);
+  for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
+    const candidate = normalizeCode(randomCode(targetSize));
+    if (!candidate) continue;
+    const existing = await db
+      .collection(ROOMS_COLLECTION)
+      .where("inviteCodeNormalized", "==", candidate)
+      .limit(1)
+      .get();
+    if (existing.empty) return candidate;
+  }
+  throw new HttpsError("aborted", "Impossible de générer un code de salle unique.");
+}
+
+async function chargeRoomEntriesTx(tx, room = {}, playerUids = [], stakeDoes = 0) {
+  const normalizedStakeDoes = safeInt(stakeDoes);
+  if (normalizedStakeDoes <= 0) {
+    throw new HttpsError("invalid-argument", "Mise invalide.");
+  }
+
+  const uniquePlayerUids = Array.from(
+    new Set(
+      (Array.isArray(playerUids) ? playerUids : [])
+        .map((item) => String(item || "").trim())
+        .filter(Boolean)
+    )
+  );
+
+  const entryFundingByUid = {};
+  const afterDoesByUid = {};
+
+  for (const playerUid of uniquePlayerUids) {
+    const walletMutation = await applyWalletMutationTx(tx, {
+      uid: playerUid,
+      email: "",
+      type: "game_entry",
+      note: isFriendRoom(room) ? "Participation partie privee" : "Participation partie",
+      amountDoes: normalizedStakeDoes,
+      amountGourdes: 0,
+      deltaDoes: -normalizedStakeDoes,
+      deltaExchangedGourdes: 0,
+    });
+
+    entryFundingByUid[playerUid] = {
+      approvedDoes: safeInt(walletMutation.gameEntryFunding?.approvedDoes),
+      provisionalDoes: safeInt(walletMutation.gameEntryFunding?.provisionalDoes),
+      provisionalSources: normalizeFundingSources(walletMutation.gameEntryFunding?.provisionalSources),
+    };
+    afterDoesByUid[playerUid] = safeInt(walletMutation.afterDoes);
+  }
+
+  return {
+    entryFundingByUid,
+    afterDoesByUid,
+  };
 }
 
 async function deleteCollectionInChunks(collectionRef, batchSize = 400) {
@@ -3689,6 +3775,345 @@ exports.walletMutate = publicOnCall("walletMutate", async (request) => {
   };
 });
 
+exports.createFriendRoom = publicOnCall("createFriendRoom", async (request) => {
+  const { uid, email } = assertAuth(request);
+  const payload = request.data && typeof request.data === "object" ? request.data : {};
+  const stakeDoes = safeInt(payload.stakeDoes);
+  const requiredHumans = 4;
+  const [settingsSnapshot, inviteCode] = await Promise.all([
+    getSettingsSnapshotData(),
+    generateUniqueFriendRoomInviteCode(),
+  ]);
+  const selectedStakeConfig = findStakeConfigByAmount(stakeDoes, settingsSnapshot.gameStakeOptions, true);
+
+  if (!selectedStakeConfig) {
+    throw new HttpsError("invalid-argument", "Mise non autorisée.");
+  }
+
+  const activeMembership = await db
+    .collection(ROOMS_COLLECTION)
+    .where("playerUids", "array-contains", uid)
+    .limit(12)
+    .get();
+  const activeDoc = activeMembership.docs.find((docSnap) => {
+    const data = docSnap.data() || {};
+    const status = String(data.status || "");
+    return status === "waiting" || status === "playing";
+  });
+  if (activeDoc) {
+    const activeData = activeDoc.data() || {};
+    const activeSeat = getSeatForUser(activeData, uid);
+    throw new HttpsError("failed-precondition", "Tu participes déjà à une salle active.", {
+      code: "active-room-exists",
+      roomId: activeDoc.id,
+      status: String(activeData.status || ""),
+      seatIndex: activeSeat,
+      roomMode: String(activeData.roomMode || "public"),
+    });
+  }
+
+  const rewardAmountDoes = selectedStakeConfig.rewardDoes;
+  const roomRef = db.collection(ROOMS_COLLECTION).doc();
+
+  return db.runTransaction(async (tx) => {
+    const walletSnap = await tx.get(walletRef(uid));
+    const walletData = walletSnap.exists ? (walletSnap.data() || {}) : {};
+    assertWalletNotFrozen(walletData);
+
+    if (safeInt(walletData.doesBalance) < stakeDoes) {
+      throw new HttpsError("failed-precondition", "Solde Does insuffisant.");
+    }
+
+    const nowMs = Date.now();
+    const waitingDeadlineMs = nowMs + FRIEND_ROOM_WAIT_MS;
+
+    tx.set(roomRef, {
+      status: "waiting",
+      roomMode: "friends",
+      isPrivate: true,
+      allowBots: false,
+      inviteCode,
+      inviteCodeNormalized: normalizeCode(inviteCode),
+      requiredHumans,
+      createdAt: admin.firestore.FieldValue.serverTimestamp(),
+      createdAtMs: nowMs,
+      updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      ownerUid: uid,
+      playerUids: [uid, "", "", ""],
+      playerNames: [sanitizePlayerLabel(email || uid, 0), "", "", ""],
+      blockedRejoinUids: [],
+      humanCount: 1,
+      seats: { [uid]: 0 },
+      roomPresenceMs: { [uid]: nowMs },
+      botCount: 0,
+      startRevealPending: false,
+      startRevealAckUids: [],
+      waitingDeadlineMs,
+      startedAt: null,
+      startedAtMs: 0,
+      endedAtMs: 0,
+      turnLockedUntilMs: 0,
+      nextActionSeq: 0,
+      gameMode: "domino-ffa",
+      engineVersion: 2,
+      stakeDoes,
+      entryCostDoes: stakeDoes,
+      rewardAmountDoes,
+      stakeConfigId: selectedStakeConfig.id,
+    });
+
+    return {
+      ok: true,
+      roomId: roomRef.id,
+      seatIndex: 0,
+      status: "waiting",
+      charged: false,
+      inviteCode,
+      requiredHumans,
+      waitingDeadlineMs,
+      privateDeckOrder: [],
+    };
+  });
+});
+
+exports.joinFriendRoomByCode = publicOnCall("joinFriendRoomByCode", async (request) => {
+  const { uid, email } = assertAuth(request);
+  const payload = request.data && typeof request.data === "object" ? request.data : {};
+  const inviteCodeNormalized = normalizeCode(payload.inviteCode || payload.code || "");
+  const configuredBotDifficulty = await getConfiguredBotDifficulty();
+
+  if (!inviteCodeNormalized) {
+    throw new HttpsError("invalid-argument", "Code de salle requis.");
+  }
+
+  const activeMembership = await db
+    .collection(ROOMS_COLLECTION)
+    .where("playerUids", "array-contains", uid)
+    .limit(12)
+    .get();
+  const activeDoc = activeMembership.docs.find((docSnap) => {
+    const data = docSnap.data() || {};
+    const status = String(data.status || "");
+    return status === "waiting" || status === "playing";
+  });
+  if (activeDoc) {
+    const activeData = activeDoc.data() || {};
+    const activeSeat = getSeatForUser(activeData, uid);
+    throw new HttpsError("failed-precondition", "Tu participes déjà à une salle active.", {
+      code: "active-room-exists",
+      roomId: activeDoc.id,
+      status: String(activeData.status || ""),
+      seatIndex: activeSeat,
+      roomMode: String(activeData.roomMode || "public"),
+    });
+  }
+
+  const matchingSnap = await db
+    .collection(ROOMS_COLLECTION)
+    .where("inviteCodeNormalized", "==", inviteCodeNormalized)
+    .limit(6)
+    .get();
+
+  const roomDoc = matchingSnap.docs.find((docSnap) => isFriendRoom(docSnap.data() || {})) || null;
+  if (!roomDoc) {
+    throw new HttpsError("not-found", "Code de salle introuvable.");
+  }
+
+  const roomRef = roomDoc.ref;
+
+  const result = await db.runTransaction(async (tx) => {
+    const [roomSnap, walletSnap] = await Promise.all([
+      tx.get(roomRef),
+      tx.get(walletRef(uid)),
+    ]);
+
+    if (!roomSnap.exists) {
+      throw new HttpsError("not-found", "Salle introuvable.");
+    }
+
+    const room = roomSnap.data() || {};
+    if (!isFriendRoom(room)) {
+      throw new HttpsError("failed-precondition", "Cette salle n'est pas disponible.");
+    }
+
+    const roomStatus = String(room.status || "");
+    const nowMs = Date.now();
+    const waitingDeadlineMs = resolveFriendRoomDeadlineMs(room, nowMs);
+    const requiredHumans = getRoomTargetHumanCount(room);
+    const playerUids = Array.from({ length: 4 }, (_, idx) => String((room.playerUids || [])[idx] || ""));
+    const humans = playerUids.filter(Boolean).length;
+    const roomStakeDoes = safeInt(room.entryCostDoes || room.stakeDoes);
+    const roomRewardAmountDoes = resolveRoomRewardDoes(room);
+    const roomInviteCode = String(room.inviteCode || inviteCodeNormalized || "").trim();
+
+    if (roomStatus === "playing") {
+      throw new HttpsError("failed-precondition", "Cette salle a déjà démarré.");
+    }
+    if (roomStatus !== "waiting") {
+      throw new HttpsError("failed-precondition", "Cette salle n'est plus disponible.");
+    }
+    if (getBlockedRejoinSet(room).has(uid)) {
+      throw new HttpsError("permission-denied", "Tu ne peux plus rejoindre cette salle.");
+    }
+    if (nowMs >= waitingDeadlineMs && humans < requiredHumans) {
+      tx.set(roomRef, {
+        status: "closed",
+        endedReason: "expired",
+        endedAt: admin.firestore.FieldValue.serverTimestamp(),
+        endedAtMs: nowMs,
+        waitingDeadlineMs: admin.firestore.FieldValue.delete(),
+        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      }, { merge: true });
+      return {
+        ok: false,
+        expired: true,
+        roomId: roomRef.id,
+      };
+    }
+
+    const walletData = walletSnap.exists ? (walletSnap.data() || {}) : {};
+    assertWalletNotFrozen(walletData);
+
+    if (safeInt(walletData.doesBalance) < roomStakeDoes) {
+      throw new HttpsError("failed-precondition", "Solde Does insuffisant.");
+    }
+
+    if (playerUids.includes(uid)) {
+      const seat = getSeatForUser(room, uid);
+      const nextPresence = room.roomPresenceMs && typeof room.roomPresenceMs === "object"
+        ? { ...room.roomPresenceMs }
+        : {};
+      nextPresence[uid] = nowMs;
+      tx.update(roomRef, {
+        roomPresenceMs: nextPresence,
+        waitingDeadlineMs,
+        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      });
+      return {
+        ok: true,
+        resumed: true,
+        charged: false,
+        roomId: roomRef.id,
+        seatIndex: seat >= 0 ? seat : 0,
+        status: "waiting",
+        stakeDoes: roomStakeDoes,
+        rewardAmountDoes: roomRewardAmountDoes,
+        inviteCode: roomInviteCode,
+        requiredHumans,
+        waitingDeadlineMs,
+        privateDeckOrder: [],
+      };
+    }
+
+    if (humans >= requiredHumans) {
+      throw new HttpsError("failed-precondition", "Cette salle est complète.");
+    }
+
+    const currentSeats = room.seats && typeof room.seats === "object" ? room.seats : {};
+    const usedSeats = new Set(
+      Object.values(currentSeats)
+        .map((seat) => Number(seat))
+        .filter((seat) => Number.isFinite(seat) && seat >= 0 && seat < 4)
+    );
+    const seatIndex = [0, 1, 2, 3].find((seat) => !usedSeats.has(seat));
+    if (typeof seatIndex !== "number") {
+      throw new HttpsError("failed-precondition", "Cette salle est complète.");
+    }
+
+    const nextPlayerUids = playerUids.slice();
+    nextPlayerUids[seatIndex] = uid;
+    const currentNames = Array.from({ length: 4 }, (_, idx) => String((room.playerNames || [])[idx] || ""));
+    const nextPlayerNames = currentNames.slice();
+    nextPlayerNames[seatIndex] = sanitizePlayerLabel(email || uid, seatIndex);
+    const nextSeats = {
+      ...currentSeats,
+      [uid]: seatIndex,
+    };
+    const nextPresence = room.roomPresenceMs && typeof room.roomPresenceMs === "object"
+      ? { ...room.roomPresenceMs }
+      : {};
+    nextPresence[uid] = nowMs;
+    const nextHumans = nextPlayerUids.filter(Boolean).length;
+
+    if (nextHumans >= requiredHumans) {
+      const chargeResult = await chargeRoomEntriesTx(tx, room, nextPlayerUids, roomStakeDoes);
+      tx.set(roomRef, {
+        playerUids: nextPlayerUids,
+        playerNames: nextPlayerNames,
+        seats: nextSeats,
+        roomPresenceMs: nextPresence,
+        humanCount: nextHumans,
+        botCount: 0,
+        entryFundingByUid: chargeResult.entryFundingByUid,
+        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      }, { merge: true });
+
+      return {
+        ok: true,
+        resumed: false,
+        charged: true,
+        roomId: roomRef.id,
+        seatIndex,
+        does: safeInt(chargeResult.afterDoesByUid[uid]),
+        inviteCode: roomInviteCode,
+        requiredHumans,
+        stakeDoes: roomStakeDoes,
+        rewardAmountDoes: roomRewardAmountDoes,
+        ...buildStartedRoomTransaction(tx, roomRef, {
+          ...room,
+          playerUids: nextPlayerUids,
+          playerNames: nextPlayerNames,
+          seats: nextSeats,
+          humanCount: nextHumans,
+          botCount: 0,
+          roomPresenceMs: nextPresence,
+          waitingDeadlineMs,
+        }, {
+          configuredBotDifficulty,
+          nowMs,
+        }),
+      };
+    }
+
+    tx.update(roomRef, {
+      playerUids: nextPlayerUids,
+      playerNames: nextPlayerNames,
+      playerEmails: admin.firestore.FieldValue.delete(),
+      seats: nextSeats,
+      roomPresenceMs: nextPresence,
+      humanCount: nextHumans,
+      botCount: 0,
+      waitingDeadlineMs,
+      updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+    });
+
+    return {
+      ok: true,
+      resumed: false,
+      charged: false,
+      roomId: roomRef.id,
+      seatIndex,
+      status: "waiting",
+      inviteCode: roomInviteCode,
+      requiredHumans,
+      stakeDoes: roomStakeDoes,
+      rewardAmountDoes: roomRewardAmountDoes,
+      waitingDeadlineMs,
+      privateDeckOrder: [],
+    };
+  });
+
+  if (result?.expired === true) {
+    throw new HttpsError("failed-precondition", "Ce code a expiré.");
+  }
+
+  if (result?.status === "playing" && result?.startRevealPending !== true) {
+    await processPendingBotTurns(String(result.roomId || ""));
+  }
+
+  return result;
+});
+
 exports.joinMatchmaking = publicOnCall("joinMatchmaking", async (request) => {
   const { uid, email } = assertAuth(request);
   const payload = request.data && typeof request.data === "object" ? request.data : {};
@@ -3713,6 +4138,7 @@ exports.joinMatchmaking = publicOnCall("joinMatchmaking", async (request) => {
       const roomSnap = await tx.get(activeRoomRef);
       if (!roomSnap.exists) return null;
       const room = roomSnap.data() || {};
+      if (isFriendRoom(room)) return null;
       const seatIndex = getSeatForUser(room, uid);
       if (seatIndex < 0) return null;
 
@@ -3802,6 +4228,7 @@ exports.joinMatchmaking = publicOnCall("joinMatchmaking", async (request) => {
       .get();
 
     const waitingDocs = waitingCandidates.docs
+      .filter((docSnap) => !isFriendRoom(docSnap.data() || {}))
       .slice()
       .sort((a, b) => {
         const humansLeft = safeInt(a.get("humanCount"));
@@ -3835,6 +4262,9 @@ exports.joinMatchmaking = publicOnCall("joinMatchmaking", async (request) => {
           throw new HttpsError("aborted", "Salle introuvable.");
         }
         const room = roomSnap.data() || {};
+        if (isFriendRoom(room)) {
+          throw new HttpsError("aborted", "Salle non disponible.");
+        }
         if (room.status !== "waiting") {
           throw new HttpsError("aborted", "Salle non disponible.");
         }
@@ -4053,6 +4483,9 @@ exports.joinMatchmaking = publicOnCall("joinMatchmaking", async (request) => {
       const roomSnap = await tx.get(openRoomRef);
       if (roomSnap.exists) {
         const room = roomSnap.data() || {};
+        if (isFriendRoom(room)) {
+          throw new HttpsError("aborted", "Salle non disponible.");
+        }
         const status = String(room.status || "");
         const roomEntryCostDoes = safeInt(room.entryCostDoes || room.stakeDoes);
         const roomRewardAmountDoes = resolveRoomRewardDoes(room);
@@ -4309,7 +4742,6 @@ exports.ensureRoomReady = publicOnCall("ensureRoomReady", async (request) => {
     }
 
     const room = roomSnap.data() || {};
-    const poolRef = matchmakingPoolRef(String(room.stakeConfigId || ""), safeInt(room.entryCostDoes || room.stakeDoes));
     const seatIndex = getSeatForUser(room, uid);
     if (seatIndex < 0) {
       throw new HttpsError("permission-denied", "Tu ne fais pas partie de cette salle.");
@@ -4331,6 +4763,88 @@ exports.ensureRoomReady = publicOnCall("ensureRoomReady", async (request) => {
 
     const nowMs = Date.now();
     const humans = Array.isArray(room.playerUids) ? room.playerUids.filter(Boolean).length : safeInt(room.humanCount);
+
+    if (isFriendRoom(room)) {
+      const requiredHumans = getRoomTargetHumanCount(room);
+      const waitingDeadlineMs = resolveFriendRoomDeadlineMs(room, nowMs);
+      if (safeSignedInt(room.waitingDeadlineMs) !== waitingDeadlineMs) {
+        tx.update(roomRef, {
+          waitingDeadlineMs,
+          updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+        });
+      }
+
+      if (humans < requiredHumans) {
+        if (nowMs >= waitingDeadlineMs) {
+          tx.set(roomRef, {
+            status: "closed",
+            endedReason: "expired",
+            endedAt: admin.firestore.FieldValue.serverTimestamp(),
+            endedAtMs: nowMs,
+            waitingDeadlineMs: admin.firestore.FieldValue.delete(),
+            updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+          }, { merge: true });
+          return {
+            ok: true,
+            started: false,
+            expired: true,
+            status: "closed",
+            startRevealPending: false,
+            waitingDeadlineMs: 0,
+            humanCount: humans,
+            botCount: 0,
+            requiredHumans,
+            privateDeckOrder: [],
+          };
+        }
+
+        return {
+          ok: true,
+          started: false,
+          status: "waiting",
+          startRevealPending: false,
+          waitingDeadlineMs,
+          humanCount: humans,
+          botCount: 0,
+          requiredHumans,
+          privateDeckOrder: [],
+        };
+      }
+
+      const playerUids = Array.isArray(room.playerUids) ? room.playerUids.slice(0, 4) : ["", "", "", ""];
+      let entryFundingByUid = room.entryFundingByUid && typeof room.entryFundingByUid === "object"
+        ? { ...room.entryFundingByUid }
+        : null;
+      let afterDoesForCaller = 0;
+
+      if (!entryFundingByUid || Object.keys(entryFundingByUid).length < humans) {
+        const chargeResult = await chargeRoomEntriesTx(tx, room, playerUids, safeInt(room.entryCostDoes || room.stakeDoes));
+        entryFundingByUid = chargeResult.entryFundingByUid;
+        afterDoesForCaller = safeInt(chargeResult.afterDoesByUid[uid]);
+        tx.set(roomRef, {
+          entryFundingByUid,
+          updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+        }, { merge: true });
+      }
+
+      return {
+        does: afterDoesForCaller,
+        charged: true,
+        requiredHumans,
+        ...buildStartedRoomTransaction(tx, roomRef, {
+          ...room,
+          entryFundingByUid,
+          humanCount: humans,
+          botCount: 0,
+          waitingDeadlineMs,
+        }, {
+          configuredBotDifficulty,
+          nowMs,
+        }),
+      };
+    }
+
+    const poolRef = matchmakingPoolRef(String(room.stakeConfigId || ""), safeInt(room.entryCostDoes || room.stakeDoes));
     const waitingDeadlineMs = resolveWaitingDeadlineMs(room, nowMs);
     if (safeSignedInt(room.waitingDeadlineMs) !== waitingDeadlineMs) {
       tx.update(roomRef, {

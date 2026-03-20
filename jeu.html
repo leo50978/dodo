@@ -107,10 +107,73 @@
                     line-height: 1.2 !important;
                 }
             }
+
+            body.game-hud-minimal #LeaveRoomTopBtn,
+            body.game-hud-minimal #FullscreenToggleBtn,
+            body.game-hud-minimal #FullscreenHint,
+            body.game-hud-minimal #PlayerLightsToggleBtn,
+            body.game-hud-minimal #OnlineUsersHud,
+            body.game-hud-minimal #LocalTurnDoesWrap,
+            body.game-hud-minimal #GameChatComposeBtn,
+            body.game-hud-minimal #GameChatReactionPicker {
+                display: none !important;
+            }
+
+            body.game-hud-minimal #LocalTurnHud {
+                max-width: 4.9rem;
+            }
+
+            body.game-hud-minimal #LocalTurnHud > div:first-child {
+                justify-content: center;
+            }
+
+            #GameChatBanner {
+                width: min(32rem, calc(100vw - 2rem));
+            }
+
+            #GameChatBannerText {
+                min-height: 2.25rem;
+                font-size: clamp(1.6rem, 4vw, 2.4rem);
+                line-height: 1.1;
+            }
+
+            #GameChatBanner[data-tone="self"] {
+                border-color: rgba(59, 130, 246, 0.4);
+                background: rgba(37, 99, 235, 0.2);
+            }
+
+            #GameChatBanner[data-tone="ambient"] {
+                border-color: rgba(34, 197, 94, 0.32);
+                background: rgba(16, 185, 129, 0.14);
+            }
+
+            #GameChatReactionPicker {
+                width: min(24rem, calc(100vw - 2rem));
+            }
+
+            #GameChatReactionGrid {
+                grid-template-columns: repeat(4, minmax(0, 1fr));
+            }
+
+            .game-chat-reaction-btn {
+                min-height: 3rem;
+                font-size: 1.6rem;
+                line-height: 1;
+            }
         </style>
     </head>
     <body>
         <div id="GamePhotoBackdrop" aria-hidden="true"></div>
+
+        <div id="GameChatBanner" data-tone="ambient" class="pointer-events-none fixed left-1/2 top-16 z-[2475] hidden -translate-x-1/2 rounded-2xl border border-white/20 px-4 py-3 text-center text-sm font-semibold text-white shadow-[10px_10px_24px_rgba(16,23,40,0.45),-8px_-8px_18px_rgba(112,126,165,0.18)] backdrop-blur-xl sm:top-20 sm:text-base">
+            <div id="GameChatBannerAuthor" class="text-[11px] uppercase tracking-[0.18em] text-white/70 sm:text-xs">Jwè</div>
+            <div id="GameChatBannerText" class="mt-1 flex items-center justify-center leading-relaxed">😀</div>
+        </div>
+
+        <div id="GameChatReactionPicker" class="fixed bottom-[6.6rem] left-1/2 z-[2706] hidden -translate-x-1/2 rounded-[1.4rem] border border-white/20 bg-[#3F4766]/82 p-3 text-white shadow-[10px_10px_24px_rgba(16,23,40,0.45),-8px_-8px_18px_rgba(112,126,165,0.18)] backdrop-blur-xl">
+            <div class="mb-2 text-center text-[11px] font-semibold uppercase tracking-[0.18em] text-white/68 sm:text-xs">Chwazi yon reyaksyon</div>
+            <div id="GameChatReactionGrid" class="grid gap-2"></div>
+        </div>
 
         <div id="MatchLoadingOverlay" class="fixed inset-0 z-[2500] hidden items-center justify-center bg-black/45 p-4 backdrop-blur-md">
             <div id="MatchLoadingPanel" class="w-[min(92vw,30rem)] rounded-3xl border border-white/20 bg-[#3F4766]/60 p-5 text-center text-white shadow-[14px_14px_34px_rgba(16,23,40,0.5),-10px_-10px_24px_rgba(112,126,165,0.2)] backdrop-blur-xl">
@@ -171,6 +234,20 @@
             Quitter salle
         </button>
 
+        <button id="HudViewToggleBtn" type="button" class="fixed bottom-4 left-1/2 z-[2705] grid h-9 w-9 -translate-x-1/2 place-items-center rounded-xl border border-white/20 bg-[#3F4766]/72 text-white shadow-[10px_10px_24px_rgba(16,23,40,0.45),-8px_-8px_18px_rgba(112,126,165,0.18)] backdrop-blur-xl transition hover:bg-[#4a5376]/82 sm:h-10 sm:w-10 sm:rounded-2xl" aria-label="Masquer les panneaux" title="Masquer les panneaux" aria-pressed="false">
+            <svg id="HudViewToggleIcon" xmlns="http://www.w3.org/2000/svg" class="h-4 w-4 sm:h-5 sm:w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" aria-hidden="true">
+                <path d="M2 12s3.6-6 10-6 10 6 10 6-3.6 6-10 6S2 12 2 12Z"></path>
+                <circle cx="12" cy="12" r="2.8"></circle>
+            </svg>
+        </button>
+
+        <button id="GameChatComposeBtn" type="button" class="fixed bottom-16 left-1/2 z-[2705] inline-flex h-10 -translate-x-1/2 items-center gap-2 rounded-2xl border border-white/20 bg-[#3F4766]/72 px-4 text-xs font-semibold tracking-wide text-white shadow-[10px_10px_24px_rgba(16,23,40,0.45),-8px_-8px_18px_rgba(112,126,165,0.18)] backdrop-blur-xl transition hover:bg-[#4a5376]/82 sm:bottom-[4.75rem] sm:h-11 sm:text-sm" aria-label="Envoyer une reaction" title="Envoyer une reaction">
+            <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4 sm:h-5 sm:w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" aria-hidden="true">
+                <path d="M21 11.5a8.5 8.5 0 0 1-8.5 8.5 8.9 8.9 0 0 1-3.6-.75L3 21l1.9-5.4A8.5 8.5 0 1 1 21 11.5Z"></path>
+            </svg>
+            <span>Emoji</span>
+        </button>
+
         <button id="FullscreenToggleBtn" type="button" class="fixed bottom-4 right-3 z-[2465] grid h-10 w-10 place-items-center rounded-2xl border border-white/20 bg-[#3F4766]/70 text-white shadow-[10px_10px_24px_rgba(16,23,40,0.45),-8px_-8px_18px_rgba(112,126,165,0.18)] backdrop-blur-xl transition hover:bg-[#4a5376]/80" aria-label="Passer en plein ecran" title="Passer en plein ecran">
             <svg id="FullscreenToggleIcon" xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
                 <path d="M8 3H5a2 2 0 0 0-2 2v3"></path>
@@ -198,14 +275,11 @@
                     <div id="LocalTurnLabel" class="hidden text-[11px] font-semibold uppercase tracking-wide text-white/80 sm:block">En attente</div>
                     <div id="LocalTurnValue" class="text-[13px] font-bold leading-none sm:mt-0.5 sm:text-lg">--</div>
                 </div>
-                <div class="inline-flex shrink-0 items-center gap-1 rounded-lg border border-white/15 bg-white/10 px-1 py-0.5 shadow-[inset_4px_4px_8px_rgba(18,24,38,0.35),inset_-4px_-4px_8px_rgba(110,124,163,0.18)] sm:mt-2 sm:gap-1.5 sm:rounded-xl sm:border-white/20 sm:px-2 sm:py-1">
+                <div id="LocalTurnDoesWrap" class="inline-flex shrink-0 items-center gap-1 rounded-lg border border-white/15 bg-white/10 px-1 py-0.5 shadow-[inset_4px_4px_8px_rgba(18,24,38,0.35),inset_-4px_-4px_8px_rgba(110,124,163,0.18)] sm:mt-2 sm:gap-1.5 sm:rounded-xl sm:border-white/20 sm:px-2 sm:py-1">
                     <img src="./does.png" alt="Does" class="h-3 w-3 rounded-full object-cover sm:h-4 sm:w-4" onerror="this.style.display='none'" />
                     <span class="hidden text-[10px] font-semibold uppercase tracking-wide text-white/75 sm:inline">Does</span>
                     <span id="LocalDoesValue" class="text-[10px] font-bold text-white sm:text-xs">0</span>
                 </div>
-            </div>
-            <div class="mt-1 h-[3px] w-12 overflow-hidden rounded-full border border-white/15 bg-white/10 sm:mt-2 sm:h-1.5 sm:w-28 sm:border-white/20">
-                <span id="LocalTurnBar" class="block h-full w-full rounded-full bg-gradient-to-r from-orange-500 to-amber-300 transition-all duration-300"></span>
             </div>
         </div>
 

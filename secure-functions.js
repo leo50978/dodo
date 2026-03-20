@@ -44,6 +44,14 @@ export async function joinMatchmakingSecure(payload = {}) {
   return invokeCallable("joinMatchmaking", payload, "Impossible de rejoindre une partie.");
 }
 
+export async function createFriendRoomSecure(payload = {}) {
+  return invokeCallable("createFriendRoom", payload, "Impossible de créer une partie entre amis.");
+}
+
+export async function joinFriendRoomByCodeSecure(payload = {}) {
+  return invokeCallable("joinFriendRoomByCode", payload, "Impossible de rejoindre la partie entre amis.");
+}
+
 export async function ensureRoomReadySecure(payload = {}) {
   return invokeCallable("ensureRoomReady", payload, "Impossible de demarrer la partie.");
 }

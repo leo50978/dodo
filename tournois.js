@@ -3,12 +3,26 @@ import {
   functions as firebaseFunctions,
   httpsCallable,
 } from "./firebase-init.js";
+import {
+  getPublicGameStakeOptionsSecure,
+} from "./secure-functions.js";
+import {
+  showGlobalLoading,
+  withButtonLoading,
+} from "./loading-ui.js";
 
 const POLL_MS = 10 * 1000;
 const MATCHING_DELAY_MS = 10 * 1000;
 const ACTIVE_TOURNAMENT_STORAGE_KEY = "dlk_active_tournament_session_v2";
+const DEFAULT_GAME_STAKE_OPTIONS = Object.freeze([
+  { stakeDoes: 100, rewardDoes: 175, enabled: true, sortOrder: 1 },
+  { stakeDoes: 250, rewardDoes: 440, enabled: true, sortOrder: 2 },
+  { stakeDoes: 500, rewardDoes: 900, enabled: true, sortOrder: 3 },
+  { stakeDoes: 1000, rewardDoes: 1800, enabled: true, sortOrder: 4 },
+]);
 
 const dom = {
+  playNowBtn: document.getElementById("playNowBtn"),
   pageMessage: document.getElementById("pageMessage"),
   loaderPanel: document.getElementById("loaderPanel"),
   loaderMeta: document.getElementById("loaderMeta"),
@@ -30,6 +44,12 @@ const dom = {
   winnerModalReward: document.getElementById("winnerModalReward"),
   winnerReplayBtn: document.getElementById("winnerReplayBtn"),
   winnerBackBtn: document.getElementById("winnerBackBtn"),
+  doesRequiredOverlay: document.getElementById("doesRequiredOverlay"),
+  doesRequiredOpenProfile: document.getElementById("doesRequiredOpenProfile"),
+  doesRequiredClose: document.getElementById("doesRequiredClose"),
+  stakeSelectionOverlay: document.getElementById("stakeSelectionOverlay"),
+  stakeSelectionClose: document.getElementById("stakeSelectionClose"),
+  stakeOptionsGrid: document.getElementById("stakeOptionsGrid"),
 };
 
 const ensureSessionsFn = httpsCallable(firebaseFunctions, "ensureUserTournamentSessions");
@@ -49,6 +69,121 @@ let countdownHandle = null;
 let currentCountdownTargetMs = 0;
 let currentCountdownMode = "";
 let shownWinnerModalSessionId = "";
+let xchangeModulePromise = null;
+let stakeOptionsHydrationPromise = null;
+
+function loadXchangeModule() {
+  if (!xchangeModulePromise) {
+    xchangeModulePromise = import("./xchange.js");
+  }
+  return xchangeModulePromise;
+}
+
+function normalizeGameStakeOptions(rawOptions) {
+  const source = Array.isArray(rawOptions) && rawOptions.length ? rawOptions : DEFAULT_GAME_STAKE_OPTIONS;
+  const byStake = new Map();
+
+  source.forEach((item, index) => {
+    const stakeDoes = Math.max(0, Math.trunc(Number(item?.stakeDoes || item?.amountDoes || item?.stake || 0)));
+    if (!stakeDoes) return;
+    const rewardDoes = Math.max(stakeDoes, Math.trunc(Number(item?.rewardDoes || item?.reward || Math.round(stakeDoes * 1.8))));
+    const enabled = item?.enabled !== false;
+    const sortOrder = Number.isFinite(Number(item?.sortOrder)) ? Number(item.sortOrder) : index + 1;
+    byStake.set(stakeDoes, {
+      stakeDoes,
+      rewardDoes,
+      enabled,
+      sortOrder,
+    });
+  });
+
+  const normalized = Array.from(byStake.values()).sort((left, right) => {
+    if (left.sortOrder !== right.sortOrder) return left.sortOrder - right.sortOrder;
+    return left.stakeDoes - right.stakeDoes;
+  });
+
+  return normalized.length ? normalized : DEFAULT_GAME_STAKE_OPTIONS.map((item) => ({ ...item }));
+}
+
+async function loadPublicGameStakeOptions() {
+  try {
+    const response = await getPublicGameStakeOptionsSecure();
+    return normalizeGameStakeOptions(response?.options);
+  } catch (error) {
+    console.warn("[TOURNOIS] fallback local options", error);
+    return normalizeGameStakeOptions();
+  }
+}
+
+function openProfilePage() {
+  showGlobalLoading("Ouverture du profil...");
+  window.location.href = "./profil.html";
+}
+
+function openStakeSelection() {
+  if (!dom.stakeSelectionOverlay) return;
+  dom.stakeSelectionOverlay.hidden = false;
+}
+
+function closeStakeSelection() {
+  if (!dom.stakeSelectionOverlay) return;
+  dom.stakeSelectionOverlay.hidden = true;
+}
+
+function openDoesRequired() {
+  if (!dom.doesRequiredOverlay) return;
+  dom.doesRequiredOverlay.hidden = false;
+}
+
+function closeDoesRequired() {
+  if (!dom.doesRequiredOverlay) return;
+  dom.doesRequiredOverlay.hidden = true;
+}
+
+function renderStakeOptions(options = []) {
+  if (!dom.stakeOptionsGrid) return;
+  const currentStakeOptions = normalizeGameStakeOptions(options);
+  dom.stakeOptionsGrid.innerHTML = currentStakeOptions.map((option) => {
+    const enabled = option.enabled === true;
+    return `
+      <button
+        data-stake="${option.stakeDoes}"
+        data-available="${enabled ? "1" : "0"}"
+        type="button"
+        class="btn stake-option-btn${enabled ? " btn-primary" : ""}"
+        style="width:100%;min-height:58px;${enabled ? "" : "opacity:.55;cursor:not-allowed;"}"
+      >
+        <span>${option.stakeDoes} Does</span>
+      </button>
+    `;
+  }).join("");
+}
+
+function ensureStakeOptionsLoaded() {
+  if (stakeOptionsHydrationPromise) return stakeOptionsHydrationPromise;
+  stakeOptionsHydrationPromise = loadPublicGameStakeOptions()
+    .then((options) => {
+      renderStakeOptions(options);
+      return options;
+    })
+    .catch((error) => {
+      console.warn("[TOURNOIS] stake render fallback", error);
+      const fallback = normalizeGameStakeOptions();
+      renderStakeOptions(fallback);
+      return fallback;
+    });
+  return stakeOptionsHydrationPromise;
+}
+
+async function handlePlayNow() {
+  if (!currentUser) {
+    showGlobalLoading("Redirection vers la connexion...");
+    window.location.href = "./auth.html";
+    return;
+  }
+  await ensureStakeOptionsLoaded();
+  openStakeSelection();
+}
 
 function hashId(uid = "") {
   let hash = 0;
@@ -572,6 +707,9 @@ function replayTournament() {
 }
 
 function bindUi() {
+  dom.playNowBtn?.addEventListener("click", () => {
+    void handlePlayNow();
+  });
   dom.exitTournamentBtn?.addEventListener("click", () => {
     showExitConfirmModal();
   });
@@ -586,6 +724,43 @@ function bindUi() {
   });
   dom.winnerBackBtn?.addEventListener("click", () => {
     void exitTournament();
+  });
+  dom.stakeSelectionClose?.addEventListener("click", closeStakeSelection);
+  dom.stakeSelectionOverlay?.addEventListener("click", (event) => {
+    if (event.target === dom.stakeSelectionOverlay) {
+      closeStakeSelection();
+    }
+  });
+  dom.doesRequiredClose?.addEventListener("click", closeDoesRequired);
+  dom.doesRequiredOverlay?.addEventListener("click", (event) => {
+    if (event.target === dom.doesRequiredOverlay) {
+      closeDoesRequired();
+    }
+  });
+  dom.doesRequiredOpenProfile?.addEventListener("click", () => {
+    closeDoesRequired();
+    openProfilePage();
+  });
+  dom.stakeOptionsGrid?.addEventListener("click", async (event) => {
+    const btn = event.target.closest(".stake-option-btn");
+    if (!btn || !dom.stakeOptionsGrid?.contains(btn)) return;
+    const available = btn.getAttribute("data-available") === "1";
+    if (!available) return;
+
+    const stakeAmount = Number(btn.getAttribute("data-stake") || 100);
+    await withButtonLoading(btn, async () => {
+      const xchangeModule = await loadXchangeModule();
+      await xchangeModule.ensureXchangeState(currentUser?.uid);
+      const state = xchangeModule.getXchangeState(window.__userBaseBalance || window.__userBalance || 0, currentUser?.uid);
+      if ((state?.does || 0) < stakeAmount) {
+        closeStakeSelection();
+        openDoesRequired();
+        return;
+      }
+      closeStakeSelection();
+      showGlobalLoading("Ouverture de la partie...");
+      window.location.href = `./jeu.html?autostart=1&stake=${stakeAmount}`;
+    }, { loadingLabel: "Vérification..." });
   });
 }
 

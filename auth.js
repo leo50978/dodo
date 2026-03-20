@@ -53,6 +53,7 @@ function formatAuthError(err, fallback) {
     "auth/account-exists-with-different-credential": "Ce compte existe déjà avec une autre méthode de connexion.",
     "auth/invalid-action-code": "Le code de vérification est invalide ou déjà utilisé.",
     "auth/expired-action-code": "Le code de vérification a expiré.",
+    "auth/device-account-exists": "Un compte existe déjà sur cet appareil. Connecte-toi avec ce compte ou contacte l'assistance au 50941752992.",
   };
 
   if (code && map[code]) return map[code] + " (" + code + ")";
