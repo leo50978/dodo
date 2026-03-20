@@ -32,6 +32,8 @@ const AMBASSADOR_SECRETS_DOC = "credentials";
 const CHAT_COLLECTION = "globalChannelMessages";
 const SUPPORT_THREADS_COLLECTION = "supportThreads";
 const SUPPORT_MESSAGES_SUBCOLLECTION = "messages";
+const SURVEYS_COLLECTION = "surveys";
+const SURVEY_RESPONSES_SUBCOLLECTION = "responses";
 const DASHBOARD_PUSH_SUBSCRIPTIONS_COLLECTION = "dashboardPushSubscriptions";
 const MATCHMAKING_POOLS_COLLECTION = "matchmakingPools";
 const ANALYTICS_META_COLLECTION = "analyticsMeta";
@@ -109,6 +111,11 @@ const SHARE_SITE_PROMO_TARGET = 5;
 const SHARE_SITE_PROMO_REWARD_DOES = 100;
 const SHARE_SITE_PROMO_COOLDOWN_MS = 3 * 24 * 60 * 60 * 1000;
 const SHARE_SITE_PROMO_ACTION_CACHE = 30;
+const SURVEY_MAX_CHOICES = 8;
+const SURVEY_MAX_CHOICE_LABEL = 90;
+const SURVEY_MAX_TITLE = 140;
+const SURVEY_MAX_DESCRIPTION = 600;
+const SURVEY_MAX_TEXT_ANSWER = 500;
 const PROVISIONAL_FUNDING_VERSION = 2;
 const PROVISIONAL_CREDIT_MODE = "provisional";
 const ACCOUNT_FREEZE_REJECT_THRESHOLD = 3;
@@ -1657,6 +1664,165 @@ function adminBootstrapRef() {
 
 function appPublicSettingsRef() {
   return db.collection("settings").doc(APP_PUBLIC_SETTINGS_DOC);
+}
+
+function surveysCollection() {
+  return db.collection(SURVEYS_COLLECTION);
+}
+
+function surveyRef(surveyId) {
+  return surveysCollection().doc(String(surveyId || "").trim());
+}
+
+function surveyResponsesCollection(surveyId) {
+  return surveyRef(surveyId).collection(SURVEY_RESPONSES_SUBCOLLECTION);
+}
+
+function surveyResponseRef(surveyId, uid) {
+  return surveyResponsesCollection(surveyId).doc(String(uid || "").trim());
+}
+
+function normalizeSurveyStatus(value, fallback = "draft") {
+  const normalized = sanitizeText(value || "", 24).toLowerCase();
+  return ["draft", "live", "closed", "deleted"].includes(normalized) ? normalized : fallback;
+}
+
+function tsFieldToMs(value) {
+  if (!value) return 0;
+  if (typeof value?.toMillis === "function") {
+    try {
+      return value.toMillis();
+    } catch (_) {
+      return 0;
+    }
+  }
+  if (typeof value?.toDate === "function") {
+    try {
+      return value.toDate().getTime();
+    } catch (_) {
+      return 0;
+    }
+  }
+  if (typeof value?.seconds === "number") return value.seconds * 1000;
+  if (typeof value === "number") return Number.isFinite(value) ? value : 0;
+  const parsed = Date.parse(String(value));
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function normalizeSurveyChoiceId(value, fallbackIndex = 0) {
+  const normalized = sanitizeText(value || "", 40)
+    .toLowerCase()
+    .replace(/[^a-z0-9_-]/g, "_")
+    .replace(/_+/g, "_")
+    .replace(/^_+|_+$/g, "");
+  return normalized || `choice_${fallbackIndex + 1}`;
+}
+
+function normalizeSurveyChoices(rawChoices = []) {
+  const out = [];
+  const usedIds = new Set();
+  const source = Array.isArray(rawChoices) ? rawChoices : [];
+
+  for (let index = 0; index < source.length; index += 1) {
+    const raw = source[index];
+    const label = sanitizeText(
+      typeof raw === "string" ? raw : raw?.label || raw?.text || raw?.value || "",
+      SURVEY_MAX_CHOICE_LABEL,
+    );
+    if (!label) continue;
+    let id = normalizeSurveyChoiceId(typeof raw === "string" ? "" : raw?.id, index);
+    while (usedIds.has(id)) {
+      id = `${id}_${out.length + 1}`;
+    }
+    usedIds.add(id);
+    out.push({ id, label });
+    if (out.length >= SURVEY_MAX_CHOICES) break;
+  }
+
+  return out;
+}
+
+function normalizeSurveyPayload(payload = {}, existing = {}) {
+  const title = sanitizeText(payload.title ?? existing.title ?? "", SURVEY_MAX_TITLE);
+  const description = sanitizeText(
+    payload.description ?? existing.description ?? "",
+    SURVEY_MAX_DESCRIPTION,
+  );
+  const allowChoiceAnswer = payload.allowChoiceAnswer === undefined
+    ? existing.allowChoiceAnswer !== false
+    : payload.allowChoiceAnswer === true;
+  const allowTextAnswer = payload.allowTextAnswer === undefined
+    ? existing.allowTextAnswer === true
+    : payload.allowTextAnswer === true;
+  const choices = normalizeSurveyChoices(payload.choices ?? existing.choices ?? []);
+  const status = normalizeSurveyStatus(payload.status, normalizeSurveyStatus(existing.status || "draft", "draft"));
+
+  if (!title) {
+    throw new HttpsError("invalid-argument", "Le titre du sondage est obligatoire.", {
+      code: "survey-title-required",
+    });
+  }
+  if (!allowChoiceAnswer && !allowTextAnswer) {
+    throw new HttpsError("invalid-argument", "Active au moins un mode de réponse.", {
+      code: "survey-answer-mode-required",
+    });
+  }
+  if (allowChoiceAnswer && choices.length < 2) {
+    throw new HttpsError("invalid-argument", "Ajoute au moins 2 choix pour les réponses guidées.", {
+      code: "survey-choices-required",
+    });
+  }
+
+  return {
+    title,
+    description,
+    allowChoiceAnswer,
+    allowTextAnswer,
+    choices,
+    status,
+  };
+}
+
+function buildSurveySummary(docSnap) {
+  const data = docSnap.data() || {};
+  return {
+    id: docSnap.id,
+    title: sanitizeText(data.title || "", SURVEY_MAX_TITLE),
+    description: sanitizeText(data.description || "", SURVEY_MAX_DESCRIPTION),
+    allowChoiceAnswer: data.allowChoiceAnswer !== false,
+    allowTextAnswer: data.allowTextAnswer === true,
+    choices: normalizeSurveyChoices(data.choices || []),
+    status: normalizeSurveyStatus(data.status || "draft", "draft"),
+    version: Math.max(1, safeInt(data.version) || 1),
+    responseCount: safeInt(data.responseCount),
+    createdAtMs: tsFieldToMs(data.createdAt) || safeSignedInt(data.createdAtMs),
+    updatedAtMs: tsFieldToMs(data.updatedAt) || safeSignedInt(data.updatedAtMs),
+    publishedAtMs: tsFieldToMs(data.publishedAt) || safeSignedInt(data.publishedAtMs),
+    closedAtMs: tsFieldToMs(data.closedAt) || safeSignedInt(data.closedAtMs),
+    deletedAtMs: tsFieldToMs(data.deletedAt) || safeSignedInt(data.deletedAtMs),
+    lastResponseAtMs: tsFieldToMs(data.lastResponseAt) || safeSignedInt(data.lastResponseAtMs),
+  };
+}
+
+async function loadClientSurveySnapshot(uid, fallbackEmail = "") {
+  const safeUid = String(uid || "").trim();
+  if (!safeUid) {
+    return {
+      uid: "",
+      displayName: "",
+      email: sanitizeEmail(fallbackEmail, 160),
+      phone: "",
+    };
+  }
+
+  const clientSnap = await walletRef(safeUid).get();
+  const data = clientSnap.exists ? (clientSnap.data() || {}) : {};
+  return {
+    uid: safeUid,
+    displayName: sanitizeText(data.name || data.displayName || data.username || "", 120),
+    email: sanitizeEmail(data.email || fallbackEmail || "", 160),
+    phone: sanitizePhone(data.phone || data.customerPhone || "", 40),
+  };
 }
 
 function buildStakeRewardDoes(stakeDoes) {
@@ -7615,6 +7781,322 @@ exports.markSupportThreadSeenSecure = publicOnCall("markSupportThreadSeenSecure"
     ok: true,
     threadId: context.threadId,
     guestToken: context.guestToken || "",
+  };
+});
+
+exports.upsertSurveySecure = publicOnCall("upsertSurveySecure", async (request) => {
+  const { uid } = assertFinanceAdmin(request);
+  const payload = request.data && typeof request.data === "object" ? request.data : {};
+  const surveyId = sanitizeText(payload.surveyId || "", 120);
+  const ref = surveyId ? surveyRef(surveyId) : surveysCollection().doc();
+  const existingSnap = surveyId ? await ref.get() : null;
+  const existing = existingSnap?.exists ? (existingSnap.data() || {}) : {};
+  const normalized = normalizeSurveyPayload(payload, existing);
+  const nowMs = Date.now();
+  const nextVersion = existingSnap?.exists ? Math.max(1, safeInt(existing.version) || 1) : 1;
+
+  await ref.set({
+    title: normalized.title,
+    description: normalized.description,
+    allowChoiceAnswer: normalized.allowChoiceAnswer,
+    allowTextAnswer: normalized.allowTextAnswer,
+    choices: normalized.choices,
+    status: normalized.status === "live" ? "draft" : normalized.status,
+    version: nextVersion,
+    updatedByUid: uid,
+    updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+    updatedAtMs: nowMs,
+    ...(existingSnap?.exists
+      ? {}
+      : {
+          createdByUid: uid,
+          createdAt: admin.firestore.FieldValue.serverTimestamp(),
+          createdAtMs: nowMs,
+          responseCount: 0,
+          lastResponseAtMs: 0,
+        }),
+  }, { merge: true });
+
+  const savedSnap = await ref.get();
+  return {
+    ok: true,
+    survey: buildSurveySummary(savedSnap),
+  };
+});
+
+exports.listSurveysSecure = publicOnCall("listSurveysSecure", async (request) => {
+  assertFinanceAdmin(request);
+  const snap = await surveysCollection().orderBy("updatedAt", "desc").limit(200).get();
+  const surveys = snap.docs
+    .map((docSnap) => buildSurveySummary(docSnap))
+    .filter((survey) => survey.status !== "deleted");
+  return {
+    ok: true,
+    surveys,
+  };
+});
+
+exports.publishSurveySecure = publicOnCall("publishSurveySecure", async (request) => {
+  const { uid } = assertFinanceAdmin(request);
+  const payload = request.data && typeof request.data === "object" ? request.data : {};
+  const surveyId = sanitizeText(payload.surveyId || "", 120);
+  if (!surveyId) {
+    throw new HttpsError("invalid-argument", "Sondage introuvable.", {
+      code: "survey-id-required",
+    });
+  }
+
+  const targetRef = surveyRef(surveyId);
+  const targetSnap = await targetRef.get();
+  if (!targetSnap.exists) {
+    throw new HttpsError("not-found", "Sondage introuvable.", {
+      code: "survey-not-found",
+    });
+  }
+
+  const current = targetSnap.data() || {};
+  const normalized = normalizeSurveyPayload(current, current);
+  const nowMs = Date.now();
+  const batch = db.batch();
+  const liveSnap = await surveysCollection().where("status", "==", "live").get();
+
+  liveSnap.docs.forEach((docSnap) => {
+    if (docSnap.id === surveyId) return;
+    batch.set(docSnap.ref, {
+      status: "closed",
+      closedAt: admin.firestore.FieldValue.serverTimestamp(),
+      closedAtMs: nowMs,
+      updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      updatedAtMs: nowMs,
+    }, { merge: true });
+  });
+
+  batch.set(targetRef, {
+    title: normalized.title,
+    description: normalized.description,
+    allowChoiceAnswer: normalized.allowChoiceAnswer,
+    allowTextAnswer: normalized.allowTextAnswer,
+    choices: normalized.choices,
+    status: "live",
+    version: Math.max(1, safeInt(current.version) || 1) + 1,
+    publishedByUid: uid,
+    publishedAt: admin.firestore.FieldValue.serverTimestamp(),
+    publishedAtMs: nowMs,
+    closedAt: admin.firestore.FieldValue.delete(),
+    closedAtMs: admin.firestore.FieldValue.delete(),
+    deletedAt: admin.firestore.FieldValue.delete(),
+    deletedAtMs: admin.firestore.FieldValue.delete(),
+    updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+    updatedAtMs: nowMs,
+  }, { merge: true });
+
+  await batch.commit();
+  const savedSnap = await targetRef.get();
+  return {
+    ok: true,
+    survey: buildSurveySummary(savedSnap),
+  };
+});
+
+exports.deleteSurveySecure = publicOnCall("deleteSurveySecure", async (request) => {
+  assertFinanceAdmin(request);
+  const payload = request.data && typeof request.data === "object" ? request.data : {};
+  const surveyId = sanitizeText(payload.surveyId || "", 120);
+  if (!surveyId) {
+    throw new HttpsError("invalid-argument", "Sondage introuvable.", {
+      code: "survey-id-required",
+    });
+  }
+  const ref = surveyRef(surveyId);
+  await ref.set({
+    status: "deleted",
+    deletedAt: admin.firestore.FieldValue.serverTimestamp(),
+    deletedAtMs: Date.now(),
+    updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+    updatedAtMs: Date.now(),
+  }, { merge: true });
+  return {
+    ok: true,
+    surveyId,
+  };
+});
+
+exports.getSurveyResponsesSecure = publicOnCall("getSurveyResponsesSecure", async (request) => {
+  assertFinanceAdmin(request);
+  const payload = request.data && typeof request.data === "object" ? request.data : {};
+  const surveyId = sanitizeText(payload.surveyId || "", 120);
+  if (!surveyId) {
+    throw new HttpsError("invalid-argument", "Sondage introuvable.", {
+      code: "survey-id-required",
+    });
+  }
+
+  const [surveySnap, responsesSnap] = await Promise.all([
+    surveyRef(surveyId).get(),
+    surveyResponsesCollection(surveyId).orderBy("answeredAt", "desc").limit(5000).get(),
+  ]);
+
+  if (!surveySnap.exists) {
+    throw new HttpsError("not-found", "Sondage introuvable.", {
+      code: "survey-not-found",
+    });
+  }
+
+  const survey = buildSurveySummary(surveySnap);
+  const responses = responsesSnap.docs.map((docSnap) => {
+    const data = docSnap.data() || {};
+    return {
+      id: docSnap.id,
+      uid: sanitizeText(data.uid || docSnap.id, 160),
+      choiceId: sanitizeText(data.choiceId || "", 80),
+      choiceLabel: sanitizeText(data.choiceLabel || "", SURVEY_MAX_CHOICE_LABEL),
+      textAnswer: sanitizeText(data.textAnswer || "", SURVEY_MAX_TEXT_ANSWER),
+      answeredAtMs: tsFieldToMs(data.answeredAt) || safeSignedInt(data.answeredAtMs),
+      clientSnapshot: {
+        uid: sanitizeText(data.clientSnapshot?.uid || data.uid || docSnap.id, 160),
+        displayName: sanitizeText(data.clientSnapshot?.displayName || "", 160),
+        email: sanitizeEmail(data.clientSnapshot?.email || "", 160),
+        phone: sanitizePhone(data.clientSnapshot?.phone || "", 40),
+      },
+    };
+  });
+
+  return {
+    ok: true,
+    survey,
+    responses,
+  };
+});
+
+exports.getActiveSurveyForUserSecure = publicOnCall("getActiveSurveyForUserSecure", async (request) => {
+  const { uid } = assertAuth(request);
+  const liveSnap = await surveysCollection().where("status", "==", "live").limit(1).get();
+  if (liveSnap.empty) {
+    return {
+      ok: true,
+      survey: null,
+    };
+  }
+
+  const surveyDoc = liveSnap.docs[0];
+  const responseSnap = await surveyResponseRef(surveyDoc.id, uid).get();
+  if (responseSnap.exists) {
+    return {
+      ok: true,
+      survey: null,
+      answered: true,
+      surveyId: surveyDoc.id,
+    };
+  }
+
+  return {
+    ok: true,
+    answered: false,
+    survey: buildSurveySummary(surveyDoc),
+  };
+});
+
+exports.submitSurveyResponseSecure = publicOnCall("submitSurveyResponseSecure", async (request) => {
+  const { uid, email } = assertAuth(request);
+  const payload = request.data && typeof request.data === "object" ? request.data : {};
+  const surveyId = sanitizeText(payload.surveyId || "", 120);
+  const choiceId = sanitizeText(payload.choiceId || "", 80);
+  const textAnswer = sanitizeText(payload.textAnswer || "", SURVEY_MAX_TEXT_ANSWER);
+  if (!surveyId) {
+    throw new HttpsError("invalid-argument", "Sondage introuvable.", {
+      code: "survey-id-required",
+    });
+  }
+
+  const responseRef = surveyResponseRef(surveyId, uid);
+  const ref = surveyRef(surveyId);
+  const clientSnapshot = await loadClientSurveySnapshot(uid, email);
+  const nowMs = Date.now();
+
+  const result = await db.runTransaction(async (tx) => {
+    const [surveySnap, responseSnap] = await Promise.all([
+      tx.get(ref),
+      tx.get(responseRef),
+    ]);
+
+    if (!surveySnap.exists) {
+      throw new HttpsError("not-found", "Sondage introuvable.", {
+        code: "survey-not-found",
+      });
+    }
+    if (responseSnap.exists) {
+      throw new HttpsError("already-exists", "Tu as déjà répondu à ce sondage.", {
+        code: "survey-already-answered",
+      });
+    }
+
+    const surveyData = surveySnap.data() || {};
+    if (normalizeSurveyStatus(surveyData.status || "draft", "draft") !== "live") {
+      throw new HttpsError("failed-precondition", "Ce sondage n'est plus disponible.", {
+        code: "survey-not-live",
+      });
+    }
+
+    const choices = normalizeSurveyChoices(surveyData.choices || []);
+    const allowChoiceAnswer = surveyData.allowChoiceAnswer !== false;
+    const allowTextAnswer = surveyData.allowTextAnswer === true;
+    const selectedChoice = choices.find((choice) => choice.id === choiceId) || null;
+
+    if (allowChoiceAnswer && !allowTextAnswer && !selectedChoice) {
+      throw new HttpsError("invalid-argument", "Choisis une réponse.", {
+        code: "survey-choice-required",
+      });
+    }
+    if (!allowChoiceAnswer && allowTextAnswer && !textAnswer) {
+      throw new HttpsError("invalid-argument", "Ecris une réponse.", {
+        code: "survey-text-required",
+      });
+    }
+    if (allowChoiceAnswer && allowTextAnswer && !selectedChoice && !textAnswer) {
+      throw new HttpsError("invalid-argument", "Choisis une réponse ou écris ton avis.", {
+        code: "survey-answer-required",
+      });
+    }
+    if (!allowTextAnswer && textAnswer) {
+      throw new HttpsError("invalid-argument", "Les réponses texte ne sont pas activées.", {
+        code: "survey-text-disabled",
+      });
+    }
+    if (!allowChoiceAnswer && selectedChoice) {
+      throw new HttpsError("invalid-argument", "Les réponses guidées ne sont pas activées.", {
+        code: "survey-choice-disabled",
+      });
+    }
+
+    tx.set(responseRef, {
+      uid,
+      choiceId: selectedChoice?.id || "",
+      choiceLabel: selectedChoice?.label || "",
+      textAnswer,
+      clientSnapshot,
+      answeredAt: admin.firestore.FieldValue.serverTimestamp(),
+      answeredAtMs: nowMs,
+    });
+
+    tx.set(ref, {
+      responseCount: admin.firestore.FieldValue.increment(1),
+      lastResponseAt: admin.firestore.FieldValue.serverTimestamp(),
+      lastResponseAtMs: nowMs,
+      updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      updatedAtMs: nowMs,
+    }, { merge: true });
+
+    return {
+      surveyId,
+      choiceId: selectedChoice?.id || "",
+      choiceLabel: selectedChoice?.label || "",
+      textAnswer,
+    };
+  });
+
+  return {
+    ok: true,
+    ...result,
   };
 });
 

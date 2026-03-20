@@ -12,6 +12,8 @@ import {
   recordShareSitePromoSecure,
   createFriendRoomSecure,
   joinFriendRoomByCodeSecure,
+  getActiveSurveyForUserSecure,
+  submitSurveyResponseSecure,
 } from "./secure-functions.js";
 import { auth, db, collection, query, orderBy, limit, onSnapshot, doc, setDoc, serverTimestamp } from "./firebase-init.js";
 
@@ -840,6 +842,37 @@ export function renderPage2(user, options = {}) {
   `);
 
   pageShell.insertAdjacentHTML("beforeend", `
+    <div id="surveyPromptOverlay" class="fixed inset-0 z-[3461] hidden items-end justify-center bg-[#12192b]/72 px-[max(12px,env(safe-area-inset-left))] pb-[max(12px,env(safe-area-inset-bottom))] pt-[max(12px,env(safe-area-inset-top))] backdrop-blur-sm sm:items-center sm:px-4 sm:py-4">
+      <div id="surveyPromptPanel" class="max-h-full w-full overflow-y-auto rounded-[28px] border border-white/15 bg-[linear-gradient(180deg,rgba(82,94,132,0.98),rgba(55,65,95,0.98))] px-4 pb-[max(1rem,env(safe-area-inset-bottom))] pt-4 text-white shadow-[0_-16px_38px_rgba(12,18,31,0.42)] sm:max-h-[min(88vh,760px)] sm:max-w-lg sm:rounded-[30px] sm:border-white/20 sm:px-6 sm:pb-6 sm:pt-6 sm:shadow-[14px_14px_34px_rgba(16,23,40,0.5),-10px_-10px_24px_rgba(112,126,165,0.2)]">
+        <div class="flex items-start justify-between gap-3">
+          <div class="min-w-0 pr-2">
+            <p class="text-xs font-semibold uppercase tracking-[0.24em] text-[#ffd4ab]/80">Sondage joueur</p>
+            <h3 id="surveyPromptTitle" class="mt-2 text-[1.2rem] font-bold leading-tight sm:text-[1.55rem]">Ton avis nous aide</h3>
+          </div>
+          <button id="surveyPromptCloseBtn" type="button" class="grid h-10 w-10 shrink-0 place-items-center rounded-full border border-white/20 bg-white/10 text-white">
+            <i class="fa-solid fa-xmark"></i>
+          </button>
+        </div>
+        <p id="surveyPromptDescription" class="mt-3 text-[13px] leading-6 text-white/84 sm:text-sm"></p>
+        <div id="surveyPromptChoices" class="mt-4 grid gap-2"></div>
+        <div id="surveyPromptTextWrap" class="mt-4 hidden">
+          <label for="surveyPromptTextInput" class="mb-2 block text-sm font-semibold text-white/88">Ta réponse</label>
+          <textarea id="surveyPromptTextInput" rows="4" maxlength="500" class="w-full rounded-[20px] border border-white/16 bg-white/8 px-4 py-3 text-sm text-white outline-none placeholder:text-white/45" placeholder="Ecris ici ce que tu veux nous dire..."></textarea>
+        </div>
+        <p id="surveyPromptStatus" class="mt-3 min-h-[20px] text-sm text-[#ffd0d8]"></p>
+        <div class="mt-5 grid grid-cols-1 gap-3 sm:grid-cols-2">
+          <button id="surveyPromptDismissBtn" type="button" class="h-11 rounded-[18px] border border-white/18 bg-white/10 text-sm font-semibold text-white transition hover:bg-white/15">
+            Plus tard
+          </button>
+          <button id="surveyPromptSubmitBtn" type="button" class="h-11 rounded-[18px] border border-[#ffb26e] bg-[#F57C00] text-sm font-semibold text-white shadow-[9px_9px_20px_rgba(155,78,25,0.45),-7px_-7px_16px_rgba(255,173,96,0.2)] transition hover:-translate-y-0.5">
+            Envoyer ma réponse
+          </button>
+        </div>
+      </div>
+    </div>
+  `);
+
+  pageShell.insertAdjacentHTML("beforeend", `
     <div id="doesRequiredOverlay" class="fixed inset-0 z-[3450] hidden items-center justify-center bg-black/50 p-4 backdrop-blur-sm">
       <div class="w-full max-w-md rounded-3xl border border-white/20 bg-[#3F4766]/75 p-5 text-white shadow-[14px_14px_34px_rgba(16,23,40,0.5),-10px_-10px_24px_rgba(112,126,165,0.2)] backdrop-blur-xl sm:p-6">
         <h3 class="text-xl font-bold">Solde Does insuffisant</h3>
@@ -1106,6 +1139,17 @@ export function renderPage2(user, options = {}) {
   const sharePromoSuccessMessage = document.getElementById("sharePromoSuccessMessage");
   const sharePromoSuccessCooldown = document.getElementById("sharePromoSuccessCooldown");
   const sharePromoSuccessCloseBtn = document.getElementById("sharePromoSuccessCloseBtn");
+  const surveyPromptOverlay = document.getElementById("surveyPromptOverlay");
+  const surveyPromptPanel = document.getElementById("surveyPromptPanel");
+  const surveyPromptTitle = document.getElementById("surveyPromptTitle");
+  const surveyPromptDescription = document.getElementById("surveyPromptDescription");
+  const surveyPromptChoices = document.getElementById("surveyPromptChoices");
+  const surveyPromptTextWrap = document.getElementById("surveyPromptTextWrap");
+  const surveyPromptTextInput = document.getElementById("surveyPromptTextInput");
+  const surveyPromptStatus = document.getElementById("surveyPromptStatus");
+  const surveyPromptSubmitBtn = document.getElementById("surveyPromptSubmitBtn");
+  const surveyPromptDismissBtn = document.getElementById("surveyPromptDismissBtn");
+  const surveyPromptCloseBtn = document.getElementById("surveyPromptCloseBtn");
   const page2FrozenBanner = document.getElementById("page2FrozenBanner");
   const page2FrozenBannerText = document.getElementById("page2FrozenBannerText");
   let sharePromoState = null;
@@ -1113,6 +1157,9 @@ export function renderPage2(user, options = {}) {
   let sharePromoActionInFlight = false;
   let pendingShareSource = "";
   let page2AccountFrozen = false;
+  let surveyPromptState = null;
+  let surveyPromptSelection = "";
+  let surveyPromptSubmitting = false;
 
   const setFrozenActionState = (btn, frozen) => {
     if (!btn) return;
@@ -1399,6 +1446,164 @@ export function renderPage2(user, options = {}) {
     }
   };
 
+  const surveyDismissKey = (survey = null) => {
+    const surveyId = String(survey?.id || "").trim();
+    const version = Number.parseInt(String(survey?.version || 1), 10) || 1;
+    return surveyId ? `domino_survey_dismissed_${surveyId}_v${version}` : "";
+  };
+
+  const hasDismissedSurvey = (survey = null) => {
+    const key = surveyDismissKey(survey);
+    if (!key) return false;
+    try {
+      return window.sessionStorage.getItem(key) === "1";
+    } catch (_) {
+      return false;
+    }
+  };
+
+  const markSurveyDismissed = (survey = null) => {
+    const key = surveyDismissKey(survey);
+    if (!key) return;
+    try {
+      window.sessionStorage.setItem(key, "1");
+    } catch (_) {
+    }
+  };
+
+  const setSurveyPromptStatus = (message = "") => {
+    if (surveyPromptStatus) {
+      surveyPromptStatus.textContent = String(message || "");
+    }
+  };
+
+  const setSurveyPromptSubmitting = (submitting) => {
+    surveyPromptSubmitting = submitting === true;
+    if (surveyPromptSubmitBtn) {
+      surveyPromptSubmitBtn.disabled = surveyPromptSubmitting;
+      surveyPromptSubmitBtn.classList.toggle("opacity-70", surveyPromptSubmitting);
+      surveyPromptSubmitBtn.classList.toggle("cursor-wait", surveyPromptSubmitting);
+    }
+  };
+
+  const closeSurveyPrompt = ({ dismiss = false } = {}) => {
+    if (dismiss) {
+      markSurveyDismissed(surveyPromptState);
+    }
+    surveyPromptOverlay?.classList.add("hidden");
+    surveyPromptOverlay?.classList.remove("flex");
+    surveyPromptTextInput && (surveyPromptTextInput.value = "");
+    surveyPromptSelection = "";
+    surveyPromptState = null;
+    setSurveyPromptStatus("");
+    if (
+      sharePromoOverlay?.classList.contains("hidden")
+      && sharePromoSuccessOverlay?.classList.contains("hidden")
+      && stakeSelectionOverlay?.classList.contains("hidden")
+      && friendModeOverlay?.classList.contains("hidden")
+      && friendCreateOverlay?.classList.contains("hidden")
+      && friendJoinOverlay?.classList.contains("hidden")
+      && friendCodeOverlay?.classList.contains("hidden")
+      && doesRequiredOverlay?.classList.contains("hidden")
+      && tournamentIntroOverlay?.classList.contains("hidden")
+    ) {
+      document.body.classList.remove("overflow-hidden");
+    }
+  };
+
+  const renderSurveyChoices = (survey = null) => {
+    if (!surveyPromptChoices) return;
+    const choices = Array.isArray(survey?.choices) ? survey.choices : [];
+    if (!survey.allowChoiceAnswer || !choices.length) {
+      surveyPromptChoices.innerHTML = "";
+      surveyPromptChoices.classList.add("hidden");
+      return;
+    }
+    surveyPromptChoices.classList.remove("hidden");
+    surveyPromptChoices.innerHTML = choices.map((choice) => {
+      const active = surveyPromptSelection === choice.id;
+      return `
+        <button
+          type="button"
+          data-survey-choice="${choice.id}"
+          class="survey-choice-btn flex min-h-[54px] w-full items-center justify-between gap-3 rounded-[18px] border px-4 py-3 text-left text-sm font-semibold transition ${active ? "border-[#ffb26e] bg-[#F57C00]/18 text-white" : "border-white/15 bg-white/8 text-white/88 hover:bg-white/12"}"
+        >
+          <span>${choice.label}</span>
+          <span class="inline-flex h-5 w-5 items-center justify-center rounded-full border ${active ? "border-[#ffd9b8] bg-[#F57C00] text-white" : "border-white/18 bg-white/8 text-transparent"}">•</span>
+        </button>
+      `;
+    }).join("");
+  };
+
+  const openSurveyPrompt = (survey = null) => {
+    if (!surveyPromptOverlay || !survey) return;
+    surveyPromptState = survey;
+    surveyPromptSelection = "";
+    setSurveyPromptSubmitting(false);
+    setSurveyPromptStatus("");
+    if (surveyPromptTitle) surveyPromptTitle.textContent = survey.title || "Ton avis nous aide";
+    if (surveyPromptDescription) {
+      surveyPromptDescription.textContent = survey.description || "Réponds en quelques secondes pour nous aider à améliorer le site.";
+    }
+    if (surveyPromptTextWrap) {
+      surveyPromptTextWrap.classList.toggle("hidden", survey.allowTextAnswer !== true);
+    }
+    if (surveyPromptTextInput) {
+      surveyPromptTextInput.value = "";
+    }
+    renderSurveyChoices(survey);
+    surveyPromptOverlay.classList.remove("hidden");
+    surveyPromptOverlay.classList.add("flex");
+    document.body.classList.add("overflow-hidden");
+  };
+
+  const loadSurveyPrompt = () => {
+    if (!hasConfirmedAuth || isOptimisticAuth) return Promise.resolve(null);
+    return getActiveSurveyForUserSecure({})
+      .then((result) => {
+        const survey = result?.survey && typeof result.survey === "object" ? result.survey : null;
+        if (!survey || hasDismissedSurvey(survey)) return null;
+        openSurveyPrompt(survey);
+        return survey;
+      })
+      .catch((error) => {
+        console.warn("[SURVEY] active survey load failed", error);
+        return null;
+      });
+  };
+
+  const submitSurveyPrompt = async () => {
+    if (!surveyPromptState || surveyPromptSubmitting) return;
+    const choiceId = String(surveyPromptSelection || "").trim();
+    const textAnswer = String(surveyPromptTextInput?.value || "").trim();
+    if (surveyPromptState.allowChoiceAnswer === true && surveyPromptState.allowTextAnswer === true && !choiceId && !textAnswer) {
+      setSurveyPromptStatus("Choisis une réponse ou écris ton avis.");
+      return;
+    }
+    if (surveyPromptState.allowChoiceAnswer === true && surveyPromptState.allowTextAnswer !== true && !choiceId) {
+      setSurveyPromptStatus("Choisis une réponse avant d'envoyer.");
+      return;
+    }
+    if (surveyPromptState.allowTextAnswer === true && surveyPromptState.allowChoiceAnswer !== true && !textAnswer) {
+      setSurveyPromptStatus("Ecris une réponse avant d'envoyer.");
+      return;
+    }
+    setSurveyPromptSubmitting(true);
+    setSurveyPromptStatus("");
+    try {
+      await submitSurveyResponseSecure({
+        surveyId: surveyPromptState.id,
+        choiceId,
+        textAnswer,
+      });
+      closeSurveyPrompt({ dismiss: false });
+    } catch (error) {
+      setSurveyPromptStatus(error?.message || "Impossible d'envoyer ta réponse pour le moment.");
+    } finally {
+      setSurveyPromptSubmitting(false);
+    }
+  };
+
   if (logo && logoFallback) {
     logo.addEventListener("error", () => {
       logo.classList.add("hidden");
@@ -1431,6 +1636,32 @@ export function renderPage2(user, options = {}) {
       openProfilePage();
     });
   }
+
+  surveyPromptCloseBtn?.addEventListener("click", () => {
+    closeSurveyPrompt({ dismiss: true });
+  });
+
+  surveyPromptDismissBtn?.addEventListener("click", () => {
+    closeSurveyPrompt({ dismiss: true });
+  });
+
+  surveyPromptSubmitBtn?.addEventListener("click", () => {
+    void submitSurveyPrompt();
+  });
+
+  surveyPromptChoices?.addEventListener("click", (event) => {
+    const origin = event.target instanceof HTMLElement ? event.target : null;
+    const target = origin ? origin.closest("[data-survey-choice]") : null;
+    if (!(target instanceof HTMLElement)) return;
+    surveyPromptSelection = String(target.dataset.surveyChoice || "").trim();
+    renderSurveyChoices(surveyPromptState);
+  });
+
+  surveyPromptOverlay?.addEventListener("click", (event) => {
+    if (event.target === surveyPromptOverlay) {
+      closeSurveyPrompt({ dismiss: true });
+    }
+  });
 
   const openStakeSelection = () => {
     if (!stakeSelectionOverlay) return;
@@ -2044,6 +2275,7 @@ export function renderPage2(user, options = {}) {
   applySharePromoState(null);
   scheduleNonCriticalTask(runId, () => ensureStakeOptionsLoaded(), 360);
   scheduleNonCriticalTask(runId, () => loadSharePromoStatus(), 420);
+  scheduleNonCriticalTask(runId, () => loadSurveyPrompt(), 520);
   scheduleNonCriticalTask(runId, () => {
     initDiscussionFab(effectiveUser);
     initAgentSupportAlert(effectiveUser);

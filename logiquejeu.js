@@ -272,11 +272,9 @@ function hideGameChatBanner() {
 
 function showGameChatBanner(author, message, tone = "ambient") {
   const banner = document.getElementById("GameChatBanner");
-  const authorEl = document.getElementById("GameChatBannerAuthor");
   const textEl = document.getElementById("GameChatBannerText");
-  if (!banner || !authorEl || !textEl) return;
+  if (!banner || !textEl) return;
 
-  authorEl.textContent = String(author || "Jwè");
   textEl.textContent = String(message || "");
   banner.dataset.tone = tone === "self" ? "self" : "ambient";
   banner.classList.remove("hidden");
