@@ -107,6 +107,9 @@ const BOT_THINK_DELAY_MAX_MS = 2600;
 const BOT_THINK_DELAY_PASS_MIN_MS = 900;
 const BOT_THINK_DELAY_PASS_MAX_MS = 1700;
 const BOT_DIFFICULTY_LEVELS = new Set(["amateur", "expert", "ultra", "userpro"]);
+const BOT_PILOT_MODES = new Set(["manual", "auto"]);
+const BOT_PILOT_WINDOW_MS = 24 * 60 * 60 * 1000;
+const BOT_PILOT_SNAPSHOT_LIMIT = 5000;
 const BOT_DIFFICULTY_LOOKAHEAD = Object.freeze({
   amateur: 0,
   expert: 3,
@@ -1939,10 +1942,228 @@ async function getConfiguredBotDifficulty() {
   try {
     const snap = await adminBootstrapRef().get();
     if (!snap.exists) return DEFAULT_BOT_DIFFICULTY;
-    return normalizeBotDifficulty(snap.data()?.botDifficulty);
+    const data = snap.data() || {};
+    const mode = normalizeBotPilotMode(data.botPilotMode || "manual");
+    if (mode === "auto") {
+      return normalizeBotDifficulty(data.autoBotDifficulty || data.botDifficulty);
+    }
+    return normalizeBotDifficulty(data.manualBotDifficulty || data.botDifficulty);
   } catch (_) {
     return DEFAULT_BOT_DIFFICULTY;
   }
+}
+
+function normalizeBotPilotMode(value = "") {
+  const normalized = String(value || "").trim().toLowerCase();
+  return BOT_PILOT_MODES.has(normalized) ? normalized : "manual";
+}
+
+function normalizeBotPilotWindow(value = "") {
+  const normalized = String(value || "").trim().toLowerCase();
+  return normalized === "today" || normalized === "24h" || normalized === "7d"
+    ? normalized
+    : "today";
+}
+
+function getBotPilotRange(windowKey = "today", nowMs = Date.now()) {
+  const normalized = normalizeBotPilotWindow(windowKey);
+  if (normalized === "24h") {
+    return { windowKey: normalized, startMs: nowMs - BOT_PILOT_WINDOW_MS, endMs: nowMs };
+  }
+  if (normalized === "7d") {
+    return { windowKey: normalized, startMs: nowMs - (7 * BOT_PILOT_WINDOW_MS), endMs: nowMs };
+  }
+  const now = new Date(nowMs);
+  const startMs = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+  return { windowKey: "today", startMs, endMs: nowMs };
+}
+
+function getBotPilotDayKey(ms = 0) {
+  if (!ms) return "";
+  const date = new Date(ms);
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
+function getBotPilotHourKey(ms = 0) {
+  if (!ms) return "";
+  const date = new Date(ms);
+  const hour = String(date.getHours()).padStart(2, "0");
+  return `${getBotPilotDayKey(ms)} ${hour}:00`;
+}
+
+function getBotPilotTrendKey(windowKey = "today", ms = 0) {
+  const normalized = normalizeBotPilotWindow(windowKey);
+  return normalized === "7d" ? getBotPilotDayKey(ms) : getBotPilotHourKey(ms);
+}
+
+function getBotPilotTrendLabel(windowKey = "today", ms = 0) {
+  if (!ms) return "-";
+  const normalized = normalizeBotPilotWindow(windowKey);
+  const date = new Date(ms);
+  if (normalized === "7d") {
+    return `${String(date.getDate()).padStart(2, "0")}/${String(date.getMonth() + 1).padStart(2, "0")}`;
+  }
+  return `${String(date.getHours()).padStart(2, "0")}h`;
+}
+
+function chooseAutoBotDifficulty(snapshot = {}) {
+  const netDoes = safeSignedInt(snapshot.netDoes);
+  const collectedDoes = safeInt(snapshot.collectedDoes);
+  const marginPct = collectedDoes > 0 ? (netDoes / collectedDoes) : 0;
+
+  if (collectedDoes <= 0) {
+    return {
+      level: DEFAULT_BOT_DIFFICULTY,
+      band: "neutral",
+      reason: "no_volume",
+      marginPct: 0,
+    };
+  }
+  if (netDoes < 0 || marginPct < 0.03) {
+    return { level: "ultra", band: "danger", reason: "margin_too_low", marginPct };
+  }
+  if (marginPct < 0.08) {
+    return { level: "expert", band: "defense", reason: "margin_low", marginPct };
+  }
+  if (marginPct < 0.16) {
+    return { level: "amateur", band: "equilibrium", reason: "margin_ok", marginPct };
+  }
+  return { level: "userpro", band: "comfort", reason: "margin_high", marginPct };
+}
+
+async function computeBotPilotSnapshot(options = {}) {
+  const nowMs = safeSignedInt(options.nowMs) || Date.now();
+  const range = getBotPilotRange(options.window || "today", nowMs);
+  const querySnap = await db.collection(ROOM_RESULTS_COLLECTION)
+    .where("endedAtMs", ">=", range.startMs)
+    .orderBy("endedAtMs", "desc")
+    .limit(BOT_PILOT_SNAPSHOT_LIMIT)
+    .get();
+
+  let roomsCount = 0;
+  let collectedDoes = 0;
+  let payoutDoes = 0;
+  let netDoes = 0;
+  let botRooms = 0;
+  let humanWins = 0;
+  let botWins = 0;
+  let truncated = querySnap.size >= BOT_PILOT_SNAPSHOT_LIMIT;
+  const trendMap = new Map();
+  const botMixMap = new Map([
+    ["0", { botCount: 0, rooms: 0, netDoes: 0, botWins: 0, humanWins: 0 }],
+    ["1", { botCount: 1, rooms: 0, netDoes: 0, botWins: 0, humanWins: 0 }],
+    ["2", { botCount: 2, rooms: 0, netDoes: 0, botWins: 0, humanWins: 0 }],
+    ["3", { botCount: 3, rooms: 0, netDoes: 0, botWins: 0, humanWins: 0 }],
+  ]);
+
+  querySnap.forEach((docSnap) => {
+    const data = docSnap.data() || {};
+    const endedAtMs = safeSignedInt(data.endedAtMs);
+    if (endedAtMs < range.startMs || endedAtMs > range.endMs) return;
+    if (String(data.status || "").trim().toLowerCase() !== "ended") return;
+
+    roomsCount += 1;
+    const roomCollected = safeInt(data.companyCollectedDoes);
+    const roomPayout = safeInt(data.companyPayoutDoes);
+    const roomNet = safeSignedInt(
+      typeof data.companyNetDoes === "number"
+        ? data.companyNetDoes
+        : (roomCollected - roomPayout)
+    );
+    collectedDoes += roomCollected;
+    payoutDoes += roomPayout;
+    netDoes += roomNet;
+
+    const botCount = safeInt(data.botCount);
+    if (botCount > 0) botRooms += 1;
+    const winnerType = String(data.winnerType || "").trim().toLowerCase();
+    if (winnerType === "human") humanWins += 1;
+    else if (winnerType === "bot") botWins += 1;
+
+     const trendKey = getBotPilotTrendKey(range.windowKey, endedAtMs);
+     const existingTrend = trendMap.get(trendKey) || {
+       key: trendKey,
+       label: getBotPilotTrendLabel(range.windowKey, endedAtMs),
+       periodMs: endedAtMs,
+       rooms: 0,
+       collectedDoes: 0,
+       payoutDoes: 0,
+       netDoes: 0,
+     };
+     existingTrend.rooms += 1;
+     existingTrend.collectedDoes += roomCollected;
+     existingTrend.payoutDoes += roomPayout;
+     existingTrend.netDoes += roomNet;
+     if (endedAtMs > safeSignedInt(existingTrend.periodMs)) {
+       existingTrend.periodMs = endedAtMs;
+       existingTrend.label = getBotPilotTrendLabel(range.windowKey, endedAtMs);
+     }
+     trendMap.set(trendKey, existingTrend);
+
+     const mixKey = String(Math.min(botCount, 3));
+     const mix = botMixMap.get(mixKey) || {
+       botCount: Math.min(botCount, 3),
+       rooms: 0,
+       netDoes: 0,
+       botWins: 0,
+       humanWins: 0,
+     };
+     mix.rooms += 1;
+     mix.netDoes += roomNet;
+     if (winnerType === "bot") mix.botWins += 1;
+     if (winnerType === "human") mix.humanWins += 1;
+     botMixMap.set(mixKey, mix);
+  });
+
+  const recommended = chooseAutoBotDifficulty({ netDoes, collectedDoes });
+  const trend = Array.from(trendMap.values())
+    .sort((a, b) => safeSignedInt(a.periodMs) - safeSignedInt(b.periodMs))
+    .slice(-12)
+    .map((item) => ({
+      key: item.key,
+      label: item.label,
+      periodMs: safeSignedInt(item.periodMs),
+      rooms: safeInt(item.rooms),
+      collectedDoes: safeInt(item.collectedDoes),
+      payoutDoes: safeInt(item.payoutDoes),
+      netDoes: safeSignedInt(item.netDoes),
+    }));
+  const botMix = Array.from(botMixMap.values()).map((item) => ({
+    botCount: safeInt(item.botCount),
+    rooms: safeInt(item.rooms),
+    netDoes: safeSignedInt(item.netDoes),
+    botWins: safeInt(item.botWins),
+    humanWins: safeInt(item.humanWins),
+  }));
+
+  return {
+    ok: true,
+    window: range.windowKey,
+    startMs: range.startMs,
+    endMs: range.endMs,
+    dayKey: getBotPilotDayKey(range.startMs),
+    roomsCount,
+    collectedDoes,
+    payoutDoes,
+    netDoes,
+    marginPct: collectedDoes > 0 ? netDoes / collectedDoes : 0,
+    botRooms,
+    humanWins,
+    botWins,
+    botWinRatePct: roomsCount > 0 ? botWins / roomsCount : 0,
+    humanWinRatePct: roomsCount > 0 ? humanWins / roomsCount : 0,
+    truncated,
+    fetchLimit: BOT_PILOT_SNAPSHOT_LIMIT,
+    recommendedLevel: recommended.level,
+    recommendedBand: recommended.band,
+    recommendedReason: recommended.reason,
+    trend,
+    botMix,
+    computedAtMs: nowMs,
+  };
 }
 
 function makeDeckOrder() {
@@ -8246,11 +8467,16 @@ exports.submitSurveyResponseSecure = publicOnCall("submitSurveyResponseSecure", 
 
 exports.adminCheck = publicOnCall("adminCheck", async (request) => {
   const { uid, email } = assertFinanceAdmin(request);
+  const snap = await adminBootstrapRef().get();
+  const data = snap.exists ? (snap.data() || {}) : {};
   return {
     ok: true,
     uid,
     email,
     botDifficulty: await getConfiguredBotDifficulty(),
+    botPilotMode: normalizeBotPilotMode(data.botPilotMode || "manual"),
+    manualBotDifficulty: normalizeBotDifficulty(data.manualBotDifficulty || data.botDifficulty),
+    autoBotDifficulty: normalizeBotDifficulty(data.autoBotDifficulty || data.botDifficulty),
   };
 });
 
@@ -8262,6 +8488,7 @@ exports.setBotDifficulty = publicOnCall("setBotDifficulty", async (request) => {
   await adminBootstrapRef().set({
     email: FINANCE_ADMIN_EMAIL,
     botDifficulty,
+    manualBotDifficulty: botDifficulty,
     updatedAt: admin.firestore.FieldValue.serverTimestamp(),
   }, { merge: true });
 
@@ -8269,6 +8496,122 @@ exports.setBotDifficulty = publicOnCall("setBotDifficulty", async (request) => {
     ok: true,
     botDifficulty,
   };
+});
+
+exports.getBotPilotSnapshot = publicOnCall("getBotPilotSnapshot", async (request) => {
+  assertFinanceAdmin(request);
+  const payload = request.data && typeof request.data === "object" ? request.data : {};
+  const nowMs = Date.now();
+  const settingsSnap = await adminBootstrapRef().get();
+  const settings = settingsSnap.exists ? (settingsSnap.data() || {}) : {};
+  const mode = normalizeBotPilotMode(payload.mode || settings.botPilotMode || "manual");
+  const windowKey = normalizeBotPilotWindow(payload.window || settings.botPilotWindow || "today");
+  const snapshot = await computeBotPilotSnapshot({ nowMs, window: windowKey });
+  const appliedDifficulty = mode === "auto"
+    ? normalizeBotDifficulty(snapshot.recommendedLevel || settings.autoBotDifficulty || settings.botDifficulty)
+    : normalizeBotDifficulty(settings.manualBotDifficulty || settings.botDifficulty);
+
+  return {
+    ok: true,
+    mode,
+    window: windowKey,
+    manualBotDifficulty: normalizeBotDifficulty(settings.manualBotDifficulty || settings.botDifficulty),
+    autoBotDifficulty: normalizeBotDifficulty(settings.autoBotDifficulty || settings.botDifficulty || snapshot.recommendedLevel),
+    appliedBotDifficulty: appliedDifficulty,
+    snapshot,
+  };
+});
+
+exports.setBotPilotControl = publicOnCall("setBotPilotControl", async (request) => {
+  assertFinanceAdmin(request);
+  const payload = request.data && typeof request.data === "object" ? request.data : {};
+  const currentSnap = await adminBootstrapRef().get();
+  const current = currentSnap.exists ? (currentSnap.data() || {}) : {};
+  const mode = normalizeBotPilotMode(payload.mode || current.botPilotMode || "manual");
+  const windowKey = normalizeBotPilotWindow(payload.window || current.botPilotWindow || "today");
+  const manualBotDifficulty = normalizeBotDifficulty(payload.manualBotDifficulty || current.manualBotDifficulty || current.botDifficulty);
+
+  let autoBotDifficulty = normalizeBotDifficulty(current.autoBotDifficulty || current.botDifficulty);
+  let appliedBotDifficulty = manualBotDifficulty;
+  let snapshot = null;
+
+  if (mode === "auto") {
+    snapshot = await computeBotPilotSnapshot({ nowMs: Date.now(), window: windowKey });
+    autoBotDifficulty = normalizeBotDifficulty(snapshot.recommendedLevel || autoBotDifficulty);
+    appliedBotDifficulty = autoBotDifficulty;
+  }
+
+  await adminBootstrapRef().set({
+    email: FINANCE_ADMIN_EMAIL,
+    botPilotMode: mode,
+    botPilotWindow: windowKey,
+    manualBotDifficulty,
+    autoBotDifficulty,
+    botDifficulty: appliedBotDifficulty,
+    botPilotLastComputedAtMs: Date.now(),
+    botPilotUpdatedAt: admin.firestore.FieldValue.serverTimestamp(),
+    botPilotMetricsSnapshot: snapshot ? {
+      window: snapshot.window,
+      startMs: snapshot.startMs,
+      endMs: snapshot.endMs,
+      roomsCount: safeInt(snapshot.roomsCount),
+      collectedDoes: safeInt(snapshot.collectedDoes),
+      payoutDoes: safeInt(snapshot.payoutDoes),
+      netDoes: safeSignedInt(snapshot.netDoes),
+      marginPct: Number(snapshot.marginPct || 0),
+      recommendedLevel: normalizeBotDifficulty(snapshot.recommendedLevel),
+      recommendedBand: String(snapshot.recommendedBand || ""),
+      recommendedReason: String(snapshot.recommendedReason || ""),
+      computedAtMs: Date.now(),
+    } : admin.firestore.FieldValue.delete(),
+  }, { merge: true });
+
+  return {
+    ok: true,
+    mode,
+    window: windowKey,
+    manualBotDifficulty,
+    autoBotDifficulty,
+    appliedBotDifficulty,
+    snapshot,
+  };
+});
+
+exports.refreshBotPilotAuto = onSchedule("every 10 minutes", async () => {
+  const settingsSnap = await adminBootstrapRef().get();
+  if (!settingsSnap.exists) return;
+  const settings = settingsSnap.data() || {};
+  const mode = normalizeBotPilotMode(settings.botPilotMode || "manual");
+  if (mode !== "auto") return;
+
+  const nowMs = Date.now();
+  const windowKey = normalizeBotPilotWindow(settings.botPilotWindow || "today");
+  const snapshot = await computeBotPilotSnapshot({ nowMs, window: windowKey });
+  const autoBotDifficulty = normalizeBotDifficulty(snapshot.recommendedLevel || settings.autoBotDifficulty || settings.botDifficulty);
+
+  await adminBootstrapRef().set({
+    email: FINANCE_ADMIN_EMAIL,
+    botPilotMode: "auto",
+    botPilotWindow: windowKey,
+    autoBotDifficulty,
+    botDifficulty: autoBotDifficulty,
+    botPilotLastComputedAtMs: nowMs,
+    botPilotUpdatedAt: admin.firestore.FieldValue.serverTimestamp(),
+    botPilotMetricsSnapshot: {
+      window: snapshot.window,
+      startMs: snapshot.startMs,
+      endMs: snapshot.endMs,
+      roomsCount: safeInt(snapshot.roomsCount),
+      collectedDoes: safeInt(snapshot.collectedDoes),
+      payoutDoes: safeInt(snapshot.payoutDoes),
+      netDoes: safeSignedInt(snapshot.netDoes),
+      marginPct: Number(snapshot.marginPct || 0),
+      recommendedLevel: normalizeBotDifficulty(snapshot.recommendedLevel),
+      recommendedBand: String(snapshot.recommendedBand || ""),
+      recommendedReason: String(snapshot.recommendedReason || ""),
+      computedAtMs: nowMs,
+    },
+  }, { merge: true });
 });
 
 exports.getTournamentLeaderboard = publicOnCall("getTournamentLeaderboard", async (request) => {
