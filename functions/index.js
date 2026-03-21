@@ -45,6 +45,8 @@ const ANALYTICS_PRESENCE_WEEKDAY_COLLECTION = "analyticsPresenceWeekdays";
 
 const RATE_HTG_TO_DOES = 20;
 const DEFAULT_STAKE_REWARD_MULTIPLIER = 3;
+const DEPOSIT_BONUS_MIN_HTG = 100;
+const DEPOSIT_BONUS_PERCENT = 10;
 const USER_REFERRAL_DEPOSIT_REWARD = 100;
 const FINANCE_ADMIN_EMAIL = "leovitch2004@gmail.com";
 const MIN_ORDER_HTG = 25;
@@ -78,6 +80,21 @@ const DEFAULT_GAME_STAKE_OPTIONS = Object.freeze([
   Object.freeze({ stakeDoes: 1000, enabled: false, sortOrder: 30 }),
   Object.freeze({ stakeDoes: 5000, enabled: false, sortOrder: 40 }),
 ]);
+
+function computeDepositBonusSnapshot(amountHtg = 0) {
+  const safeAmountHtg = Math.max(0, Number(amountHtg) || 0);
+  const eligible = safeAmountHtg >= DEPOSIT_BONUS_MIN_HTG;
+  const bonusHtgRaw = eligible ? (safeAmountHtg * DEPOSIT_BONUS_PERCENT) / 100 : 0;
+  const bonusDoes = eligible ? Math.max(0, Math.floor(bonusHtgRaw * RATE_HTG_TO_DOES)) : 0;
+  return {
+    eligible,
+    thresholdHtg: DEPOSIT_BONUS_MIN_HTG,
+    bonusPercent: DEPOSIT_BONUS_PERCENT,
+    bonusHtgRaw,
+    bonusDoes,
+    rateHtgToDoes: RATE_HTG_TO_DOES,
+  };
+}
 const DEFAULT_BOT_DIFFICULTY = "expert";
 const ROOM_WAIT_MS = 15 * 1000;
 const FRIEND_ROOM_WAIT_MS = 10 * 60 * 1000;
@@ -7437,6 +7454,9 @@ exports.resolveDepositReviewSecure = publicOnCall("resolveDepositReviewSecure", 
         uid: ownerUid,
         status: String(orderData.status || resolutionStatus),
         resolutionStatus,
+        bonusEligible: orderData.bonusEligible === true,
+        bonusPercent: safeInt(orderData.bonusPercent),
+        bonusDoesAwarded: safeInt(orderData.bonusDoesAwarded),
         ...fundingSnapshot,
         accountFrozen: walletData.accountFrozen === true,
         rejectedDepositStrikeCount: safeInt(walletData.rejectedDepositStrikeCount),
@@ -7501,12 +7521,23 @@ exports.resolveDepositReviewSecure = publicOnCall("resolveDepositReviewSecure", 
       settledPendingTotalDoes,
     }));
 
+    const depositBonusSnapshot = computeDepositBonusSnapshot(orderAmountHtg);
+    const existingBonusDoesAwarded = safeInt(orderData.bonusDoesAwarded);
+    const bonusAlreadySettled = safeInt(orderData.bonusSettledAtMs) > 0 || existingBonusDoesAwarded > 0;
+
     if (decision === "approve") {
       const promoteCapitalDoes = settledCapitalDoes;
       const promoteGainDoes = settledGainDoes;
       const promoteDoes = promoteCapitalDoes + promoteGainDoes;
       const totalConvertedDoes = safeInt(orderData.provisionalHtgConverted) * RATE_HTG_TO_DOES;
       const unlockedFromPlayedDoes = Math.max(0, totalConvertedDoes - promoteCapitalDoes);
+      const bonusDoesAwarded = bonusAlreadySettled ? existingBonusDoesAwarded : safeInt(depositBonusSnapshot.bonusDoes);
+      const bonusAwardedAtMs = bonusDoesAwarded > 0
+        ? (safeInt(orderData.bonusAwardedAtMs) || nowMs)
+        : 0;
+      const bonusAwardedAt = bonusAwardedAtMs > 0
+        ? String(orderData.bonusAwardedAt || nowIso)
+        : "";
       nextOrder = {
         ...nextOrder,
         status: "approved",
@@ -7516,14 +7547,24 @@ exports.resolveDepositReviewSecure = publicOnCall("resolveDepositReviewSecure", 
         provisionalDoesRemaining: promoteCapitalDoes,
         provisionalGainDoes: promoteGainDoes,
         fundingSettledAtMs: nowMs,
+        bonusEligible: depositBonusSnapshot.eligible,
+        bonusThresholdHtg: safeInt(depositBonusSnapshot.thresholdHtg),
+        bonusPercent: safeInt(depositBonusSnapshot.bonusPercent),
+        bonusRateHtgToDoes: safeInt(depositBonusSnapshot.rateHtgToDoes),
+        bonusHtgBasis: orderAmountHtg,
+        bonusHtgRaw: Number(depositBonusSnapshot.bonusHtgRaw || 0),
+        bonusDoesAwarded,
+        bonusAwardedAtMs,
+        bonusAwardedAt,
+        bonusSettledAtMs: bonusDoesAwarded > 0 ? nowMs : 0,
       };
-      nextWallet.doesApprovedBalance = beforeApprovedDoes + promoteDoes;
+      nextWallet.doesApprovedBalance = beforeApprovedDoes + promoteDoes + bonusDoesAwarded;
       nextWallet.doesProvisionalBalance = Math.max(0, beforeProvisionalDoes - promoteDoes);
       nextWallet.doesBalance = safeInt(nextWallet.doesApprovedBalance) + safeInt(nextWallet.doesProvisionalBalance);
       nextWallet.exchangedGourdes = safeSignedInt(walletData.exchangedGourdes) + safeInt(orderData.provisionalHtgConverted);
       nextWallet.totalExchangedHtgEver = safeInt(walletData.totalExchangedHtgEver) + safeInt(orderData.provisionalHtgConverted);
       nextWallet.pendingPlayFromXchangeDoes = beforePendingFromXchange + promoteCapitalDoes;
-      nextWallet.pendingPlayFromReferralDoes = beforePendingFromReferral;
+      nextWallet.pendingPlayFromReferralDoes = beforePendingFromReferral + bonusDoesAwarded;
       nextWallet.exchangeableDoesAvailable = beforeExchangeableDoes + unlockedFromPlayedDoes;
     } else {
       const removeDoes = settledPendingTotalDoes;
@@ -7539,6 +7580,16 @@ exports.resolveDepositReviewSecure = publicOnCall("resolveDepositReviewSecure", 
         provisionalDoesRemaining: settledCapitalDoes,
         provisionalGainDoes: settledGainDoes,
         fundingSettledAtMs: nowMs,
+        bonusEligible: depositBonusSnapshot.eligible,
+        bonusThresholdHtg: safeInt(depositBonusSnapshot.thresholdHtg),
+        bonusPercent: safeInt(depositBonusSnapshot.bonusPercent),
+        bonusRateHtgToDoes: safeInt(depositBonusSnapshot.rateHtgToDoes),
+        bonusHtgBasis: orderAmountHtg,
+        bonusHtgRaw: Number(depositBonusSnapshot.bonusHtgRaw || 0),
+        bonusDoesAwarded: 0,
+        bonusAwardedAtMs: 0,
+        bonusAwardedAt: "",
+        bonusSettledAtMs: 0,
       };
       nextWallet.doesApprovedBalance = beforeApprovedDoes;
       nextWallet.doesProvisionalBalance = Math.max(0, beforeProvisionalDoes - removeDoes);
@@ -7595,15 +7646,18 @@ exports.resolveDepositReviewSecure = publicOnCall("resolveDepositReviewSecure", 
       updatedAt: admin.firestore.FieldValue.serverTimestamp(),
     }, { merge: true });
 
-    return {
-      ok: true,
-      orderId,
-      uid: ownerUid,
-      status: nextOrder.status,
-      resolutionStatus: nextOrder.resolutionStatus,
-      ...fundingSnapshot,
-      accountFrozen: nextWallet.accountFrozen === true,
-      withdrawalHold: nextWallet.withdrawalHold === true,
+      return {
+        ok: true,
+        orderId,
+        uid: ownerUid,
+        status: nextOrder.status,
+        resolutionStatus: nextOrder.resolutionStatus,
+        bonusEligible: nextOrder.bonusEligible === true,
+        bonusPercent: safeInt(nextOrder.bonusPercent),
+        bonusDoesAwarded: safeInt(nextOrder.bonusDoesAwarded),
+        ...fundingSnapshot,
+        accountFrozen: nextWallet.accountFrozen === true,
+        withdrawalHold: nextWallet.withdrawalHold === true,
       withdrawalHoldReason: String(nextWallet.withdrawalHoldReason || ""),
       withdrawalHoldAtMs: safeInt(nextWallet.withdrawalHoldAtMs),
       rejectedDepositStrikeCount: safeInt(nextWallet.rejectedDepositStrikeCount),

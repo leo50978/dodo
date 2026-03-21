@@ -5,6 +5,9 @@ import {
 } from './secure-functions.js';
 
 const OCR_LANGUAGE = 'fra+eng';
+const DEPOSIT_BONUS_MIN_HTG = 100;
+const DEPOSIT_BONUS_PERCENT = 10;
+const DEPOSIT_BONUS_RATE_HTG_TO_DOES = 20;
 let tesseractRuntimePromise = null;
 
 async function loadTesseractRuntime() {
@@ -254,6 +257,30 @@ class PaymentModal {
       currency: 'HTG',
       minimumFractionDigits: 0
     }).format(price || 0);
+  }
+
+  formatInlineNumber(value, maximumFractionDigits = 2) {
+    return new Intl.NumberFormat('fr-FR', {
+      minimumFractionDigits: 0,
+      maximumFractionDigits,
+    }).format(Number(value) || 0);
+  }
+
+  getDepositBonusPreview() {
+    const amountHtg = Math.max(0, Number(this.options?.amount) || 0);
+    const eligible = amountHtg >= DEPOSIT_BONUS_MIN_HTG;
+    const bonusHtgRaw = eligible ? (amountHtg * DEPOSIT_BONUS_PERCENT) / 100 : 0;
+    const bonusDoes = eligible ? Math.floor(bonusHtgRaw * DEPOSIT_BONUS_RATE_HTG_TO_DOES) : 0;
+
+    return {
+      amountHtg,
+      eligible,
+      thresholdHtg: DEPOSIT_BONUS_MIN_HTG,
+      bonusPercent: DEPOSIT_BONUS_PERCENT,
+      bonusHtgRaw,
+      bonusDoes,
+      rateHtgToDoes: DEPOSIT_BONUS_RATE_HTG_TO_DOES,
+    };
   }
   
   render() {
@@ -875,6 +902,66 @@ class PaymentModal {
   renderConfirmationStep(step) {
     this.startCountdown();
     const safeMessage = escapeHtml(this.confirmationMessage || step?.message || 'Votre demande est en cours de vérification. Elle sera traitée sous 12 heures.');
+    const bonusPreview = this.getDepositBonusPreview();
+    const bonusPanel = bonusPreview.eligible
+      ? `
+        <div style="
+          margin: 1.25rem 0 0;
+          border: 1px solid rgba(198,167,94,0.24);
+          border-radius: 1.15rem;
+          background: rgba(255,255,255,0.96);
+          padding: 1rem;
+          text-align: left;
+        ">
+          <p style="margin: 0; font-size: 0.72rem; letter-spacing: 0.16em; text-transform: uppercase; color: #8B7E6B; font-weight: 800;">Bonus depot</p>
+          <h4 style="margin: 0.55rem 0 0; font-size: 1.05rem; color: #1F1E1C;">Ton depot peut recevoir un bonus apres approbation</h4>
+          <div style="
+            margin-top: 0.9rem;
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+            gap: 0.75rem;
+          ">
+            <div style="border-radius: 0.95rem; background: #F8F6F0; padding: 0.9rem;">
+              <p style="margin: 0; font-size: 0.75rem; color: #8B7E6B; font-weight: 700;">Depot soumis</p>
+              <p style="margin: 0.4rem 0 0; font-size: 1.05rem; color: #1F1E1C; font-weight: 900;">${escapeHtml(this.formatInlineNumber(bonusPreview.amountHtg, 0))} HTG</p>
+            </div>
+            <div style="border-radius: 0.95rem; background: #F8F6F0; padding: 0.9rem;">
+              <p style="margin: 0; font-size: 0.75rem; color: #8B7E6B; font-weight: 700;">Bonus promo</p>
+              <p style="margin: 0.4rem 0 0; font-size: 1.05rem; color: #1F1E1C; font-weight: 900;">+${escapeHtml(this.formatInlineNumber(bonusPreview.bonusDoes, 0))} Does</p>
+            </div>
+          </div>
+          <div style="
+            margin-top: 0.9rem;
+            border-radius: 0.95rem;
+            background: #FFF8E8;
+            padding: 0.9rem;
+            color: #5C4A1F;
+            line-height: 1.65;
+            font-size: 0.92rem;
+          ">
+            <p style="margin: 0;"><strong>Comment ca marche:</strong> ton depot monte d'abord en <strong>HTG en examen</strong>. Si l'administration approuve la demande, le systeme calcule automatiquement <strong>${escapeHtml(this.formatInlineNumber(bonusPreview.bonusPercent, 0))}%</strong> du depot, puis convertit ce bonus en Does.</p>
+            <p style="margin: 0.65rem 0 0;">Pour ce depot, cela represente environ <strong>${escapeHtml(this.formatInlineNumber(bonusPreview.bonusHtgRaw))} HTG</strong> de bonus, soit <strong>${escapeHtml(this.formatInlineNumber(bonusPreview.bonusDoes, 0))} Does</strong> au taux actuel de <strong>${escapeHtml(this.formatInlineNumber(bonusPreview.rateHtgToDoes, 0))} Does</strong> par HTG.</p>
+            <p style="margin: 0.65rem 0 0;">Le bonus n'apparait pas avant l'approbation. S'il y a rejet, aucun bonus n'est ajoute.</p>
+          </div>
+        </div>
+      `
+      : `
+        <div style="
+          margin: 1.25rem 0 0;
+          border: 1px solid rgba(198,167,94,0.2);
+          border-radius: 1.15rem;
+          background: rgba(255,255,255,0.96);
+          padding: 1rem;
+          text-align: left;
+          color: #5C4A1F;
+          line-height: 1.65;
+          font-size: 0.92rem;
+        ">
+          <p style="margin: 0; font-size: 0.72rem; letter-spacing: 0.16em; text-transform: uppercase; color: #8B7E6B; font-weight: 800;">Bonus depot</p>
+          <p style="margin: 0.6rem 0 0;"><strong>Info importante:</strong> le bonus promo commence a partir de <strong>${escapeHtml(this.formatInlineNumber(bonusPreview.thresholdHtg, 0))} HTG</strong> approuves.</p>
+          <p style="margin: 0.55rem 0 0;">Ce depot sera donc traite normalement: il monte en <strong>HTG en examen</strong>, puis sera valide ou rejete par l'administration.</p>
+        </div>
+      `;
     
     return `
       <div style="text-align: center; padding: 1rem 0;">
@@ -906,6 +993,8 @@ class PaymentModal {
           <p style="font-size: 0.9rem; color: #8B7E6B; margin-bottom: 0.5rem;">Temps restant avant vérification</p>
           <div class="countdown-timer" id="countdownTimer">12:00:00</div>
         </div>
+
+        ${bonusPanel}
         
         <p style="font-size: 0.9rem; color: #8B7E6B;">
           <i class="fas fa-clock" style="margin-right: 0.3rem;"></i>
