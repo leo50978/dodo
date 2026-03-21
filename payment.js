@@ -907,37 +907,40 @@ class PaymentModal {
       ? `
         <div style="
           margin: 1.25rem 0 0;
-          border: 1px solid rgba(198,167,94,0.24);
+          border: 1px solid rgba(255,255,255,0.14);
           border-radius: 1.15rem;
-          background: rgba(255,255,255,0.96);
+          background: linear-gradient(180deg, rgba(44, 52, 78, 0.94), rgba(33, 39, 60, 0.96));
           padding: 1rem;
           text-align: left;
+          color: #F8FAFC;
+          box-shadow: 0 16px 34px rgba(15,23,42,0.24), inset 0 1px 0 rgba(255,255,255,0.06);
         ">
-          <p style="margin: 0; font-size: 0.72rem; letter-spacing: 0.16em; text-transform: uppercase; color: #8B7E6B; font-weight: 800;">Bonus depot</p>
-          <h4 style="margin: 0.55rem 0 0; font-size: 1.05rem; color: #1F1E1C;">Ton depot peut recevoir un bonus apres approbation</h4>
+          <p style="margin: 0; font-size: 0.72rem; letter-spacing: 0.16em; text-transform: uppercase; color: #FBBF24; font-weight: 800;">Bonus depot</p>
+          <h4 style="margin: 0.55rem 0 0; font-size: 1.05rem; color: #FFFFFF;">Ton depot peut recevoir un bonus apres approbation</h4>
           <div style="
             margin-top: 0.9rem;
             display: grid;
             grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
             gap: 0.75rem;
           ">
-            <div style="border-radius: 0.95rem; background: #F8F6F0; padding: 0.9rem;">
-              <p style="margin: 0; font-size: 0.75rem; color: #8B7E6B; font-weight: 700;">Depot soumis</p>
-              <p style="margin: 0.4rem 0 0; font-size: 1.05rem; color: #1F1E1C; font-weight: 900;">${escapeHtml(this.formatInlineNumber(bonusPreview.amountHtg, 0))} HTG</p>
+            <div style="border-radius: 0.95rem; background: rgba(255,255,255,0.08); padding: 0.9rem; border: 1px solid rgba(255,255,255,0.08);">
+              <p style="margin: 0; font-size: 0.75rem; color: #CBD5E1; font-weight: 700;">Depot soumis</p>
+              <p style="margin: 0.4rem 0 0; font-size: 1.05rem; color: #FFFFFF; font-weight: 900;">${escapeHtml(this.formatInlineNumber(bonusPreview.amountHtg, 0))} HTG</p>
             </div>
-            <div style="border-radius: 0.95rem; background: #F8F6F0; padding: 0.9rem;">
-              <p style="margin: 0; font-size: 0.75rem; color: #8B7E6B; font-weight: 700;">Bonus promo</p>
-              <p style="margin: 0.4rem 0 0; font-size: 1.05rem; color: #1F1E1C; font-weight: 900;">+${escapeHtml(this.formatInlineNumber(bonusPreview.bonusDoes, 0))} Does</p>
+            <div style="border-radius: 0.95rem; background: rgba(251,191,36,0.12); padding: 0.9rem; border: 1px solid rgba(251,191,36,0.18);">
+              <p style="margin: 0; font-size: 0.75rem; color: #FCD34D; font-weight: 700;">Bonus promo</p>
+              <p style="margin: 0.4rem 0 0; font-size: 1.05rem; color: #FFFFFF; font-weight: 900;">+${escapeHtml(this.formatInlineNumber(bonusPreview.bonusDoes, 0))} Does</p>
             </div>
           </div>
           <div style="
             margin-top: 0.9rem;
             border-radius: 0.95rem;
-            background: #FFF8E8;
+            background: rgba(15,23,42,0.24);
             padding: 0.9rem;
-            color: #5C4A1F;
+            color: #E2E8F0;
             line-height: 1.65;
             font-size: 0.92rem;
+            border: 1px solid rgba(255,255,255,0.08);
           ">
             <p style="margin: 0;"><strong>Comment ca marche:</strong> ton depot monte d'abord en <strong>HTG en examen</strong>. Si l'administration approuve la demande, le systeme calcule automatiquement <strong>${escapeHtml(this.formatInlineNumber(bonusPreview.bonusPercent, 0))}%</strong> du depot, puis convertit ce bonus en Does.</p>
             <p style="margin: 0.65rem 0 0;">Pour ce depot, cela represente environ <strong>${escapeHtml(this.formatInlineNumber(bonusPreview.bonusHtgRaw))} HTG</strong> de bonus, soit <strong>${escapeHtml(this.formatInlineNumber(bonusPreview.bonusDoes, 0))} Does</strong> au taux actuel de <strong>${escapeHtml(this.formatInlineNumber(bonusPreview.rateHtgToDoes, 0))} Does</strong> par HTG.</p>
@@ -948,18 +951,19 @@ class PaymentModal {
       : `
         <div style="
           margin: 1.25rem 0 0;
-          border: 1px solid rgba(198,167,94,0.2);
+          border: 1px solid rgba(255,255,255,0.14);
           border-radius: 1.15rem;
-          background: rgba(255,255,255,0.96);
+          background: linear-gradient(180deg, rgba(44, 52, 78, 0.94), rgba(33, 39, 60, 0.96));
           padding: 1rem;
           text-align: left;
-          color: #5C4A1F;
+          color: #E2E8F0;
           line-height: 1.65;
           font-size: 0.92rem;
+          box-shadow: 0 16px 34px rgba(15,23,42,0.24), inset 0 1px 0 rgba(255,255,255,0.06);
         ">
-          <p style="margin: 0; font-size: 0.72rem; letter-spacing: 0.16em; text-transform: uppercase; color: #8B7E6B; font-weight: 800;">Bonus depot</p>
-          <p style="margin: 0.6rem 0 0;"><strong>Info importante:</strong> le bonus promo commence a partir de <strong>${escapeHtml(this.formatInlineNumber(bonusPreview.thresholdHtg, 0))} HTG</strong> approuves.</p>
-          <p style="margin: 0.55rem 0 0;">Ce depot sera donc traite normalement: il monte en <strong>HTG en examen</strong>, puis sera valide ou rejete par l'administration.</p>
+          <p style="margin: 0; font-size: 0.72rem; letter-spacing: 0.16em; text-transform: uppercase; color: #FBBF24; font-weight: 800;">Bonus depot</p>
+          <p style="margin: 0.6rem 0 0; color: #F8FAFC;"><strong>Info importante:</strong> le bonus promo commence a partir de <strong>${escapeHtml(this.formatInlineNumber(bonusPreview.thresholdHtg, 0))} HTG</strong> approuves.</p>
+          <p style="margin: 0.55rem 0 0; color: #CBD5E1;">Ce depot sera donc traite normalement: il monte en <strong>HTG en examen</strong>, puis sera valide ou rejete par l'administration.</p>
         </div>
       `;
     
