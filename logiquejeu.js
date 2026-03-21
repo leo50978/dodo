@@ -31,11 +31,6 @@ const ROOM_DECK_CACHE_PREFIX = "domino_deck_";
 const ROOM_SETTLEMENT_PREFIX = "domino_settle_";
 const HOW_TO_PLAY_STORAGE_KEY = "domino_how_to_play_seen_v1";
 const HUD_MINIMAL_STORAGE_KEY = "domino_game_hud_minimal_v1";
-const GAME_CHAT_REACTIONS_URL = "./game-chat-messages.json";
-const GAME_CHAT_MESSAGE_SHOW_MS = 5000;
-const GAME_CHAT_MIN_DELAY_MS = 9000;
-const GAME_CHAT_MAX_DELAY_MS = 26000;
-const GAME_CHAT_PICKER_SIZE = 12;
 const DEFAULT_ENTRY_COST_DOES = 100;
 const DEFAULT_STAKE_REWARD_MULTIPLIER = 3;
 const ONLINE_USERS_MIN = 30000;
@@ -139,13 +134,6 @@ let startRevealAckDoneId = "";
 let deckOrderSyncRoomId = "";
 let botTurnWakeTimer = null;
 let botTurnWakeKey = "";
-let gameChatReactionsCache = null;
-let gameChatReactionsPromise = null;
-let gameChatAmbientTimer = null;
-let gameChatBannerTimer = null;
-let gameChatActiveRoomId = "";
-let gameChatBudget = 0;
-let gameChatPickerOpen = false;
 
 function readHudMinimalMode() {
   try {
@@ -167,70 +155,6 @@ function writeHudMinimalMode(isMinimal) {
   }
 }
 
-function getFallbackGameChatReactions() {
-  return [
-    "😀",
-    "😂",
-    "🔥",
-    "😤",
-    "😎",
-    "😮",
-    "👏",
-    "🤝",
-    "🥶",
-    "😅",
-    "🤨",
-    "💀",
-  ];
-}
-
-function normalizeGameChatReactions(payload) {
-  const rawList = Array.isArray(payload)
-    ? payload
-    : Array.isArray(payload?.reactions)
-      ? payload.reactions
-    : Array.isArray(payload?.messages)
-      ? payload.messages
-      : [];
-
-  const normalized = [...new Set(rawList
-    .map((item) => String(item || "").trim())
-    .map((item) => item.replace(/\s+/g, " "))
-    .filter((item) => item.length >= 1)
-    .map((item) => item.slice(0, 8)))];
-
-  return normalized.length ? normalized : getFallbackGameChatReactions();
-}
-
-async function loadGameChatReactions() {
-  if (Array.isArray(gameChatReactionsCache) && gameChatReactionsCache.length) {
-    return gameChatReactionsCache;
-  }
-  if (gameChatReactionsPromise) return gameChatReactionsPromise;
-
-  gameChatReactionsPromise = fetch(GAME_CHAT_REACTIONS_URL, { cache: "no-store" })
-    .then(async (response) => {
-      if (!response.ok) {
-        throw new Error(`game-chat-reactions:${response.status}`);
-      }
-      return response.json();
-    })
-    .then((payload) => {
-      gameChatReactionsCache = normalizeGameChatReactions(payload);
-      return gameChatReactionsCache;
-    })
-    .catch((error) => {
-      console.warn("[GAME_CHAT] fallback reactions used", error);
-      gameChatReactionsCache = getFallbackGameChatReactions();
-      return gameChatReactionsCache;
-    })
-    .finally(() => {
-      gameChatReactionsPromise = null;
-    });
-
-  return gameChatReactionsPromise;
-}
-
 function randomBetween(min, max) {
   const safeMin = Math.max(0, Number(min) || 0);
   const safeMax = Math.max(safeMin, Number(max) || safeMin);
@@ -241,227 +165,6 @@ function pickRandomFromList(list = []) {
   if (!Array.isArray(list) || !list.length) return "";
   const index = randomBetween(0, list.length - 1);
   return list[index] || "";
-}
-
-function getAmbientChatCandidates() {
-  const session = window.GameSession || null;
-  if (!session) return [];
-  const localSeat = Number.isFinite(Number(session.seatIndex)) ? Math.trunc(Number(session.seatIndex)) : -1;
-  const playerNames = Array.isArray(session.playerNames) ? session.playerNames : [];
-  const playerUids = Array.isArray(session.playerUids) ? session.playerUids : [];
-  const totalSeats = Math.max(4, playerNames.length, playerUids.length, Number(session.humans || 0) + Number(session.bots || 0));
-  const out = [];
-
-  for (let seat = 0; seat < totalSeats; seat += 1) {
-    if (seat === localSeat) continue;
-    const name = String(playerNames[seat] || "").trim();
-    out.push(name || `Jwè ${seat + 1}`);
-  }
-  return out.length ? out : ["Jwè 2", "Jwè 3", "Jwè 4"];
-}
-
-function hideGameChatBanner() {
-  if (gameChatBannerTimer) {
-    clearTimeout(gameChatBannerTimer);
-    gameChatBannerTimer = null;
-  }
-  const banner = document.getElementById("GameChatBanner");
-  if (!banner) return;
-  banner.classList.add("hidden");
-}
-
-function showGameChatBanner(author, message, tone = "ambient") {
-  const banner = document.getElementById("GameChatBanner");
-  const textEl = document.getElementById("GameChatBannerText");
-  if (!banner || !textEl) return;
-
-  textEl.textContent = String(message || "");
-  banner.dataset.tone = tone === "self" ? "self" : "ambient";
-  banner.classList.remove("hidden");
-
-  if (gameChatBannerTimer) {
-    clearTimeout(gameChatBannerTimer);
-  }
-  gameChatBannerTimer = setTimeout(() => {
-    hideGameChatBanner();
-  }, GAME_CHAT_MESSAGE_SHOW_MS);
-}
-
-function stopAmbientGameChat() {
-  if (gameChatAmbientTimer) {
-    clearTimeout(gameChatAmbientTimer);
-    gameChatAmbientTimer = null;
-  }
-  gameChatActiveRoomId = "";
-  gameChatBudget = 0;
-  hideGameChatBanner();
-  closeGameChatComposer();
-}
-
-function normalizeGameChatReaction(value) {
-  return String(value || "").replace(/\s+/g, "").trim().slice(0, 8);
-}
-
-function sendLocalGameChatReaction(rawReaction) {
-  const reaction = normalizeGameChatReaction(rawReaction);
-  if (!reaction) return false;
-  showGameChatBanner("Ou", reaction, "self");
-  return true;
-}
-
-function sampleGameChatReactions(reactions = [], size = GAME_CHAT_PICKER_SIZE) {
-  if (!Array.isArray(reactions) || !reactions.length) return [];
-  const pool = [...reactions];
-  for (let i = pool.length - 1; i > 0; i -= 1) {
-    const j = Math.floor(Math.random() * (i + 1));
-    [pool[i], pool[j]] = [pool[j], pool[i]];
-  }
-  return pool.slice(0, Math.max(1, Math.min(size, pool.length)));
-}
-
-async function renderGameChatReactionPicker() {
-  const grid = document.getElementById("GameChatReactionGrid");
-  if (!grid) return;
-  const reactions = await loadGameChatReactions();
-  const visibleReactions = sampleGameChatReactions(reactions);
-  grid.innerHTML = visibleReactions
-    .map(
-      (reaction) => `
-        <button
-          type="button"
-          class="game-chat-reaction-btn rounded-2xl border border-white/15 bg-white/10 text-white shadow-[inset_4px_4px_10px_rgba(18,24,38,0.22),inset_-4px_-4px_10px_rgba(110,124,163,0.12)] transition hover:bg-white/16"
-          data-game-chat-reaction="${String(reaction).replace(/"/g, "&quot;")}"
-          aria-label="Envoyer ${String(reaction).replace(/"/g, "&quot;")}"
-          title="Envoyer ${String(reaction).replace(/"/g, "&quot;")}"
-        >${reaction}</button>
-      `,
-    )
-    .join("");
-}
-
-function openGameChatComposer() {
-  const session = window.GameSession || null;
-  if (!session || String(session.status || "") !== "playing") {
-    showGameChatBanner("Sistèm", "ℹ️", "ambient");
-    return;
-  }
-  const wrap = document.getElementById("GameChatReactionPicker");
-  if (!wrap) return;
-  renderGameChatReactionPicker().catch((error) => {
-    console.warn("[GAME_CHAT] picker render failed", error);
-  });
-  wrap.classList.remove("hidden");
-  gameChatPickerOpen = true;
-}
-
-function closeGameChatComposer() {
-  const wrap = document.getElementById("GameChatReactionPicker");
-  wrap?.classList.add("hidden");
-  gameChatPickerOpen = false;
-}
-
-async function emitAmbientGameChat() {
-  const session = window.GameSession || null;
-  if (!session || String(session.status || "") !== "playing") {
-    stopAmbientGameChat();
-    return;
-  }
-  if (!gameChatActiveRoomId || String(session.roomId || "") !== gameChatActiveRoomId) {
-    stopAmbientGameChat();
-    return;
-  }
-  if (gameChatBudget <= 0) {
-    gameChatAmbientTimer = null;
-    return;
-  }
-
-  const [reactions, authors] = await Promise.all([
-    loadGameChatReactions(),
-    Promise.resolve(getAmbientChatCandidates()),
-  ]);
-  const message = pickRandomFromList(reactions);
-  const author = pickRandomFromList(authors) || "Jwè";
-  if (message) {
-    showGameChatBanner(author, message, "ambient");
-  }
-  gameChatBudget -= 1;
-  if (gameChatBudget > 0) {
-    scheduleAmbientGameChat();
-  } else {
-    gameChatAmbientTimer = null;
-  }
-}
-
-function scheduleAmbientGameChat() {
-  if (gameChatAmbientTimer || !gameChatActiveRoomId || gameChatBudget <= 0) return;
-  const delay = randomBetween(GAME_CHAT_MIN_DELAY_MS, GAME_CHAT_MAX_DELAY_MS);
-  gameChatAmbientTimer = setTimeout(() => {
-    gameChatAmbientTimer = null;
-    emitAmbientGameChat().catch((error) => {
-      console.warn("[GAME_CHAT] ambient emit failed", error);
-    });
-  }, delay);
-}
-
-function startAmbientGameChatForRoom(roomData = {}) {
-  const targetRoomId = String(roomId || roomData?.id || "").trim();
-  if (!targetRoomId) return;
-  if (gameChatActiveRoomId === targetRoomId) {
-    if (!gameChatAmbientTimer && gameChatBudget > 0) scheduleAmbientGameChat();
-    return;
-  }
-  stopAmbientGameChat();
-  gameChatActiveRoomId = targetRoomId;
-  const humans = Math.max(1, Number(roomData?.humanCount || window.GameSession?.humans || 1));
-  gameChatBudget = randomBetween(Math.max(2, humans), Math.max(5, humans + 3));
-  loadGameChatReactions().catch(() => {});
-  scheduleAmbientGameChat();
-}
-
-function bindGameChatComposer() {
-  const btn = document.getElementById("GameChatComposeBtn");
-  const wrap = document.getElementById("GameChatReactionPicker");
-  const grid = document.getElementById("GameChatReactionGrid");
-  if (btn && btn.dataset.bound !== "1") {
-    btn.dataset.bound = "1";
-    btn.addEventListener("click", (event) => {
-      event.stopPropagation();
-      if (gameChatPickerOpen) {
-        closeGameChatComposer();
-      } else {
-        openGameChatComposer();
-      }
-    });
-  }
-  if (wrap && wrap.dataset.bound !== "1") {
-    wrap.dataset.bound = "1";
-    wrap.addEventListener("click", (event) => {
-      event.stopPropagation();
-    });
-  }
-  if (grid && grid.dataset.bound !== "1") {
-    grid.dataset.bound = "1";
-    grid.addEventListener("click", (event) => {
-      const target = event.target instanceof HTMLElement ? event.target.closest("[data-game-chat-reaction]") : null;
-      if (!(target instanceof HTMLElement)) return;
-      const reaction = target.dataset.gameChatReaction || "";
-      const sent = sendLocalGameChatReaction(reaction);
-      closeGameChatComposer();
-      if (!sent) hideGameChatBanner();
-    });
-  }
-  if (document.body?.dataset.gameChatBound !== "1") {
-    document.body.dataset.gameChatBound = "1";
-    document.addEventListener("click", () => {
-      if (!gameChatPickerOpen) return;
-      closeGameChatComposer();
-    });
-    document.addEventListener("keydown", (event) => {
-      if (event.key !== "Escape" || !gameChatPickerOpen) return;
-      event.preventDefault();
-      closeGameChatComposer();
-    });
-  }
 }
 
 function makeClientActionId() {
@@ -851,23 +554,11 @@ function setHudViewIcon(isMinimal) {
 function syncFloatingHudVisibility() {
   const goBtn = document.getElementById("GameEndGoBtn");
   const hudViewBtn = document.getElementById("HudViewToggleBtn");
-  const chatBtn = document.getElementById("GameChatComposeBtn");
-  const chatPicker = document.getElementById("GameChatReactionPicker");
-  const minimalMode = document.body?.classList.contains("game-hud-minimal");
   const goVisible = !!(goBtn && !goBtn.classList.contains("hidden"));
 
   if (hudViewBtn) {
     hudViewBtn.classList.toggle("hidden", goVisible);
     hudViewBtn.classList.toggle("grid", !goVisible);
-  }
-  if (chatBtn) {
-    const shouldHide = goVisible || minimalMode;
-    chatBtn.classList.toggle("hidden", shouldHide);
-    chatBtn.classList.toggle("inline-flex", !shouldHide);
-    if (shouldHide) closeGameChatComposer();
-  }
-  if (chatPicker && (goVisible || minimalMode)) {
-    closeGameChatComposer();
   }
 }
 
@@ -1432,8 +1123,6 @@ function resetSessionState() {
   clearLaunchRetryTimer();
   clearRehydrationRetryTimer();
   clearBotTurnWakeTimer();
-  stopAmbientGameChat();
-  closeGameChatComposer();
   setMatchLoading(false);
   roomId = null;
   seatIndex = -1;
@@ -2407,14 +2096,12 @@ function launchLocalGame(roomData) {
     return;
   }
   if (gameLaunched) {
-    startAmbientGameChatForRoom(roomData);
     return;
   }
   gameLaunched = true;
   clearLaunchRetryTimer();
   setLeaveRoomButtonVisible(true);
   updateOrientationGuard();
-  startAmbientGameChatForRoom(roomData);
 
   setStatus(
     `Salle ${roomId} | Mise ${window.GameSession.entryCostDoes} Does | Gain ${window.GameSession.rewardAmountDoes} Does | Seat ${seatIndex + 1} | Humains ${window.GameSession.humans} | Bots ${window.GameSession.bots}`
@@ -2478,7 +2165,6 @@ function watchRoom(id) {
 
       if (data.status === "ended") {
         clearBotTurnWakeTimer();
-        stopAmbientGameChat();
         markRoomActionsReady(id);
         clearFinalizeGameTimer();
         clearTurnTimer();
@@ -2819,7 +2505,6 @@ window.LogiqueJeu = {
 bindStartButton();
 bindLeaveRoomTopButton();
 bindHudViewToggle();
-bindGameChatComposer();
 bindFullscreenToggle();
 startOnlineUsersTicker();
 window.addEventListener("resize", onOrientationMaybeChanged);
