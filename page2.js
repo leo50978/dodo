@@ -15,7 +15,7 @@ import {
   getActiveSurveyForUserSecure,
   submitSurveyResponseSecure,
 } from "./secure-functions.js";
-import { auth, db, collection, query, orderBy, limit, onSnapshot, doc, setDoc, serverTimestamp } from "./firebase-init.js";
+import { auth, db, collection, query, orderBy, limit, doc, getDoc, getDocs, setDoc, serverTimestamp } from "./firebase-init.js";
 
 const CHAT_COLLECTION = "globalChannelMessages";
 const SUPPORT_THREADS_COLLECTION = "supportThreads";
@@ -37,10 +37,9 @@ const DEFAULT_GAME_STAKE_OPTIONS = Object.freeze([
   Object.freeze({ id: "stake_1000", stakeDoes: 1000, rewardDoes: 3000, enabled: false, sortOrder: 30 }),
   Object.freeze({ id: "stake_5000", stakeDoes: 5000, rewardDoes: 15000, enabled: false, sortOrder: 40 }),
 ]);
-let page2ChatLatestUnsub = null;
-let page2ChatSeenUnsub = null;
-let page2SupportThreadUnsub = null;
-let page2ClientStatusUnsub = null;
+let page2NonCriticalRefreshTimer = null;
+let page2NonCriticalVisibilityHandler = null;
+let page2NonCriticalUid = "";
 let page2PresenceVisibilityBound = false;
 let page2PresenceUser = null;
 let page2PresenceTick = null;
@@ -52,7 +51,8 @@ let soldeUiReadyRunId = 0;
 let soldeUiReadyPromise = null;
 let page2HeroRotationTimer = null;
 let page2SharePromoCountdownTimer = null;
-const PAGE2_PRESENCE_PING_MS = 60 * 1000;
+const PAGE2_PRESENCE_PING_MS = 10 * 60 * 1000;
+const PAGE2_NON_CRITICAL_REFRESH_MS = 2 * 60 * 1000;
 
 async function runPage2Animations() {
   try {
@@ -431,22 +431,111 @@ async function loadPublicGameStakeOptions() {
 }
 
 function stopPage2ChatWatchers() {
-  if (page2ChatLatestUnsub) {
-    page2ChatLatestUnsub();
-    page2ChatLatestUnsub = null;
+  if (page2NonCriticalRefreshTimer) {
+    clearInterval(page2NonCriticalRefreshTimer);
+    page2NonCriticalRefreshTimer = null;
   }
-  if (page2ChatSeenUnsub) {
-    page2ChatSeenUnsub();
-    page2ChatSeenUnsub = null;
+  if (page2NonCriticalVisibilityHandler) {
+    document.removeEventListener("visibilitychange", page2NonCriticalVisibilityHandler);
+    page2NonCriticalVisibilityHandler = null;
   }
-  if (page2SupportThreadUnsub) {
-    page2SupportThreadUnsub();
-    page2SupportThreadUnsub = null;
+  page2NonCriticalUid = "";
+}
+
+async function refreshDiscussionFabState(user) {
+  const badge = document.getElementById("discussionFabBadge");
+  const uid = String(user?.uid || "");
+  if (!badge || !uid) {
+    badge?.classList.add("hidden");
+    return;
   }
-  if (page2ClientStatusUnsub) {
-    page2ClientStatusUnsub();
-    page2ClientStatusUnsub = null;
+
+  try {
+    const [latestSnap, clientSnap] = await Promise.all([
+      getDocs(query(collection(db, CHAT_COLLECTION), orderBy("createdAt", "desc"), limit(1))),
+      getDoc(doc(db, "clients", uid)),
+    ]);
+    const latestDoc = latestSnap.empty ? null : (latestSnap.docs[0]?.data() || {});
+    const clientData = clientSnap.exists() ? (clientSnap.data() || {}) : {};
+    const latestMessageMs = tsToMs(latestDoc?.createdAt);
+    const seenMs = tsToMs(clientData.chatLastSeenAt);
+    badge.classList.toggle("hidden", !(latestMessageMs > 0 && latestMessageMs > seenMs));
+  } catch (err) {
+    console.error("Erreur refresh messages discussion:", err);
+    badge.classList.add("hidden");
   }
+}
+
+async function refreshAgentSupportAlertState(user) {
+  const alertWrap = document.getElementById("agentSupportAlertWrap");
+  const alertText = document.getElementById("agentSupportAlertText");
+  const uid = String(user?.uid || "");
+  if (!alertWrap || !alertText || !uid) {
+    alertWrap?.classList.add("hidden");
+    return;
+  }
+
+  try {
+    const snap = await getDoc(doc(db, SUPPORT_THREADS_COLLECTION, `user_${uid}`));
+    const data = snap.exists() ? (snap.data() || {}) : {};
+    const unread = data.unreadForUser === true && String(data.lastSenderRole || "") === "agent";
+    alertWrap.classList.toggle("hidden", !unread);
+    if (!unread) return;
+    const preview = String(data.lastMessageText || "").trim();
+    alertText.textContent = preview
+      ? `Vous avez recu un message par un agent: ${preview}`
+      : "Vous avez recu un message par un agent.";
+  } catch (err) {
+    console.error("Erreur refresh alerte agent:", err);
+    alertWrap.classList.add("hidden");
+  }
+}
+
+async function refreshPage2AccountState(user) {
+  const uid = String(user?.uid || "");
+  if (!uid) {
+    applyPage2AccountState({});
+    return;
+  }
+  try {
+    const snap = await getDoc(doc(db, "clients", uid));
+    applyPage2AccountState(snap.exists() ? (snap.data() || {}) : {});
+  } catch (error) {
+    console.error("Erreur refresh statut compte accueil:", error);
+    applyPage2AccountState({});
+  }
+}
+
+async function refreshPage2NonCriticalUi(user) {
+  await Promise.allSettled([
+    refreshPage2AccountState(user),
+    refreshDiscussionFabState(user),
+    refreshAgentSupportAlertState(user),
+  ]);
+}
+
+function startPage2NonCriticalPolling(user) {
+  const uid = String(user?.uid || "");
+  stopPage2ChatWatchers();
+  if (!uid) {
+    void refreshPage2NonCriticalUi(null);
+    return;
+  }
+
+  page2NonCriticalUid = uid;
+  void refreshPage2NonCriticalUi(user);
+  page2NonCriticalRefreshTimer = setInterval(() => {
+    if (document.visibilityState !== "visible") return;
+    if (page2NonCriticalUid !== String(auth.currentUser?.uid || "")) return;
+    void refreshPage2NonCriticalUi(auth.currentUser || user);
+  }, PAGE2_NON_CRITICAL_REFRESH_MS);
+
+  page2NonCriticalVisibilityHandler = () => {
+    if (document.visibilityState !== "visible") return;
+    if (page2NonCriticalUid !== String(auth.currentUser?.uid || "")) return;
+    void refreshPage2NonCriticalUi(auth.currentUser || user);
+  };
+  document.addEventListener("visibilitychange", page2NonCriticalVisibilityHandler);
 }
 
 function tsToMs(value) {
@@ -553,51 +642,7 @@ function initDiscussionFab(user) {
     badge.classList.add("hidden");
     return;
   }
-
-  stopPage2ChatWatchers();
-
-  let latestMessageMs = 0;
-  let seenMs = 0;
-  const renderBadge = () => {
-    const liveBadge = document.getElementById("discussionFabBadge");
-    if (!liveBadge) {
-      stopPage2ChatWatchers();
-      return;
-    }
-    const unread = latestMessageMs > 0 && latestMessageMs > seenMs;
-    liveBadge.classList.toggle("hidden", !unread);
-  };
-
-  page2ChatLatestUnsub = onSnapshot(
-    query(collection(db, CHAT_COLLECTION), orderBy("createdAt", "desc"), limit(1)),
-    (snap) => {
-      if (snap.empty) {
-        latestMessageMs = 0;
-        renderBadge();
-        return;
-      }
-      const data = snap.docs[0].data() || {};
-      latestMessageMs = tsToMs(data.createdAt);
-      renderBadge();
-    },
-    (err) => {
-      console.error("Erreur listener messages discussion:", err);
-      latestMessageMs = 0;
-      renderBadge();
-    }
-  );
-
-  page2ChatSeenUnsub = onSnapshot(
-    doc(db, "clients", uid),
-    (snap) => {
-      const data = snap.exists() ? (snap.data() || {}) : {};
-      seenMs = tsToMs(data.chatLastSeenAt);
-      renderBadge();
-    },
-    (err) => {
-      console.error("Erreur listener lastSeen discussion:", err);
-    }
-  );
+  void refreshDiscussionFabState(user);
 }
 
 function initAgentSupportAlert(user) {
@@ -619,25 +664,7 @@ function initAgentSupportAlert(user) {
     alertWrap.classList.add("hidden");
     return;
   }
-
-  page2SupportThreadUnsub = onSnapshot(
-    doc(db, SUPPORT_THREADS_COLLECTION, `user_${uid}`),
-    (snap) => {
-      const data = snap.exists() ? (snap.data() || {}) : {};
-      const unread = data.unreadForUser === true && String(data.lastSenderRole || "") === "agent";
-      alertWrap.classList.toggle("hidden", !unread);
-      if (!unread) return;
-
-      const preview = String(data.lastMessageText || "").trim();
-      alertText.textContent = preview
-        ? `Vous avez recu un message par un agent: ${preview}`
-        : "Vous avez recu un message par un agent.";
-    },
-    (err) => {
-      console.error("Erreur listener alerte agent:", err);
-      alertWrap.classList.add("hidden");
-    }
-  );
+  void refreshAgentSupportAlertState(user);
 }
 
 export function renderPage2(user, options = {}) {
@@ -2256,17 +2283,7 @@ export function renderPage2(user, options = {}) {
   applyPage2AccountState({});
 
   if (hasConfirmedAuth) {
-    page2ClientStatusUnsub = onSnapshot(
-      doc(db, "clients", incomingUid),
-      (snap) => {
-        const clientData = snap.exists() ? (snap.data() || {}) : {};
-        applyPage2AccountState(clientData);
-      },
-      (error) => {
-        console.error("Erreur listener statut compte accueil:", error);
-        applyPage2AccountState({});
-      }
-    );
+    void refreshPage2AccountState(page2PresenceUser);
   }
 
   const effectiveUser = hasConfirmedAuth ? user : null;
@@ -2279,6 +2296,7 @@ export function renderPage2(user, options = {}) {
   scheduleNonCriticalTask(runId, () => {
     initDiscussionFab(effectiveUser);
     initAgentSupportAlert(effectiveUser);
+    startPage2NonCriticalPolling(effectiveUser);
   }, 460);
   void runPage2BootstrapFlow({
     runId,

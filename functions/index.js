@@ -82,8 +82,8 @@ const DEFAULT_BOT_DIFFICULTY = "expert";
 const ROOM_WAIT_MS = 15 * 1000;
 const FRIEND_ROOM_WAIT_MS = 10 * 60 * 1000;
 const FRIEND_ROOM_CODE_SIZE = 6;
-const ROOM_DISCONNECT_TAKEOVER_MS = 5 * 1000;
-const ROOM_DISCONNECT_GRACE_MS = 15 * 1000;
+const ROOM_DISCONNECT_TAKEOVER_MS = 45 * 1000;
+const ROOM_DISCONNECT_GRACE_MS = 45 * 1000;
 const BOT_THINK_DELAY_MIN_MS = 1400;
 const BOT_THINK_DELAY_MAX_MS = 2600;
 const BOT_THINK_DELAY_PASS_MIN_MS = 900;
@@ -120,8 +120,8 @@ const PROVISIONAL_FUNDING_VERSION = 2;
 const PROVISIONAL_CREDIT_MODE = "provisional";
 const ACCOUNT_FREEZE_REJECT_THRESHOLD = 3;
 const PRESENCE_ANALYTICS_TIMEZONE = "America/Port-au-Prince";
-const PRESENCE_ANALYTICS_CLIENT_WINDOW_MS = 2 * 60 * 1000;
-const PRESENCE_ANALYTICS_ROOM_WINDOW_MS = 20 * 1000;
+const PRESENCE_ANALYTICS_CLIENT_WINDOW_MS = 15 * 60 * 1000;
+const PRESENCE_ANALYTICS_ROOM_WINDOW_MS = 60 * 1000;
 const PRESENCE_ANALYTICS_BUCKET_MS = 5 * 60 * 1000;
 const PRESENCE_ANALYTICS_SNAPSHOT_RETENTION_MS = 14 * 24 * 60 * 60 * 1000;
 const PRESENCE_ANALYTICS_RECENT_SNAPSHOT_DAYS = 7;
@@ -389,8 +389,10 @@ function assertAppCheck(request, callable) {
   });
 }
 
-function publicOnCall(callableName, handler) {
-  return onCall(async (request) => {
+function publicOnCall(callableName, handler, options = {}) {
+  return onCall({
+    ...options,
+  }, async (request) => {
     assertAppCheck(request, callableName);
     return handler(request);
   });
@@ -6524,7 +6526,7 @@ exports.sweepRoomPresence = onSchedule("every 1 minutes", async () => {
   }
 });
 
-exports.capturePresenceAnalytics = onSchedule("every 5 minutes", async () => {
+exports.capturePresenceAnalytics = onSchedule("every 30 minutes", async () => {
   const bucketMs = getPresenceBucketStartMs(Date.now());
   const localKeys = getPresenceLocalKeys(bucketMs);
   const sample = await collectPresenceAnalyticsNow(bucketMs);
@@ -6598,7 +6600,7 @@ exports.getPublicPaymentOptionsSecure = publicOnCall("getPublicPaymentOptionsSec
     methods: data.methods,
     settings: data.settings,
   };
-});
+}, { minInstances: 1 });
 
 exports.getPublicGameStakeOptionsSecure = publicOnCall("getPublicGameStakeOptionsSecure", async () => {
   const settings = await getSettingsSnapshotData();
@@ -6611,7 +6613,7 @@ exports.getPublicGameStakeOptionsSecure = publicOnCall("getPublicGameStakeOption
       sortOrder: item.sortOrder,
     })),
   };
-});
+}, { minInstances: 1 });
 
 exports.getPublicRuntimeConfigSecure = publicOnCall("getPublicRuntimeConfigSecure", async () => {
   const settings = await getSettingsSnapshotData();
@@ -6623,7 +6625,7 @@ exports.getPublicRuntimeConfigSecure = publicOnCall("getPublicRuntimeConfigSecur
     dashboardWebPushEnabled: !!String(pushConfig.publicKey || "").trim(),
     provisionalDepositsEnabled: isProvisionalFundingEnabled(settings),
   };
-});
+}, { minInstances: 1 });
 
 exports.getShareSitePromoStatus = publicOnCall("getShareSitePromoStatus", async (request) => {
   const { uid } = assertAuth(request);
@@ -6638,7 +6640,7 @@ exports.getShareSitePromoStatus = publicOnCall("getShareSitePromoStatus", async 
     accountFrozen: walletData.accountFrozen === true,
     freezeReason: String(walletData.freezeReason || ""),
   };
-});
+}, { minInstances: 1 });
 
 exports.recordShareSitePromo = publicOnCall("recordShareSitePromo", async (request) => {
   const { uid, email } = assertAuth(request);
@@ -6982,7 +6984,7 @@ exports.updateClientProfileSecure = publicOnCall("updateClientProfileSecure", as
     referralApplied: referralBootstrap.applied === true,
     referralReason: String(referralBootstrap.reason || ""),
   };
-});
+}, { minInstances: 1 });
 
 exports.createOrderSecure = publicOnCall("createOrderSecure", async (request) => {
   const { uid, email } = assertAuth(request);
@@ -7994,7 +7996,7 @@ exports.getActiveSurveyForUserSecure = publicOnCall("getActiveSurveyForUserSecur
     answered: false,
     survey: buildSurveySummary(surveyDoc),
   };
-});
+}, { minInstances: 1 });
 
 exports.submitSurveyResponseSecure = publicOnCall("submitSurveyResponseSecure", async (request) => {
   const { uid, email } = assertAuth(request);

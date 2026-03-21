@@ -25,7 +25,7 @@ import {
 
 const ROOMS = "rooms";
 const TURN_LIMIT_MS = 30 * 1000;
-const PRESENCE_PING_MS = 5 * 1000;
+const PRESENCE_PING_MS = 20 * 1000;
 const ACTION_CACHE_PREFIX = "domino_actions_";
 const ROOM_DECK_CACHE_PREFIX = "domino_deck_";
 const ROOM_SETTLEMENT_PREFIX = "domino_settle_";

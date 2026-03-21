@@ -2,7 +2,7 @@ import { auth, logoutCurrentUser, watchAuthState } from "./auth.js";
 import { mountXchangeModal, getXchangeState } from "./xchange.js";
 import { mountRetraitModal, getWithdrawalRuleStatus } from "./retrait.js";
 import { mountSoldeModal, waitForBalanceHydration } from "./solde.js";
-import { db, doc, onSnapshot } from "./firebase-init.js";
+import { db, doc, getDoc } from "./firebase-init.js";
 import { getDepositFundingStatusSecure } from "./secure-functions.js";
 const BALANCE_DEBUG = true;
 const ASSISTANCE_PHONE = "50941752992";
@@ -10,7 +10,6 @@ let referralLoadToken = 0;
 let referralHintFreezeUntil = 0;
 let referralHintRestoreTimer = null;
 let withdrawalAvailabilityToken = 0;
-let profileClientUnsub = null;
 let profileRealtimeUid = "";
 let profileRealtimeRefreshTimer = null;
 let latestProfileClientData = null;
@@ -19,6 +18,9 @@ let profileFundingUid = "";
 let profileFundingRefreshTimer = null;
 let profileFundingRequestToken = 0;
 let lastWithdrawalHoldSignature = "";
+let profileClientPollTimer = null;
+let profileVisibilityBound = false;
+const PROFILE_CLIENT_REFRESH_MS = 3 * 60 * 1000;
 
 function safeCount(value) {
   const n = Number(value);
@@ -166,10 +168,6 @@ function maybeShowWithdrawalHoldModal(user, payload = {}) {
 }
 
 function clearProfileRealtimeWatchers() {
-  if (profileClientUnsub) {
-    profileClientUnsub();
-    profileClientUnsub = null;
-  }
   profileRealtimeUid = "";
   latestProfileClientData = null;
   latestProfileFundingData = null;
@@ -178,6 +176,10 @@ function clearProfileRealtimeWatchers() {
   if (profileFundingRefreshTimer) {
     clearTimeout(profileFundingRefreshTimer);
     profileFundingRefreshTimer = null;
+  }
+  if (profileClientPollTimer) {
+    clearInterval(profileClientPollTimer);
+    profileClientPollTimer = null;
   }
   lastWithdrawalHoldSignature = "";
 }
@@ -199,30 +201,47 @@ function ensureProfileRealtimeWatchers(user) {
     clearProfileRealtimeWatchers();
     return;
   }
-  if (profileRealtimeUid === uid && profileClientUnsub) {
+  if (profileRealtimeUid === uid && profileClientPollTimer) {
     return;
   }
 
   clearProfileRealtimeWatchers();
   profileRealtimeUid = uid;
-
-  profileClientUnsub = onSnapshot(
-    doc(db, "clients", uid),
-    (snap) => {
+  const refreshClientSnapshot = async () => {
+    const targetUid = String((user || auth.currentUser)?.uid || "");
+    if (!targetUid || targetUid !== profileRealtimeUid) return;
+    try {
+      const snap = await getDoc(doc(db, "clients", targetUid));
       latestProfileClientData = snap.exists() ? (snap.data() || {}) : null;
       if (BALANCE_DEBUG) {
         console.log("[BALANCE_DEBUG][PROFILE] client snapshot", {
-          uid,
+          uid: targetUid,
           exists: snap.exists(),
           data: latestProfileClientData,
         });
       }
       scheduleProfileRealtimeRefresh(user || auth.currentUser || null);
-    },
-    (err) => {
-      console.error("Erreur listener profil client:", err);
+    } catch (err) {
+      console.error("Erreur refresh profil client:", err);
     }
-  );
+  };
+
+  void refreshClientSnapshot();
+  profileClientPollTimer = setInterval(() => {
+    if (document.visibilityState !== "visible") return;
+    void refreshClientSnapshot();
+  }, PROFILE_CLIENT_REFRESH_MS);
+}
+
+function bindProfileVisibilityRefresh() {
+  if (profileVisibilityBound) return;
+  profileVisibilityBound = true;
+  document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState !== "visible") return;
+    const activeUser = auth.currentUser || null;
+    ensureProfileRealtimeWatchers(activeUser);
+    scheduleProfileFundingRefresh(activeUser, 0);
+  });
 }
 
 async function refreshProfileFundingStatus(user) {
@@ -1034,6 +1053,7 @@ export function mountProfileModal(options = {}) {
     scheduleProfileFundingRefresh(activeUser, 0);
     updateProfileData(activeUser);
   });
+  bindProfileVisibilityRefresh();
 
   window.addEventListener("userBalanceUpdated", () => {
     scheduleProfileFundingRefresh(auth.currentUser, 80);
@@ -1209,6 +1229,7 @@ export function mountProfilePage(options = {}) {
     scheduleProfileFundingRefresh(activeUser, 0);
     updateProfileData(activeUser);
   });
+  bindProfileVisibilityRefresh();
 
   window.addEventListener("userBalanceUpdated", () => {
     scheduleProfileFundingRefresh(auth.currentUser, 80);

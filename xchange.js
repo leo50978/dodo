@@ -1,8 +1,5 @@
 import {
   auth,
-  db,
-  doc,
-  onSnapshot,
   onAuthStateChanged,
 } from "./firebase-init.js";
 import { withButtonLoading } from "./loading-ui.js";
@@ -14,6 +11,8 @@ const WALLET_CACHE = new Map();
 let walletUnsub = null;
 let activeUid = null;
 let soldeModulePromise = null;
+const XCHANGE_REFRESH_MS = 2 * 60 * 1000;
+let walletVisibilityBound = false;
 
 function safeInt(value) {
   const n = Number(value);
@@ -75,10 +74,6 @@ async function waitForXchangeBalanceHydration(uid = currentUid(), timeoutMs = 26
     console.warn("[XCHANGE] waitForBalanceHydration unavailable", error);
   }
   return false;
-}
-
-function walletRef(uid) {
-  return doc(db, "clients", uid);
 }
 
 function getCachedWallet(uid) {
@@ -172,57 +167,26 @@ function emitXchangeUpdated(uid = currentUid()) {
 
 function startWalletWatcher(uid) {
   if (walletUnsub) {
-    walletUnsub();
+    clearInterval(walletUnsub);
     walletUnsub = null;
   }
   if (!uid || uid === "guest") return;
+  void syncWalletFundingState(uid);
+  walletUnsub = setInterval(() => {
+    if (document.visibilityState !== "visible") return;
+    if (String(auth.currentUser?.uid || "") !== String(uid || "")) return;
+    void syncWalletFundingState(uid);
+  }, XCHANGE_REFRESH_MS);
 
-  walletUnsub = onSnapshot(walletRef(uid), (snap) => {
-    if (!snap.exists()) {
-      setCachedWallet(uid, { does: 0, exchangedGourdes: 0 }, true);
-      emitXchangeUpdated(uid);
-      return;
-    }
-    const data = snap.data() || {};
-    if (BALANCE_DEBUG) {
-      console.log("[BALANCE_DEBUG][XCHANGE] wallet snapshot", {
-        uid,
-        doesBalance: data.doesBalance,
-        doesApprovedBalance: data.doesApprovedBalance,
-        doesProvisionalBalance: data.doesProvisionalBalance,
-        exchangeableDoesAvailable: data.exchangeableDoesAvailable,
-        exchangedGourdes: data.exchangedGourdes,
-        approvedHtgAvailable: data.approvedHtgAvailable,
-        provisionalHtgAvailable: data.provisionalHtgAvailable,
-        withdrawableHtg: data.withdrawableHtg,
-        accountFrozen: data.accountFrozen,
-        freezeReason: data.freezeReason,
-        rejectedDepositStrikeCount: data.rejectedDepositStrikeCount,
-        pendingPlayFromXchangeDoes: data.pendingPlayFromXchangeDoes,
-        pendingPlayFromReferralDoes: data.pendingPlayFromReferralDoes,
-        totalExchangedHtgEver: data.totalExchangedHtgEver,
-      });
-    }
-    setCachedWallet(uid, {
-      does: safeInt(data.doesBalance),
-      doesApprovedBalance: safeInt(data.doesApprovedBalance),
-      doesProvisionalBalance: safeInt(data.doesProvisionalBalance),
-      exchangeableDoesAvailable: safeInt(data.exchangeableDoesAvailable),
-      exchangedGourdes: safeSignedInt(data.exchangedGourdes),
-      approvedHtgAvailable: safeInt(data.approvedHtgAvailable),
-      provisionalHtgAvailable: safeInt(data.provisionalHtgAvailable),
-      withdrawableHtg: safeInt(data.withdrawableHtg),
-      accountFrozen: data.accountFrozen === true,
-      freezeReason: String(data.freezeReason || ""),
-      rejectedDepositStrikeCount: safeInt(data.rejectedDepositStrikeCount),
-      pendingPlayFromXchangeDoes: safeInt(data.pendingPlayFromXchangeDoes),
-      pendingPlayFromReferralDoes: safeInt(data.pendingPlayFromReferralDoes),
-      totalExchangedHtgEver: safeInt(data.totalExchangedHtgEver),
-    }, true);
-    emitXchangeUpdated(uid);
-  }, (err) => {
-    console.error("[XCHANGE] wallet watcher error", err);
-  });
+  if (!walletVisibilityBound) {
+    walletVisibilityBound = true;
+    document.addEventListener("visibilitychange", () => {
+      if (document.visibilityState !== "visible") return;
+      const visibleUid = String(auth.currentUser?.uid || "");
+      if (!visibleUid || visibleUid === "guest") return;
+      void syncWalletFundingState(visibleUid);
+    });
+  }
 }
 
 async function applyWalletMutation({ uid, deltaDoes = 0, deltaExchangedGourdes = 0, type = "mutation", note = "", amountGourdes = 0, amountDoes = 0 }) {
@@ -771,7 +735,7 @@ onAuthStateChanged(auth, async (user) => {
   if (!user) {
     activeUid = null;
     if (walletUnsub) {
-      walletUnsub();
+      clearInterval(walletUnsub);
       walletUnsub = null;
     }
     emitXchangeUpdated("guest");

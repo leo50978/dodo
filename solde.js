@@ -6,7 +6,7 @@ import {
   collection,
   query,
   orderBy,
-  onSnapshot,
+  getDocs,
   onAuthStateChanged,
 } from "./firebase-init.js";
 import { orderClientActionSecure } from "./secure-functions.js";
@@ -15,8 +15,6 @@ const DEPOSIT_INFO_DISMISSED_KEY = "domino_deposit_info_hidden_v1";
 const REJECTED_ORDER_ALERT_SEEN_KEY = "domino_rejected_order_alert_seen_v1";
 const REJECTED_ORDER_SUPPORT_PHONE = "50941752992";
 
-let stopOrdersListener = null;
-let stopWithdrawalsListener = null;
 let cachedOrders = [];
 let cachedWithdrawals = [];
 const MIN_DEPOSIT_HTG = 25;
@@ -24,6 +22,11 @@ let soldeAuthUnsub = null;
 let soldeActiveUid = "";
 let activeRejectedOrderAlertId = "";
 let queuedRejectedOrderAlertIds = [];
+let soldeRefreshTimer = null;
+let soldeVisibilityBound = false;
+let ordersLoadToken = 0;
+let withdrawalsLoadToken = 0;
+const SOLDE_REFRESH_MS = 3 * 60 * 1000;
 let balanceHydrationSession = {
   uid: "",
   ordersReady: false,
@@ -723,20 +726,18 @@ function bindOrdersActions() {
   });
 }
 
-function attachOrdersListener() {
+async function attachOrdersListener() {
   const user = auth.currentUser;
   if (!user) return;
   ensureBalanceHydrationSession(user.uid);
-
-  if (stopOrdersListener) {
-    stopOrdersListener();
-    stopOrdersListener = null;
-  }
+  const token = ++ordersLoadToken;
 
   const ordersRef = collection(db, "clients", user.uid, "orders");
   const q = query(ordersRef, orderBy("createdAt", "desc"));
 
-  stopOrdersListener = onSnapshot(q, async (snapshot) => {
+  try {
+    const snapshot = await getDocs(q);
+    if (token !== ordersLoadToken) return;
     const orders = snapshot.docs.map((d) => ({ id: d.id, ...d.data() }));
     if (BALANCE_DEBUG) {
       console.log("[BALANCE_DEBUG][SOLDE] orders snapshot", {
@@ -755,7 +756,6 @@ function attachOrdersListener() {
     refreshBalanceFromCaches();
     markBalanceHydrationReady("orders", user.uid);
 
-    // Cache automatiquement les commandes approuvées côté client (sans suppression DB)
     const approvedVisible = orders.filter((o) => o.status === "approved" && !o.userHiddenByClient);
     for (const order of approvedVisible) {
       try {
@@ -767,23 +767,24 @@ function attachOrdersListener() {
 
     renderOrdersSection(cachedOrders, cachedWithdrawals);
     bindOrdersActions();
-  });
+  } catch (error) {
+    console.error("Erreur refresh commandes:", error);
+    markBalanceHydrationReady("orders", user.uid);
+  }
 }
 
-function attachWithdrawalsListener() {
+async function attachWithdrawalsListener() {
   const user = auth.currentUser;
   if (!user) return;
   ensureBalanceHydrationSession(user.uid);
-
-  if (stopWithdrawalsListener) {
-    stopWithdrawalsListener();
-    stopWithdrawalsListener = null;
-  }
+  const token = ++withdrawalsLoadToken;
 
   const ref = collection(db, "clients", user.uid, "withdrawals");
   const q = query(ref, orderBy("createdAt", "desc"));
 
-  stopWithdrawalsListener = onSnapshot(q, async (snapshot) => {
+  try {
+    const snapshot = await getDocs(q);
+    if (token !== withdrawalsLoadToken) return;
     const withdrawals = snapshot.docs.map((d) => ({ id: d.id, ...d.data() }));
     if (BALANCE_DEBUG) {
       console.log("[BALANCE_DEBUG][SOLDE] withdrawals snapshot", {
@@ -813,17 +814,45 @@ function attachWithdrawalsListener() {
 
     renderOrdersSection(cachedOrders, cachedWithdrawals);
     bindOrdersActions();
-  });
+  } catch (error) {
+    console.error("Erreur refresh retraits:", error);
+    markBalanceHydrationReady("withdrawals", user.uid);
+  }
 }
 
 function detachSoldeRealtimeListeners() {
-  if (stopOrdersListener) {
-    stopOrdersListener();
-    stopOrdersListener = null;
+  ordersLoadToken += 1;
+  withdrawalsLoadToken += 1;
+  if (soldeRefreshTimer) {
+    clearInterval(soldeRefreshTimer);
+    soldeRefreshTimer = null;
   }
-  if (stopWithdrawalsListener) {
-    stopWithdrawalsListener();
-    stopWithdrawalsListener = null;
+}
+
+function startSoldeRefreshLoop(uid = auth.currentUser?.uid) {
+  const safeUid = String(uid || "").trim();
+  if (!safeUid) {
+    detachSoldeRealtimeListeners();
+    return;
+  }
+  if (soldeRefreshTimer) {
+    clearInterval(soldeRefreshTimer);
+    soldeRefreshTimer = null;
+  }
+  soldeRefreshTimer = setInterval(() => {
+    if (document.visibilityState !== "visible") return;
+    if (String(auth.currentUser?.uid || "").trim() !== safeUid) return;
+    void attachOrdersListener();
+    void attachWithdrawalsListener();
+  }, SOLDE_REFRESH_MS);
+
+  if (!soldeVisibilityBound) {
+    soldeVisibilityBound = true;
+    document.addEventListener("visibilitychange", () => {
+      if (document.visibilityState !== "visible") return;
+      void attachOrdersListener();
+      void attachWithdrawalsListener();
+    });
   }
 }
 
@@ -847,15 +876,16 @@ function ensureSoldeAuthWatcher() {
       updateSoldBadge(0);
       return;
     }
-    if (nextUid === soldeActiveUid && stopOrdersListener && stopWithdrawalsListener) {
+    if (nextUid === soldeActiveUid && soldeRefreshTimer) {
       return;
     }
     soldeActiveUid = nextUid;
     activeRejectedOrderAlertId = "";
     queuedRejectedOrderAlertIds = [];
     detachSoldeRealtimeListeners();
-    attachOrdersListener();
-    attachWithdrawalsListener();
+    startSoldeRefreshLoop(nextUid);
+    void attachOrdersListener();
+    void attachWithdrawalsListener();
   });
 }
 
@@ -970,8 +1000,8 @@ function ensureSoldeModal() {
     overlay.classList.remove("hidden");
     overlay.classList.add("flex");
     document.body.classList.add("overflow-hidden");
-    attachOrdersListener();
-    attachWithdrawalsListener();
+    void attachOrdersListener();
+    void attachWithdrawalsListener();
     renderOrdersSection(cachedOrders, cachedWithdrawals);
     bindOrdersActions();
   };
@@ -1043,8 +1073,8 @@ export function mountSoldeModal(options = {}) {
 
   updateSoldBadge(0);
   ensureSoldeAuthWatcher();
-  attachOrdersListener();
-  attachWithdrawalsListener();
+  void attachOrdersListener();
+  void attachWithdrawalsListener();
   window.addEventListener("xchangeUpdated", () => {
     if (BALANCE_DEBUG) {
       console.log("[BALANCE_DEBUG][SOLDE] xchangeUpdated event", {
@@ -1089,7 +1119,7 @@ export function mountSoldeModal(options = {}) {
         bindOrdersActions();
       }
     }
-    attachWithdrawalsListener();
+    void attachWithdrawalsListener();
   });
 
   window.openPaymentDepositDirectly = openPaymentDepositDirectly;
