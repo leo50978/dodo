@@ -17,6 +17,7 @@ import {
   sendEmailVerification,
   reload,
   applyActionCode,
+  updateProfile,
 } from "https://www.gstatic.com/firebasejs/10.12.5/firebase-auth.js";
 import {
   getFunctions,
@@ -244,6 +245,7 @@ export {
   sendEmailVerification,
   reload,
   applyActionCode,
+  updateProfile,
   collection,
   collectionGroup,
   addDoc,

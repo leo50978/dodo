@@ -3,18 +3,24 @@ import {
   auth,
   formatAuthError,
   isValidEmail,
+  normalizePhoneLogin,
+  isValidPhoneLogin,
   isValidUsername,
   normalizeUsername,
   isOneClickAuthEmail,
+  isPhoneAuthEmail,
   createOneClickAccountId,
   isValidPassword,
   loginWithEmail,
+  loginWithPhone,
   loginWithUsername,
   signupWithEmail,
+  signupWithPhone,
   signupWithUsername,
   sendPasswordReset,
   sendSignupVerificationEmail,
   refreshCurrentUser,
+  syncCurrentUserDisplayName,
   isEmailPasswordUser,
   logoutCurrentUser,
   watchAuthState,
@@ -31,7 +37,8 @@ import {
 } from "./referral.js";
 import { updateClientProfileSecure } from "./secure-functions.js";
 
-let authMode = "signin";
+let authMode = "signup";
+let signupCreationMode = "chooser";
 let authFlowBusy = false;
 let redirectingToApp = false;
 let referralBootstrapPromise = null;
@@ -43,10 +50,12 @@ let authBootstrapMessage = "";
 let authBootstrapTone = "info";
 const PENDING_PROMO_STORAGE_KEY = "domino_pending_promo_code";
 const PENDING_USERNAME_STORAGE_KEY = "domino_pending_username";
+const PENDING_PHONE_STORAGE_KEY = "domino_pending_phone_v1";
 const PENDING_ONECLICK_ID_STORAGE_KEY = "domino_pending_oneclick_id";
 const CLIENT_DEVICE_STORAGE_KEY = "domino_device_id_v1";
 const DEVICE_ACCOUNT_LOCK_STORAGE_KEY = "domino_device_account_lock_v1";
 const AUTH_SUCCESS_NOTICE_STORAGE_KEY = "domino_auth_success_notice_v1";
+const AUTH_PROFILE_HINT_STORAGE_KEY = "domino_auth_profile_hint_v1";
 const verificationEmailSentByUid = new Set();
 const APP_HOME_ROUTE = "./index.html";
 const TERMS_ROUTE = "./conditions-utilisation.html";
@@ -135,6 +144,21 @@ function consumePendingUsername() {
   const raw = sessionStorage.getItem(PENDING_USERNAME_STORAGE_KEY) || "";
   sessionStorage.removeItem(PENDING_USERNAME_STORAGE_KEY);
   return normalizeUsername(raw);
+}
+
+function savePendingPhone(phone) {
+  const normalized = normalizePhoneLogin(phone || "");
+  if (!normalized) {
+    sessionStorage.removeItem(PENDING_PHONE_STORAGE_KEY);
+    return;
+  }
+  sessionStorage.setItem(PENDING_PHONE_STORAGE_KEY, normalized);
+}
+
+function consumePendingPhone() {
+  const raw = sessionStorage.getItem(PENDING_PHONE_STORAGE_KEY) || "";
+  sessionStorage.removeItem(PENDING_PHONE_STORAGE_KEY);
+  return normalizePhoneLogin(raw);
 }
 
 function savePendingOneClickId(oneClickId) {
@@ -331,6 +355,25 @@ function storeAuthSuccessNotice() {
   } catch (_) {}
 }
 
+function saveAuthProfileHint(user, payload = {}) {
+  const uid = String(user?.uid || auth.currentUser?.uid || "").trim();
+  if (!uid) return;
+  const username = normalizeUsername(payload.username || "");
+  const phone = normalizePhoneLogin(payload.phone || "");
+  try {
+    window.localStorage?.setItem(
+      AUTH_PROFILE_HINT_STORAGE_KEY,
+      JSON.stringify({
+        uid,
+        username,
+        phone,
+        updatedAtMs: Date.now(),
+      })
+    );
+    pageAuthDebug("saveAuthProfileHint", { uid, username, phone });
+  } catch (_) {}
+}
+
 function scheduleAuthFallbackRender(delayMs = 1200) {
   pageAuthDebug("scheduleAuthFallbackRender", { delayMs });
   clearAuthFallbackRenderTimer();
@@ -350,6 +393,7 @@ function userRequiresEmailVerification(user) {
   if (!user || !isEmailPasswordUser(user)) return false;
   const email = String(user?.email || "").trim().toLowerCase();
   if (isOneClickAuthEmail(email)) return false;
+  if (isPhoneAuthEmail(email)) return false;
   return user.emailVerified !== true;
 }
 
@@ -820,6 +864,7 @@ async function bootstrapReferralBeforeRedirect(user, explicitPromoCode = "") {
   const typedPromoCode = normalizeCode(explicitPromoCode || "");
   const pendingPromoCode = consumePendingPromoCode();
   const pendingUsername = consumePendingUsername();
+  const pendingPhone = consumePendingPhone();
   const pendingOneClickId = consumePendingOneClickId();
   const queryPromoCode = normalizeCode(urlCtx.promoCodeFromQuery || "");
   const linkReferralCode = normalizeCode(urlCtx.userCodeFromLink || "");
@@ -841,6 +886,7 @@ async function bootstrapReferralBeforeRedirect(user, explicitPromoCode = "") {
       explicitPromoCode: typedPromoCode,
       pendingPromoCode,
       pendingUsername,
+      pendingPhone,
       pendingOneClickId,
       queryPromoCode,
       linkReferralCode,
@@ -850,8 +896,22 @@ async function bootstrapReferralBeforeRedirect(user, explicitPromoCode = "") {
       ...collectAnalyticsContext(),
       ...referralPayload,
       username: pendingUsername || undefined,
+      phone: pendingPhone || undefined,
       oneClickId: pendingOneClickId || undefined,
     })
+      .then((result) => {
+        pageAuthDebug("bootstrapReferralBeforeRedirect:result", {
+          uid: String(user?.uid || ""),
+          result,
+        });
+        if (result?.profile) {
+          saveAuthProfileHint(user, {
+            username: result.profile.username || pendingUsername || "",
+            phone: result.profile.phone || pendingPhone || "",
+          });
+        }
+        return result;
+      })
       .catch((err) => {
         console.error("Secure profile bootstrap error:", err);
         pageAuthDebug("bootstrapReferralBeforeRedirect:error", {
@@ -928,10 +988,9 @@ function renderAuthLoading() {
 function renderPage1() {
   pageAuthDebug("renderPage1");
   hideGlobalLoading();
-  const modeTitle = authMode === "signin" ? "SE CONNECTER" : "S'INSCRIRE";
-  const helperPrefix = authMode === "signin" ? "Pas encore de compte ?" : "Déjà un compte ?";
-  const helperAction = authMode === "signin" ? "S'inscrire" : "Se connecter";
-  const identifierPlaceholder = authMode === "signin" ? "Username ou email" : "Email";
+  const isLegacySignin = authMode === "signin";
+  const isSignupChooser = !isLegacySignin && signupCreationMode !== "phone";
+  const isSignupPhoneFlow = !isLegacySignin && signupCreationMode === "phone";
   const referralCtx = getReferralContextFromUrl(window.location.search);
   const hintCode = referralCtx.userCodeFromLink;
   const promoPrefill = normalizeCode(
@@ -949,19 +1008,223 @@ function renderPage1() {
   const bootstrapInfo = authBootstrapMessage
     ? `<div id="authInfo" class="mt-2 min-h-5 text-xs ${authBootstrapTone === "success" ? "text-emerald-200" : authBootstrapTone === "error" ? "text-[#ffb0b0]" : "text-amber-200"}">${escapeAttr(authBootstrapMessage)}</div>`
     : `<div id="authInfo" class="mt-2 min-h-5 text-xs text-amber-200"></div>`;
-  const oneClickHero = authMode === "signup"
+  const signupMethodChooser = isSignupChooser
     ? `
-      <div class="mt-6">
+      <div class="mt-6 grid grid-cols-1 gap-3">
         <button
           id="oneClickAuthBtn"
           type="button"
-          class="w-full rounded-full border border-white/18 bg-white/8 px-6 py-3 text-sm font-semibold tracking-wide text-white shadow-[8px_8px_18px_rgba(22,29,45,0.28),-6px_-6px_14px_rgba(118,131,172,0.12)] backdrop-blur-md transition hover:bg-white/12 sm:text-base"
+          class="group rounded-[1.7rem] border border-white/18 bg-white/8 px-5 py-4 text-left shadow-[8px_8px_18px_rgba(22,29,45,0.28),-6px_-6px_14px_rgba(118,131,172,0.12)] backdrop-blur-md transition hover:-translate-y-0.5 hover:bg-white/12"
         >
-          Auth en un click
+          <div class="flex items-start justify-between gap-3">
+            <div class="grid h-11 w-11 place-items-center rounded-2xl border border-white/16 bg-white/10 text-white/90">
+              <i class="fa-solid fa-bolt text-base"></i>
+            </div>
+            <span class="rounded-full border border-white/12 bg-white/8 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.22em] text-white/60">Rapide</span>
+          </div>
+          <div class="mt-4 text-sm font-semibold tracking-wide text-white sm:text-base">Créer votre compte en un click</div>
+        </button>
+
+        <button
+          id="openPhoneFieldsBtn"
+          type="button"
+          class="rounded-[1.7rem] border border-[#ffb26e]/55 bg-[linear-gradient(180deg,rgba(245,124,0,0.2),rgba(255,255,255,0.06))] px-5 py-4 text-left shadow-[10px_10px_22px_rgba(163,82,27,0.32),-8px_-8px_18px_rgba(255,183,116,0.1)] backdrop-blur-md"
+        >
+          <div class="flex items-start justify-between gap-3">
+            <div class="grid h-11 w-11 place-items-center rounded-2xl border border-[#ffcf9e]/35 bg-[#f57c00]/18 text-[#ffe0bf]">
+              <i class="fa-solid fa-mobile-screen-button text-base"></i>
+            </div>
+            <span class="rounded-full border border-[#ffcf9e]/30 bg-[#f57c00]/16 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.22em] text-[#ffe0bf]">Actif</span>
+          </div>
+          <div class="mt-4 text-sm font-semibold tracking-wide text-white sm:text-base">Creer avec numero</div>
         </button>
       </div>
     `
     : "";
+  const legacyToggle = isLegacySignin
+    ? `
+      <p class="mt-5 text-sm text-white/80 sm:text-base">
+        Vous n'avez pas de compte ?
+        <button id="openPhoneSignupBtn" type="button" class="font-semibold text-[#f48f45] hover:text-[#ff9f58]">Inscrivez-vous</button>
+      </p>
+    `
+    : `
+      <p class="mt-5 text-sm text-white/72 sm:text-base">
+        Vous avez deja un compte ?
+        <button id="openLegacySigninBtn" type="button" class="font-semibold text-[#f48f45] hover:text-[#ff9f58]">Connectez-vous</button>
+      </p>
+    `;
+  const signupPhoneTopActions = isSignupPhoneFlow
+    ? `
+      <div class="mt-6 flex items-center justify-between gap-3">
+        <button
+          id="backToSignupMethodsBtn"
+          type="button"
+          class="inline-flex items-center gap-2 rounded-full border border-white/16 bg-white/8 px-4 py-2 text-xs font-semibold tracking-wide text-white/88 transition hover:bg-white/12"
+        >
+          <i class="fa-solid fa-arrow-left text-[11px]"></i>
+          Methodes
+        </button>
+      </div>
+    `
+    : "";
+  const formBody = isLegacySignin
+    ? `
+      <form id="authForm" class="mt-7 space-y-4 sm:space-y-5">
+        <input
+          id="identifierInput"
+          type="text"
+          placeholder="Numero, username ou ancien email"
+          autocomplete="username"
+          class="block w-full rounded-2xl border border-white/20 bg-white/10 px-5 py-3.5 text-sm text-white placeholder-white/60 shadow-[inset_6px_6px_12px_rgba(34,40,59,0.45),inset_-6px_-6px_12px_rgba(93,105,143,0.28)] backdrop-blur-md outline-none ring-0 transition focus:border-[#f48f45] sm:text-base"
+        />
+        <div class="relative">
+          <input
+            id="passwordInput"
+            type="password"
+            placeholder="Mot de passe"
+            autocomplete="current-password"
+            class="block w-full rounded-2xl border border-white/20 bg-white/10 px-5 py-3.5 pr-14 text-sm text-white placeholder-white/60 shadow-[inset_6px_6px_12px_rgba(34,40,59,0.45),inset_-6px_-6px_12px_rgba(93,105,143,0.28)] backdrop-blur-md outline-none ring-0 transition focus:border-[#f48f45] sm:text-base"
+          />
+          <button
+            id="togglePasswordBtn"
+            type="button"
+            aria-label="Afficher le mot de passe"
+            title="Afficher le mot de passe"
+            class="absolute inset-y-0 right-3 my-auto grid h-9 w-9 place-items-center rounded-xl border border-white/20 bg-white/10 text-white/90 transition hover:bg-white/20"
+          >
+            <i class="fa-regular fa-eye"></i>
+          </button>
+        </div>
+      </form>
+      <div class="mt-3">
+        <button id="forgotPasswordBtn" type="button" class="text-sm font-medium text-[#f48f45] hover:text-[#ff9f58]">Mot de passe oublié ?</button>
+        <div id="forgotPasswordStatus" class="mt-2 min-h-5 text-xs text-white/75"></div>
+      </div>
+      <div id="authError" class="mt-4 min-h-5 text-sm text-[#ffb0b0]"></div>
+      ${bootstrapInfo}
+      <button
+        id="authSubmitBtn"
+        type="button"
+        class="mt-2 w-full rounded-full bg-[#f48f45] px-6 py-3.5 text-sm font-bold tracking-wide text-white shadow-[8px_8px_18px_rgba(179,92,34,0.45),-6px_-6px_14px_rgba(255,182,120,0.22)] transition hover:-translate-y-0.5 hover:bg-[#ff9a4f] sm:text-base"
+      >
+        Se connecter
+      </button>
+    `
+    : `
+      ${signupMethodChooser}
+      ${signupPhoneTopActions}
+      <form id="authForm" class="${isSignupPhoneFlow ? "mt-6 space-y-4 sm:space-y-5" : "hidden"}">
+        <input
+          id="usernameInput"
+          type="text"
+          placeholder="Username"
+          autocomplete="nickname"
+          autocapitalize="off"
+          spellcheck="false"
+          class="block w-full rounded-2xl border border-white/20 bg-white/10 px-5 py-3.5 text-sm text-white placeholder-white/60 shadow-[inset_6px_6px_12px_rgba(34,40,59,0.45),inset_-6px_-6px_12px_rgba(93,105,143,0.28)] backdrop-blur-md outline-none ring-0 transition focus:border-[#f48f45] sm:text-base"
+        />
+        <input
+          id="phoneInput"
+          type="tel"
+          inputmode="numeric"
+          autocomplete="tel"
+          placeholder="Numero telephone / WhatsApp"
+          class="block w-full rounded-2xl border border-white/20 bg-white/10 px-5 py-3.5 text-sm text-white placeholder-white/60 shadow-[inset_6px_6px_12px_rgba(34,40,59,0.45),inset_-6px_-6px_12px_rgba(93,105,143,0.28)] backdrop-blur-md outline-none ring-0 transition focus:border-[#f48f45] sm:text-base"
+        />
+        <div class="px-1 text-[11px] text-white/65 sm:text-xs">
+          Entre ton numero WhatsApp ou telephone. Exemple: 50941752992.
+        </div>
+        <div class="relative">
+          <input
+            id="passwordInput"
+            type="password"
+            placeholder="Mot de passe"
+            autocomplete="new-password"
+            class="block w-full rounded-2xl border border-white/20 bg-white/10 px-5 py-3.5 pr-14 text-sm text-white placeholder-white/60 shadow-[inset_6px_6px_12px_rgba(34,40,59,0.45),inset_-6px_-6px_12px_rgba(93,105,143,0.28)] backdrop-blur-md outline-none ring-0 transition focus:border-[#f48f45] sm:text-base"
+          />
+          <button
+            id="togglePasswordBtn"
+            type="button"
+            aria-label="Afficher le mot de passe"
+            title="Afficher le mot de passe"
+            class="absolute inset-y-0 right-3 my-auto grid h-9 w-9 place-items-center rounded-xl border border-white/20 bg-white/10 text-white/90 transition hover:bg-white/20"
+          >
+            <i class="fa-regular fa-eye"></i>
+          </button>
+        </div>
+        <div class="relative">
+          <input
+            id="passwordConfirmInput"
+            type="password"
+            placeholder="Confirmer le mot de passe"
+            autocomplete="new-password"
+            class="block w-full rounded-2xl border border-white/20 bg-white/10 px-5 py-3.5 pr-14 text-sm text-white placeholder-white/60 shadow-[inset_6px_6px_12px_rgba(34,40,59,0.45),inset_-6px_-6px_12px_rgba(93,105,143,0.28)] backdrop-blur-md outline-none ring-0 transition focus:border-[#f48f45] sm:text-base"
+          />
+          <button
+            id="togglePasswordConfirmBtn"
+            type="button"
+            aria-label="Afficher le mot de passe de confirmation"
+            title="Afficher le mot de passe de confirmation"
+            class="absolute inset-y-0 right-3 my-auto grid h-9 w-9 place-items-center rounded-xl border border-white/20 bg-white/10 text-white/90 transition hover:bg-white/20"
+          >
+            <i class="fa-regular fa-eye"></i>
+          </button>
+        </div>
+        <div>
+          <input
+            id="promoCodeInput"
+            type="text"
+            placeholder="Code promo (optionnel)"
+            autocapitalize="characters"
+            autocomplete="off"
+            spellcheck="false"
+            value="${escapeAttr(promoPrefill)}"
+            class="block w-full rounded-2xl border border-white/20 bg-white/10 px-5 py-3.5 text-sm uppercase text-white placeholder-white/60 shadow-[inset_6px_6px_12px_rgba(34,40,59,0.45),inset_-6px_-6px_12px_rgba(93,105,143,0.28)] backdrop-blur-md outline-none ring-0 transition focus:border-[#f48f45] sm:text-base"
+          />
+          <div class="mt-2 px-1 text-[11px] text-white/65 sm:text-xs">
+            Utilise si quelqu'un t'a partage un code.
+          </div>
+        </div>
+        <div class="space-y-3 rounded-2xl border border-white/15 bg-white/6 px-4 py-4">
+          <label class="flex items-start gap-3 text-sm text-white/90">
+            <input
+              id="signupAgeCheckbox"
+              type="checkbox"
+              class="mt-1 h-4 w-4 rounded border-white/30 bg-white/10 text-[#f48f45]"
+            />
+            <span>J'ai 18 ans ou plus.</span>
+          </label>
+          <label class="flex items-start gap-3 text-sm text-white/90">
+            <input
+              id="signupTermsCheckbox"
+              type="checkbox"
+              class="mt-1 h-4 w-4 rounded border-white/30 bg-white/10 text-[#f48f45]"
+            />
+            <span>
+              J'accepte les
+              <a href="${TERMS_ROUTE}" target="_blank" rel="noopener noreferrer" class="font-semibold text-[#ffd8b5] underline underline-offset-2">conditions d'utilisation</a>.
+            </span>
+          </label>
+          <div class="text-[11px] text-white/65 sm:text-xs">
+            En creant un compte, tu confirmes aussi avoir lu la
+            <a href="${PRIVACY_ROUTE}" target="_blank" rel="noopener noreferrer" class="text-[#ffd8b5] underline underline-offset-2">politique de confidentialite</a>
+            et les
+            <a href="${LEGAL_ROUTE}" target="_blank" rel="noopener noreferrer" class="text-[#ffd8b5] underline underline-offset-2">mentions legales</a>.
+          </div>
+        </div>
+      </form>
+      <div id="authError" class="mt-4 min-h-5 text-sm text-[#ffb0b0]"></div>
+      ${bootstrapInfo}
+      <button
+        id="authSubmitBtn"
+        type="button"
+        class="mt-2 w-full rounded-full bg-[#f48f45] px-6 py-3.5 text-sm font-bold tracking-wide text-white shadow-[8px_8px_18px_rgba(179,92,34,0.45),-6px_-6px_14px_rgba(255,182,120,0.22)] transition hover:-translate-y-0.5 hover:bg-[#ff9a4f] sm:text-base"
+        ${isSignupPhoneFlow ? "" : "style=\"display:none;\""}
+      >
+        Creer compte avec numero
+      </button>
+    `;
 
   getAuthShell().innerHTML = `
     <div id="appRoot" class="bg-[#3f4766] text-white font-['Poppins']" style="min-height:100svh;">
@@ -974,122 +1237,9 @@ function renderPage1() {
               Dominoes
             </h1>
 
-            <p class="mt-5 text-sm text-white/80 sm:text-base">
-              ${helperPrefix}
-              <button id="switchAuthMode" type="button" class="font-semibold text-[#f48f45] hover:text-[#ff9f58]">${helperAction}</button>
-            </p>
+            ${legacyToggle}
             ${referralHint}
-            ${oneClickHero}
-
-            <form id="authForm" class="mt-7 space-y-4 sm:space-y-5">
-              <input
-                id="emailInput"
-                type="${authMode === "signin" ? "text" : "email"}"
-                placeholder="${identifierPlaceholder}"
-                autocomplete="email"
-                class="block w-full rounded-2xl border border-white/20 bg-white/10 px-5 py-3.5 text-sm text-white placeholder-white/60 shadow-[inset_6px_6px_12px_rgba(34,40,59,0.45),inset_-6px_-6px_12px_rgba(93,105,143,0.28)] backdrop-blur-md outline-none ring-0 transition focus:border-[#f48f45] sm:text-base"
-              />
-              <div class="relative">
-                <input
-                  id="passwordInput"
-                  type="password"
-                  placeholder="Mot de passe"
-                  autocomplete="current-password"
-                  class="block w-full rounded-2xl border border-white/20 bg-white/10 px-5 py-3.5 pr-14 text-sm text-white placeholder-white/60 shadow-[inset_6px_6px_12px_rgba(34,40,59,0.45),inset_-6px_-6px_12px_rgba(93,105,143,0.28)] backdrop-blur-md outline-none ring-0 transition focus:border-[#f48f45] sm:text-base"
-                />
-                <button
-                  id="togglePasswordBtn"
-                  type="button"
-                  aria-label="Afficher le mot de passe"
-                  title="Afficher le mot de passe"
-                  class="absolute inset-y-0 right-3 my-auto grid h-9 w-9 place-items-center rounded-xl border border-white/20 bg-white/10 text-white/90 transition hover:bg-white/20"
-                >
-                  <i class="fa-regular fa-eye"></i>
-                </button>
-              </div>
-              ${authMode === "signup" ? `
-                <div class="relative">
-                  <input
-                    id="passwordConfirmInput"
-                    type="password"
-                    placeholder="Confirmer le mot de passe"
-                    autocomplete="new-password"
-                    class="block w-full rounded-2xl border border-white/20 bg-white/10 px-5 py-3.5 pr-14 text-sm text-white placeholder-white/60 shadow-[inset_6px_6px_12px_rgba(34,40,59,0.45),inset_-6px_-6px_12px_rgba(93,105,143,0.28)] backdrop-blur-md outline-none ring-0 transition focus:border-[#f48f45] sm:text-base"
-                  />
-                  <button
-                    id="togglePasswordConfirmBtn"
-                    type="button"
-                    aria-label="Afficher le mot de passe de confirmation"
-                    title="Afficher le mot de passe de confirmation"
-                    class="absolute inset-y-0 right-3 my-auto grid h-9 w-9 place-items-center rounded-xl border border-white/20 bg-white/10 text-white/90 transition hover:bg-white/20"
-                  >
-                    <i class="fa-regular fa-eye"></i>
-                  </button>
-                </div>
-              ` : ""}
-              ${authMode === "signup" ? `
-                <div>
-                  <input
-                    id="promoCodeInput"
-                    type="text"
-                    placeholder="Code promo (optionnel)"
-                    autocapitalize="characters"
-                    autocomplete="off"
-                    spellcheck="false"
-                    value="${escapeAttr(promoPrefill)}"
-                    class="block w-full rounded-2xl border border-white/20 bg-white/10 px-5 py-3.5 text-sm uppercase text-white placeholder-white/60 shadow-[inset_6px_6px_12px_rgba(34,40,59,0.45),inset_-6px_-6px_12px_rgba(93,105,143,0.28)] backdrop-blur-md outline-none ring-0 transition focus:border-[#f48f45] sm:text-base"
-                  />
-                  <div class="mt-2 px-1 text-[11px] text-white/65 sm:text-xs">
-                    Utilisé lors de la création du compte.
-                  </div>
-                </div>
-              ` : ""}
-              ${authMode === "signup" ? `
-                <div class="space-y-3 rounded-2xl border border-white/15 bg-white/6 px-4 py-4">
-                  <label class="flex items-start gap-3 text-sm text-white/90">
-                    <input
-                      id="signupAgeCheckbox"
-                      type="checkbox"
-                      class="mt-1 h-4 w-4 rounded border-white/30 bg-white/10 text-[#f48f45]"
-                    />
-                    <span>J'ai 18 ans ou plus.</span>
-                  </label>
-                  <label class="flex items-start gap-3 text-sm text-white/90">
-                    <input
-                      id="signupTermsCheckbox"
-                      type="checkbox"
-                      class="mt-1 h-4 w-4 rounded border-white/30 bg-white/10 text-[#f48f45]"
-                    />
-                    <span>
-                      J'accepte les
-                      <a href="${TERMS_ROUTE}" target="_blank" rel="noopener noreferrer" class="font-semibold text-[#ffd8b5] underline underline-offset-2">conditions d'utilisation</a>.
-                    </span>
-                  </label>
-                  <div class="text-[11px] text-white/65 sm:text-xs">
-                    En créant un compte, tu confirmes aussi avoir lu la
-                    <a href="${PRIVACY_ROUTE}" target="_blank" rel="noopener noreferrer" class="text-[#ffd8b5] underline underline-offset-2">politique de confidentialité</a>
-                    et les
-                    <a href="${LEGAL_ROUTE}" target="_blank" rel="noopener noreferrer" class="text-[#ffd8b5] underline underline-offset-2">mentions légales</a>.
-                  </div>
-                </div>
-              ` : ""}
-            </form>
-
-            <div class="mt-3 ${authMode === "signup" ? "hidden" : ""}">
-              <button id="forgotPasswordBtn" type="button" class="text-sm font-medium text-[#f48f45] hover:text-[#ff9f58]">Mot de passe oublié ?</button>
-              <div id="forgotPasswordStatus" class="mt-2 min-h-5 text-xs text-white/75"></div>
-            </div>
-
-            <div id="authError" class="mt-4 min-h-5 text-sm text-[#ffb0b0]"></div>
-            ${bootstrapInfo}
-
-            <button
-              id="authSubmitBtn"
-              type="button"
-              class="mt-2 w-full rounded-full bg-[#f48f45] px-6 py-3.5 text-sm font-bold tracking-wide text-white shadow-[8px_8px_18px_rgba(179,92,34,0.45),-6px_-6px_14px_rgba(255,182,120,0.22)] transition hover:-translate-y-0.5 hover:bg-[#ff9a4f] sm:text-base"
-            >
-              ${modeTitle}
-            </button>
+            ${formBody}
           </div>
 
           <div class="mt-auto pt-8 text-[11px] leading-relaxed text-white/70 sm:text-xs">
@@ -1125,11 +1275,16 @@ function renderPage1() {
 }
 
 function bindPage1Events() {
-  const switchBtn = document.getElementById("switchAuthMode");
   const submitBtn = document.getElementById("authSubmitBtn");
   const oneClickAuthBtn = document.getElementById("oneClickAuthBtn");
   const form = document.getElementById("authForm");
-  const emailInput = document.getElementById("emailInput");
+  const openLegacySigninBtn = document.getElementById("openLegacySigninBtn");
+  const openPhoneSignupBtn = document.getElementById("openPhoneSignupBtn");
+  const openPhoneFieldsBtn = document.getElementById("openPhoneFieldsBtn");
+  const backToSignupMethodsBtn = document.getElementById("backToSignupMethodsBtn");
+  const identifierInput = document.getElementById("identifierInput");
+  const usernameInput = document.getElementById("usernameInput");
+  const phoneInput = document.getElementById("phoneInput");
   const passwordInput = document.getElementById("passwordInput");
   const passwordConfirmInput = document.getElementById("passwordConfirmInput");
   const togglePasswordBtn = document.getElementById("togglePasswordBtn");
@@ -1191,26 +1346,58 @@ function bindPage1Events() {
     "Masquer le mot de passe de confirmation"
   );
 
-  if (switchBtn) {
-    switchBtn.addEventListener("click", () => {
-      authMode = authMode === "signin" ? "signup" : "signin";
+  if (openLegacySigninBtn && openLegacySigninBtn.dataset.bound !== "1") {
+    openLegacySigninBtn.dataset.bound = "1";
+    openLegacySigninBtn.addEventListener("click", () => {
+      authMode = "signin";
+      renderPage1();
+    });
+  }
+
+  if (openPhoneSignupBtn && openPhoneSignupBtn.dataset.bound !== "1") {
+    openPhoneSignupBtn.dataset.bound = "1";
+    openPhoneSignupBtn.addEventListener("click", () => {
+      authMode = "signup";
+      signupCreationMode = "chooser";
+      renderPage1();
+    });
+  }
+
+  if (openPhoneFieldsBtn && openPhoneFieldsBtn.dataset.bound !== "1") {
+    openPhoneFieldsBtn.dataset.bound = "1";
+    openPhoneFieldsBtn.addEventListener("click", () => {
+      signupCreationMode = "phone";
+      renderPage1();
+    });
+  }
+
+  if (backToSignupMethodsBtn && backToSignupMethodsBtn.dataset.bound !== "1") {
+    backToSignupMethodsBtn.dataset.bound = "1";
+    backToSignupMethodsBtn.addEventListener("click", () => {
+      signupCreationMode = "chooser";
       renderPage1();
     });
   }
 
   const submitAuth = async () => {
-    const identifier = (emailInput?.value || "").trim();
+    const identifier = (identifierInput?.value || "").trim();
+    const username = normalizeUsername(usernameInput?.value || "");
+    const phone = normalizePhoneLogin(phoneInput?.value || "");
     const password = passwordInput?.value || "";
     const confirmPassword = passwordConfirmInput?.value || "";
     const promoCode = authMode === "signup" ? normalizeCode(promoCodeInput?.value || "") : "";
     const errorEl = document.getElementById("authError");
     const usernameCandidate = normalizeUsername(identifier);
     const signinByEmail = identifier.includes("@");
+    const signinByPhone = !signinByEmail && isValidPhoneLogin(identifier);
     pageAuthDebug("submitAuth:begin", {
       identifier,
+      username,
+      phone,
       mode: authMode,
       promoCode,
       signinByEmail,
+      signinByPhone,
     });
 
     if (authMode === "signin") {
@@ -1219,12 +1406,20 @@ function bindPage1Events() {
           if (errorEl) errorEl.textContent = "Email invalide.";
           return;
         }
+      } else if (signinByPhone) {
+        if (!isValidPhoneLogin(identifier)) {
+          if (errorEl) errorEl.textContent = "Numero invalide.";
+          return;
+        }
       } else if (!isValidUsername(usernameCandidate)) {
         if (errorEl) errorEl.textContent = "Username invalide.";
         return;
       }
-    } else if (!isValidEmail(identifier)) {
-      if (errorEl) errorEl.textContent = "Email invalide.";
+    } else if (!isValidUsername(username)) {
+      if (errorEl) errorEl.textContent = "Username invalide.";
+      return;
+    } else if (!isValidPhoneLogin(phone)) {
+      if (errorEl) errorEl.textContent = "Numero telephone / WhatsApp invalide.";
       return;
     }
     if (!isValidPassword(password)) {
@@ -1253,23 +1448,35 @@ function bindPage1Events() {
           authFlowBusy = true;
           if (authMode === "signin") {
             savePendingPromoCode("");
+            savePendingPhone("");
             if (signinByEmail) {
               await loginWithEmail(identifier, password);
+            } else if (signinByPhone) {
+              await loginWithPhone(identifier, password);
             } else {
               await loginWithUsername(usernameCandidate, password);
             }
             pageAuthDebug("submitAuth:signinSuccess", {
               uid: String(auth.currentUser?.uid || ""),
               signinByEmail,
+              signinByPhone,
               username: usernameCandidate,
             });
             await handleAuthenticatedUser(auth.currentUser);
           } else {
             assertSignupAllowedOnThisDevice();
             savePendingPromoCode(promoCode);
-            await signupWithEmail(identifier, password);
+            savePendingUsername(username);
+            savePendingPhone(phone);
+            await signupWithPhone(phone, password);
+            await syncCurrentUserDisplayName(username);
+            saveAuthProfileHint(auth.currentUser, { username, phone });
             pageAuthDebug("submitAuth:signupSuccess", {
               uid: String(auth.currentUser?.uid || ""),
+              username,
+              phone,
+              currentDisplayName: String(auth.currentUser?.displayName || ""),
+              currentEmail: String(auth.currentUser?.email || ""),
             });
             await handleAuthenticatedUser(auth.currentUser, promoCode);
           }
@@ -1456,7 +1663,15 @@ function bindPage1Events() {
           savePendingOneClickId(oneClickId);
           savePendingPromoCode(promoCode);
           await signupWithUsername(username, password);
-          pageAuthDebug("oneClickSignup:success", { uid: String(auth.currentUser?.uid || ""), username, oneClickId });
+          await syncCurrentUserDisplayName(username);
+          saveAuthProfileHint(auth.currentUser, { username });
+          pageAuthDebug("oneClickSignup:success", {
+            uid: String(auth.currentUser?.uid || ""),
+            username,
+            oneClickId,
+            currentDisplayName: String(auth.currentUser?.displayName || ""),
+            currentEmail: String(auth.currentUser?.email || ""),
+          });
           closeOneClickModal();
           await handleAuthenticatedUser(auth.currentUser);
         }, { loadingLabel: "Création..." });
@@ -1474,7 +1689,7 @@ function bindPage1Events() {
   if (forgotPasswordBtn && forgotPasswordBtn.dataset.bound !== "1") {
     forgotPasswordBtn.dataset.bound = "1";
     forgotPasswordBtn.addEventListener("click", async () => {
-      const email = (emailInput?.value || "").trim();
+      const email = (identifierInput?.value || "").trim();
       const errorEl = document.getElementById("authError");
       if (errorEl) errorEl.textContent = "";
 
@@ -1541,8 +1756,12 @@ async function animatePage1() {
     easing: "easeOutQuad",
   });
 
-  const animatedInputs = ["#emailInput", "#passwordInput"];
-  if (authMode === "signup") {
+  const animatedInputs = authMode === "signin"
+    ? ["#identifierInput", "#passwordInput"]
+    : (signupCreationMode === "phone"
+      ? ["#usernameInput", "#phoneInput", "#passwordInput"]
+      : ["#oneClickAuthBtn", "#openPhoneFieldsBtn"]);
+  if (authMode === "signup" && signupCreationMode === "phone") {
     animatedInputs.push("#promoCodeInput");
     animatedInputs.push("#passwordConfirmInput");
   }

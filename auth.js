@@ -12,11 +12,13 @@ import {
   sendEmailVerification,
   reload,
   applyActionCode,
+  updateProfile,
 } from "./firebase-init.js";
 
 const GOOGLE_REDIRECT_PENDING_KEY = "domino_google_redirect_pending_v1";
 const GOOGLE_REDIRECT_PENDING_TTL_MS = 15 * 60 * 1000;
 const USERNAME_EMAIL_DOMAIN = "username.dominoeslakay.local";
+const PHONE_LOGIN_EMAIL_DOMAIN = "phone.dominoeslakay.local";
 
 function authDebug(event, data = {}) {
   try {
@@ -39,8 +41,10 @@ function formatAuthError(err, fallback) {
     "auth/unauthorized-domain": "Domaine non autorisé dans Firebase Authentication.",
     "auth/invalid-email": "Adresse email invalide.",
     "auth/invalid-username": "Username invalide.",
+    "auth/invalid-phone-login": "Numero de telephone ou WhatsApp invalide.",
     "auth/username-already-in-use": "Ce username est déjà utilisé.",
     "auth/email-already-in-use": "Cet email est déjà utilisé.",
+    "auth/phone-already-in-use": "Ce numero est deja utilise par un autre compte.",
     "auth/weak-password": "Mot de passe trop faible (min 6 caractères).",
     "auth/network-request-failed": "Erreur réseau vers Firebase.",
     "auth/too-many-requests": "Trop de tentatives, réessaie plus tard.",
@@ -88,9 +92,37 @@ function usernameToSyntheticEmail(username) {
   return `${normalized}@${USERNAME_EMAIL_DOMAIN}`;
 }
 
+function normalizePhoneLogin(phone) {
+  let digits = String(phone || "").replace(/\D/g, "");
+  if (!digits) return "";
+  if (digits.startsWith("00")) digits = digits.slice(2);
+  if (digits.length === 8) digits = `509${digits}`;
+  return digits.slice(0, 15);
+}
+
+function isValidPhoneLogin(phone) {
+  const normalized = normalizePhoneLogin(phone);
+  return /^\d{11,15}$/.test(normalized);
+}
+
+function phoneToSyntheticEmail(phone) {
+  const normalized = normalizePhoneLogin(phone);
+  if (!isValidPhoneLogin(normalized)) {
+    const err = new Error("Numero de telephone ou WhatsApp invalide.");
+    err.code = "auth/invalid-phone-login";
+    throw err;
+  }
+  return `${normalized}@${PHONE_LOGIN_EMAIL_DOMAIN}`;
+}
+
 function isOneClickAuthEmail(email) {
   const normalized = String(email || "").trim().toLowerCase();
   return normalized.endsWith(`@${USERNAME_EMAIL_DOMAIN}`);
+}
+
+function isPhoneAuthEmail(email) {
+  const normalized = String(email || "").trim().toLowerCase();
+  return normalized.endsWith(`@${PHONE_LOGIN_EMAIL_DOMAIN}`);
 }
 
 function createOneClickAccountId() {
@@ -109,6 +141,26 @@ async function loginWithEmail(email, password) {
 
 async function signupWithEmail(email, password) {
   return createUserWithEmailAndPassword(auth, String(email || "").trim(), String(password || ""));
+}
+
+async function loginWithPhone(phone, password) {
+  const email = phoneToSyntheticEmail(phone);
+  return signInWithEmailAndPassword(auth, email, String(password || ""));
+}
+
+async function signupWithPhone(phone, password) {
+  const email = phoneToSyntheticEmail(phone);
+  try {
+    return await createUserWithEmailAndPassword(auth, email, String(password || ""));
+  } catch (err) {
+    const code = String(err?.code || "");
+    if (code === "auth/email-already-in-use") {
+      const conflict = new Error("Ce numero est deja utilise.");
+      conflict.code = "auth/phone-already-in-use";
+      throw conflict;
+    }
+    throw err;
+  }
 }
 
 async function loginWithUsername(username, password) {
@@ -148,6 +200,32 @@ async function refreshCurrentUser(user = auth.currentUser) {
 
 async function applyEmailVerificationCode(code) {
   return applyActionCode(auth, String(code || "").trim());
+}
+
+async function syncCurrentUserDisplayName(displayName, user = auth.currentUser) {
+  const normalized = String(displayName || "").trim().slice(0, 80);
+  if (!user || !normalized) return user || null;
+  authDebug("syncCurrentUserDisplayName:begin", {
+    uid: String(user?.uid || ""),
+    requestedDisplayName: normalized,
+    beforeDisplayName: String(user?.displayName || ""),
+    email: String(user?.email || ""),
+  });
+  if (String(user.displayName || "").trim() === normalized) {
+    authDebug("syncCurrentUserDisplayName:skipAlreadySet", {
+      uid: String(user?.uid || ""),
+      displayName: String(user?.displayName || ""),
+    });
+    return user;
+  }
+  await updateProfile(user, { displayName: normalized });
+  const resolvedUser = auth.currentUser || user;
+  authDebug("syncCurrentUserDisplayName:done", {
+    uid: String(resolvedUser?.uid || ""),
+    afterDisplayName: String(resolvedUser?.displayName || ""),
+    email: String(resolvedUser?.email || ""),
+  });
+  return resolvedUser;
 }
 
 function isEmailPasswordUser(user) {
@@ -412,23 +490,29 @@ export {
   auth,
   formatAuthError,
   isValidEmail,
+  normalizePhoneLogin,
+  isValidPhoneLogin,
   normalizeUsername,
   isValidUsername,
   isOneClickAuthEmail,
+  isPhoneAuthEmail,
   createOneClickAccountId,
   isValidPassword,
   loginWithEmail,
+  loginWithPhone,
   loginWithUsername,
   loginWithGoogle,
   completeGoogleRedirectIfAny,
   hasPendingGoogleRedirect,
   clearPendingGoogleRedirect,
   signupWithEmail,
+  signupWithPhone,
   signupWithUsername,
   sendPasswordReset,
   sendSignupVerificationEmail,
   refreshCurrentUser,
   applyEmailVerificationCode,
+  syncCurrentUserDisplayName,
   isEmailPasswordUser,
   logoutCurrentUser,
   watchAuthState,

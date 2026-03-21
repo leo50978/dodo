@@ -113,14 +113,23 @@ function escapeHtml(input) {
     .replace(/'/g, "&#039;");
 }
 
+function isSyntheticPhoneLoginEmail(value) {
+  const email = String(value || "").trim().toLowerCase();
+  return email.endsWith("@phone.dominoeslakay.local");
+}
+
 function buildClientFromAuth() {
   const user = auth.currentUser;
   if (!user) return null;
+  const name = String(user.displayName || "").trim()
+    || (user.email && !isSyntheticPhoneLoginEmail(user.email) ? user.email.split("@")[0] : "")
+    || "Client";
+  const email = String(user.email || "").trim();
   return {
     id: user.uid,
     uid: user.uid,
-    name: user.displayName || (user.email ? user.email.split("@")[0] : "Client"),
-    email: user.email || "",
+    name,
+    email: isSyntheticPhoneLoginEmail(email) ? "" : email,
   };
 }
 

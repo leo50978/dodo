@@ -23,6 +23,7 @@ setGlobalOptions({
 });
 
 const ROOMS_COLLECTION = "rooms";
+const ROOM_RESULTS_COLLECTION = "roomResults";
 const GAME_STATES_COLLECTION = "gameStates";
 const CLIENTS_COLLECTION = "clients";
 const AMBASSADORS_COLLECTION = "ambassadors";
@@ -2155,6 +2156,87 @@ function getWinnerUidForSeat(room, winnerSeat) {
   return "";
 }
 
+function roomResultRef(roomId = "") {
+  return db.collection(ROOM_RESULTS_COLLECTION).doc(String(roomId || "").trim());
+}
+
+function buildRoomResultSnapshot(roomId = "", room = {}, overrides = {}) {
+  const snapshot = { ...room, ...overrides };
+  const playerUids = Array.isArray(snapshot.playerUids)
+    ? snapshot.playerUids.map((item) => String(item || "").trim())
+    : ["", "", "", ""];
+  const playerNames = Array.isArray(snapshot.playerNames)
+    ? snapshot.playerNames.map((item) => String(item || "").trim())
+    : ["", "", "", ""];
+  const humanCount = safeInt(
+    typeof snapshot.humanCount === "number"
+      ? snapshot.humanCount
+      : playerUids.filter(Boolean).length
+  );
+  const botCount = safeInt(
+    typeof snapshot.botCount === "number"
+      ? snapshot.botCount
+      : Math.max(0, 4 - humanCount)
+  );
+  const winnerSeat = Number.isFinite(Number(snapshot.winnerSeat))
+    ? Math.trunc(Number(snapshot.winnerSeat))
+    : -1;
+  const winnerUid = String(snapshot.winnerUid || "").trim() || getWinnerUidForSeat({ seats: getRoomSeats(room), playerUids }, winnerSeat);
+  const winnerType = winnerUid
+    ? "human"
+    : (winnerSeat >= 0 ? "bot" : "unknown");
+  const entryCostDoes = safeInt(snapshot.entryCostDoes || snapshot.stakeDoes);
+  const rewardAmountDoes = resolveRoomRewardDoes(snapshot);
+  const endedAtMs = safeSignedInt(snapshot.endedAtMs) || Date.now();
+  const startedAtMs = safeSignedInt(snapshot.startedAtMs);
+  const createdAtMs = safeSignedInt(snapshot.createdAtMs);
+  const status = String(snapshot.status || "").trim().toLowerCase() || "ended";
+  const companyCollectedDoes = humanCount * entryCostDoes;
+  const companyPayoutDoes = winnerType === "human" ? rewardAmountDoes : 0;
+  const companyNetDoes = companyCollectedDoes - companyPayoutDoes;
+
+  return {
+    roomId: String(roomId || "").trim(),
+    status,
+    roomMode: String(snapshot.roomMode || "").trim(),
+    isPrivate: snapshot.isPrivate === true,
+    ownerUid: String(snapshot.ownerUid || "").trim(),
+    inviteCode: String(snapshot.inviteCode || "").trim(),
+    stakeConfigId: String(snapshot.stakeConfigId || "").trim(),
+    entryCostDoes,
+    rewardAmountDoes,
+    humanCount,
+    botCount,
+    totalSeats: humanCount + botCount,
+    playerUids,
+    playerNames,
+    winnerSeat,
+    winnerUid,
+    winnerType,
+    endedReason: sanitizeText(snapshot.endedReason || "", 40),
+    botDifficulty: normalizeBotDifficulty(snapshot.botDifficulty),
+    createdAtMs,
+    startedAtMs,
+    endedAtMs,
+    companyCollectedDoes,
+    companyPayoutDoes,
+    companyNetDoes,
+    archiveVersion: 1,
+    archivedAtMs: Date.now(),
+    updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+  };
+}
+
+function writeRoomResultIfEndedTx(tx, roomRefDoc, room = {}, roomUpdate = {}) {
+  const nextStatus = String(roomUpdate.status || room.status || "").trim().toLowerCase();
+  if (nextStatus !== "ended") return;
+  const snapshot = buildRoomResultSnapshot(roomRefDoc.id, room, roomUpdate);
+  tx.set(roomResultRef(roomRefDoc.id), {
+    ...snapshot,
+    createdAt: admin.firestore.FieldValue.serverTimestamp(),
+  }, { merge: true });
+}
+
 function normalizeLegacyBranch(value, isOpeningMove = false) {
   const raw = String(value || "").trim().toLowerCase();
   if (isOpeningMove) return "centro";
@@ -2978,7 +3060,9 @@ async function processPendingBotTurns(roomId) {
       );
       const nextState = batchResult.state;
       tx.set(stateRef, buildGameStateWrite(nextState), { merge: true });
-      tx.update(roomRef, buildRoomUpdateFromGameState(liveRoom, nextState, batchResult.records));
+      const roomUpdate = buildRoomUpdateFromGameState(liveRoom, nextState, batchResult.records);
+      tx.update(roomRef, roomUpdate);
+      writeRoomResultIfEndedTx(tx, roomRef, liveRoom, roomUpdate);
 
       return {
         processed: true,
@@ -3848,6 +3932,7 @@ function buildStartedRoomTransaction(tx, roomRefDoc, room = {}, options = {}) {
   }
 
   tx.update(roomRefDoc, updates);
+  writeRoomResultIfEndedTx(tx, roomRefDoc, roomAtStart, updates);
 
   return {
     ok: true,
@@ -5493,7 +5578,7 @@ exports.finalizeGame = publicOnCall("finalizeGame", async (request) => {
     }
 
     const winnerUid = getWinnerUidForSeat(room, winnerSeat);
-    tx.update(roomRef, {
+    const roomUpdate = {
       status: "ended",
       endedAt: admin.firestore.FieldValue.serverTimestamp(),
       endedAtMs: Date.now(),
@@ -5502,13 +5587,15 @@ exports.finalizeGame = publicOnCall("finalizeGame", async (request) => {
       endedReason: endedReason || "out",
       endClicks: {},
       updatedAt: admin.firestore.FieldValue.serverTimestamp(),
-    });
+    };
+    tx.update(roomRef, roomUpdate);
     tx.set(gameStateRef(roomId), {
       winnerSeat,
       winnerUid,
       endedReason: endedReason || "out",
       updatedAt: admin.firestore.FieldValue.serverTimestamp(),
     }, { merge: true });
+    writeRoomResultIfEndedTx(tx, roomRef, room, roomUpdate);
 
     return {
       ok: true,
@@ -5694,6 +5781,7 @@ exports.submitAction = publicOnCall("submitAction", async (request) => {
 
     const roomUpdate = buildRoomUpdateFromGameState(room, nextState, batchResult.records);
     tx.update(roomRef, roomUpdate);
+    writeRoomResultIfEndedTx(tx, roomRef, room, roomUpdate);
 
     const lastRecord = batchResult.records.length > 0 ? batchResult.records[batchResult.records.length - 1] : null;
     return {

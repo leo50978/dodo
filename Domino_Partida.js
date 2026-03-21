@@ -30,6 +30,14 @@ var Domino_Partida = function() {
     this.ModoRehidratacion  = false;
     this.TimerReintentoTurno = 0;
     this.TimerEsperaFinMano = 0;
+    this.AnimacionInicioActiva = false;
+    this.RAFAnimacionInicio = 0;
+    this.ClaveAnimacionInicio = "";
+    this.DuracionAnimacionInicio = 5000;
+    this.BrassageAnimacionInicio = 1800;
+    this.RepartoAnimacionInicio = 2200;
+    this.RetrasoRepartoAnimacionInicio = 46;
+    this.ViajeRepartoAnimacionInicio = 310;
 
     this.Opciones = new Domino_Opciones;
 
@@ -196,6 +204,206 @@ var Domino_Partida = function() {
                 this.Opciones.NombreJugador[i] = NombresSesion[i] ? NombresSesion[i] : ("Robot " + (i + 1));
             }
         }
+    };
+
+    this.CancelarAnimacionInicio = function() {
+        if (this.RAFAnimacionInicio !== 0) {
+            cancelAnimationFrame(this.RAFAnimacionInicio);
+            this.RAFAnimacionInicio = 0;
+        }
+    };
+
+    this.HayAnimacionInicioActiva = function() {
+        return (this.AnimacionInicioActiva === true);
+    };
+
+    this.ObtenerSesionAnimacionInicio = function() {
+        return (typeof(window.GameSession) !== "undefined" && window.GameSession) ? window.GameSession : null;
+    };
+
+    this.ObtenerClaveAnimacionInicio = function() {
+        var S = this.ObtenerSesionAnimacionInicio();
+        if (!S || !S.roomId) return "";
+        var InicioMs = Number(S.startedAtMs || 0);
+        if (Number.isFinite(InicioMs) === false || InicioMs <= 0) return "";
+        return String(S.roomId) + ":" + String(Math.trunc(InicioMs));
+    };
+
+    this.ObtenerElapsedAnimacionInicioMs = function() {
+        var S = this.ObtenerSesionAnimacionInicio();
+        if (!S) return this.DuracionAnimacionInicio;
+        var InicioMs = Number(S.startedAtMs || 0);
+        if (Number.isFinite(InicioMs) === false || InicioMs <= 0) return this.DuracionAnimacionInicio;
+        return Math.max(0, Date.now() - InicioMs);
+    };
+
+    this.DebeUsarAnimacionInicio = function() {
+        if (this.Multijugador !== true) return false;
+        var S = this.ObtenerSesionAnimacionInicio();
+        if (!S || !S.roomId) return false;
+        var InicioMs = Number(S.startedAtMs || 0);
+        if (Number.isFinite(InicioMs) === false || InicioMs <= 0) return false;
+        return (S.startRevealPending === true || (Date.now() - InicioMs) < this.DuracionAnimacionInicio);
+    };
+
+    this.EaseInOutCubic = function(Tiempo) {
+        if (Tiempo <= 0) return 0;
+        if (Tiempo >= 1) return 1;
+        return (Tiempo < 0.5) ?
+            4.0 * Tiempo * Tiempo * Tiempo :
+            1.0 - Math.pow(-2.0 * Tiempo + 2.0, 3.0) / 2.0;
+    };
+
+    this.EaseOutSutil = function(Tiempo) {
+        if (Tiempo <= 0) return 0;
+        if (Tiempo >= 1) return 1;
+        var C1 = 1.70158;
+        var C3 = C1 + 1.0;
+        return 1.0 + (C3 * Math.pow(Tiempo - 1.0, 3.0)) + (C1 * Math.pow(Tiempo - 1.0, 2.0));
+    };
+
+    this.LerpNumero = function(Desde, Hasta, Tiempo) {
+        return Desde + ((Hasta - Desde) * Tiempo);
+    };
+
+    this.ObtenerPoseFinalFicha = function(IndiceFicha) {
+        var Seat = this.SeatDeFicha(IndiceFicha);
+        var PosSeat = IndiceFicha - this.SeatInicio(Seat);
+        var SeatVisual = this.VisualSeat(Seat);
+        var CaraArriba = false;
+
+        if (this.Multijugador === true) {
+            CaraArriba = (Seat === this.LocalSeat);
+        } else {
+            CaraArriba = (Seat === 0) || (this.Opciones.Descubierto === "true");
+        }
+
+        if (SeatVisual === 0) {
+            return { x : -3.8 + (1.25 * PosSeat), y : 0.0, z : 5.5,  rotZ : Math.PI / 2, rotX : CaraArriba ? -Math.PI / 2 : Math.PI / 2 };
+        }
+        if (SeatVisual === 1) {
+            return { x : 15.0, y : 0.0, z : -6.5 + (1.25 * PosSeat), rotZ : 0.0, rotX : CaraArriba ? -Math.PI / 2 : Math.PI / 2 };
+        }
+        if (SeatVisual === 2) {
+            return { x : -3.8 + (1.25 * PosSeat), y : 0.0, z : -12.0, rotZ : Math.PI / 2, rotX : CaraArriba ? -Math.PI / 2 : Math.PI / 2 };
+        }
+        return { x : -15.0, y : 0.0, z : -6.5 + (1.25 * PosSeat), rotZ : 0.0, rotX : CaraArriba ? -Math.PI / 2 : Math.PI / 2 };
+    };
+
+    this.ObtenerPoseBrassageFicha = function(IndiceFicha, TiempoMs) {
+        var Segundos = TiempoMs / 1000.0;
+        var Seed = IndiceFicha + 1;
+        var RadioBase = 1.0 + ((IndiceFicha % 7) * 0.22);
+        var Pulso = 1.0 + (0.18 * Math.sin((Segundos * 4.6) + (Seed * 0.37)));
+        var Angulo = ((Segundos * (1.7 + ((Seed % 5) * 0.19))) * Math.PI * 2.0) + (Seed * 0.58);
+        var DerivaX = Math.sin((Segundos * 3.1) + Seed) * 0.65;
+        var DerivaZ = Math.cos((Segundos * 2.3) + (Seed * 0.41)) * 0.55;
+        return {
+            x : (Math.cos(Angulo) * RadioBase * Pulso) + DerivaX,
+            y : 0.06 + (0.02 * (IndiceFicha % 4)),
+            z : (Math.sin(Angulo * 1.1) * RadioBase * 0.8 * Pulso) + DerivaZ,
+            rotZ : ((Angulo % (Math.PI * 2.0)) + (((Seed % 4) - 1.5) * 0.18)),
+            rotX : Math.PI / 2
+        };
+    };
+
+    this.AplicarPoseFicha = function(IndiceFicha, Pose) {
+        if (typeof(this.Ficha[IndiceFicha]) === "undefined" || !this.Ficha[IndiceFicha].Ficha || !Pose) return;
+        this.Ficha[IndiceFicha].Ficha.position.set(Pose.x, (typeof(Pose.y) === "number") ? Pose.y : 0.0, Pose.z);
+        this.Ficha[IndiceFicha].Ficha.rotation.z = Pose.rotZ;
+        this.Ficha[IndiceFicha].Ficha.rotation.x = Pose.rotX;
+        this.Ficha[IndiceFicha].Ficha.scale.set(1.0, 1.0, 1.0);
+    };
+
+    this.PosicionarFichasFinales = function() {
+        for (var idx = 0; idx < this.Ficha.length; idx++) {
+            this.AplicarPoseFicha(idx, this.ObtenerPoseFinalFicha(idx));
+        }
+    };
+
+    this.ActualizarAnimacionInicio = function() {
+        var ElapsedMs = this.ObtenerElapsedAnimacionInicioMs();
+        if (ElapsedMs >= this.DuracionAnimacionInicio) {
+            this.AnimacionInicioActiva = false;
+            this.CancelarAnimacionInicio();
+            this.PosicionarFichasFinales();
+            return;
+        }
+
+        var RevealProgress = Math.max(0, Math.min(1, (ElapsedMs - (this.BrassageAnimacionInicio + this.RepartoAnimacionInicio)) / Math.max(1, this.DuracionAnimacionInicio - (this.BrassageAnimacionInicio + this.RepartoAnimacionInicio))));
+
+        for (var idx = 0; idx < this.Ficha.length; idx++) {
+            var Pose = null;
+            if (ElapsedMs < this.BrassageAnimacionInicio) {
+                Pose = this.ObtenerPoseBrassageFicha(idx, ElapsedMs);
+            } else {
+                var InicioPose = this.ObtenerPoseBrassageFicha(idx, this.BrassageAnimacionInicio);
+                var FinalPose = this.ObtenerPoseFinalFicha(idx);
+                var TiempoReparto = ElapsedMs - this.BrassageAnimacionInicio;
+                var InicioFichaMs = idx * this.RetrasoRepartoAnimacionInicio;
+                var AvanceFicha = Math.max(0, Math.min(1, (TiempoReparto - InicioFichaMs) / this.ViajeRepartoAnimacionInicio));
+                var Suavizado = this.EaseInOutCubic(AvanceFicha);
+                Pose = {
+                    x : this.LerpNumero(InicioPose.x, FinalPose.x, Suavizado),
+                    y : this.LerpNumero(InicioPose.y, FinalPose.y, Suavizado) + (Math.sin(Math.PI * Suavizado) * 0.18),
+                    z : this.LerpNumero(InicioPose.z, FinalPose.z, Suavizado),
+                    rotZ : this.LerpNumero(InicioPose.rotZ, FinalPose.rotZ, Suavizado),
+                    rotX : FinalPose.rotX
+                };
+
+                var SeatFicha = this.SeatDeFicha(idx);
+                if (this.Multijugador === true && SeatFicha === this.LocalSeat) {
+                    var Volteo = Math.max(0, Math.min(1, (AvanceFicha - 0.78) / 0.22));
+                    Pose.rotX = this.LerpNumero(Math.PI / 2, -Math.PI / 2, this.EaseOutSutil(Volteo));
+                } else {
+                    Pose.rotX = Math.PI / 2;
+                }
+
+                if (RevealProgress > 0) {
+                    Pose.y += 0.02 * RevealProgress;
+                }
+            }
+            this.AplicarPoseFicha(idx, Pose);
+        }
+
+        this.CancelarAnimacionInicio();
+        this.RAFAnimacionInicio = requestAnimationFrame(function() {
+            this.RAFAnimacionInicio = 0;
+            if (this.AnimacionInicioActiva !== true) return;
+            this.ActualizarAnimacionInicio();
+        }.bind(this));
+    };
+
+    this.IniciarAnimacionInicio = function() {
+        if (this.DebeUsarAnimacionInicio() !== true) {
+            this.AnimacionInicioActiva = false;
+            this.CancelarAnimacionInicio();
+            this.PosicionarFichasFinales();
+            return false;
+        }
+
+        var Clave = this.ObtenerClaveAnimacionInicio();
+        if (!Clave) {
+            this.AnimacionInicioActiva = false;
+            this.CancelarAnimacionInicio();
+            this.PosicionarFichasFinales();
+            return false;
+        }
+
+        if (this.ClaveAnimacionInicio !== Clave) {
+            this.ClaveAnimacionInicio = Clave;
+        }
+
+        if (this.ObtenerElapsedAnimacionInicioMs() >= this.DuracionAnimacionInicio) {
+            this.AnimacionInicioActiva = false;
+            this.CancelarAnimacionInicio();
+            this.PosicionarFichasFinales();
+            return false;
+        }
+
+        this.AnimacionInicioActiva = true;
+        this.ActualizarAnimacionInicio();
+        return true;
     };
 
     this.AplicarOrdenFichas = function() {
@@ -477,6 +685,9 @@ var Domino_Partida = function() {
     this.Continuar = function() {
         if (this.ContinuandoPartida === true) return;
         this.ContinuandoPartida = true;
+        this.CancelarAnimacionInicio();
+        this.AnimacionInicioActiva = false;
+        this.ClaveAnimacionInicio = "";
 
         UI.OcultarEmpezar();
         UI.OcultarContinuar();
@@ -499,37 +710,8 @@ var Domino_Partida = function() {
         this.Pasado = 0;
 
         this.AplicarOrdenFichas();
-
-        // Place les mains selon la perspective locale en multijoueur :
-        // le joueur local voit toujours sa main en bas.
-        for (var seat = 0; seat < 4; seat++) {
-            var vSeat = this.VisualSeat(seat);
-            var faceUp = false;
-            if (this.Multijugador === true) {
-                faceUp = (seat === this.LocalSeat);
-            } else {
-                faceUp = (seat === 0) || (this.Opciones.Descubierto === "true");
-            }
-
-            for (var i = 0; i < 7; i++) {
-                var idx = this.SeatInicio(seat) + i;
-                if (vSeat === 0) { // bas
-                    this.Ficha[idx].RotarV();
-                    this.Ficha[idx].Ficha.position.set(-3.8 + (1.25 * i), 0, 5.5);
-                } else if (vSeat === 1) { // droite
-                    this.Ficha[idx].RotarH();
-                    this.Ficha[idx].Ficha.position.set(15, 0, -6.5 + (1.25 * i));
-                } else if (vSeat === 2) { // haut
-                    this.Ficha[idx].RotarV();
-                    this.Ficha[idx].Ficha.position.set(-3.8 + (1.25 * i), 0, -12);
-                } else { // gauche
-                    this.Ficha[idx].RotarH();
-                    this.Ficha[idx].Ficha.position.set(-15, 0, -6.5 + (1.25 * i));
-                }
-
-                if (faceUp) this.Ficha[idx].RotarBocaArriba();
-                else        this.Ficha[idx].RotarBocaAbajo();
-            }
+        if (this.IniciarAnimacionInicio() !== true) {
+            this.PosicionarFichasFinales();
         }
 
         this.JugadorActual = this.JugadorInicio();
@@ -546,6 +728,17 @@ var Domino_Partida = function() {
         if (this.ModoRehidratacion === true) return;
         if (this.ManoTerminada === true) return;
         this.CancelarReintentoTurno();
+        if (this.HayAnimacionInicioActiva() === true) {
+            this.DebugLog("Turno:waitingDealIntro", {
+                elapsedMs: this.ObtenerElapsedAnimacionInicioMs()
+            });
+            this.MostrarMensaje(this.LocalSeat,
+                "<span data-idioma-en='Shuffling and dealing dominoes...' data-idioma-cat='Barrejant i repartint fitxes...' data-idioma-es='Barajando y repartiendo fichas...'></span>", "negro");
+            this.ProgramarReintentoTurno(120, "Turno:retryWaitingDealIntro", {
+                elapsedMs: this.ObtenerElapsedAnimacionInicioMs()
+            });
+            return;
+        }
         this.DebugLog("Turno:enter", {
             tableroListo: this.TableroListo(),
             esTurnoHumanoLocal: this.EsTurnoHumanoLocal(),

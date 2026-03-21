@@ -6,6 +6,7 @@ import { db, doc, getDoc } from "./firebase-init.js";
 import { getDepositFundingStatusSecure } from "./secure-functions.js";
 const BALANCE_DEBUG = true;
 const ASSISTANCE_PHONE = "50941752992";
+const AUTH_PROFILE_HINT_STORAGE_KEY = "domino_auth_profile_hint_v1";
 let referralLoadToken = 0;
 let referralHintFreezeUntil = 0;
 let referralHintRestoreTimer = null;
@@ -60,11 +61,56 @@ function getBalanceBaseForUi() {
   return Number(base);
 }
 
-function getDisplayName(user) {
-  if (!user) return "Guest";
-  if (user.displayName) return user.displayName;
-  if (user.email) return user.email.split("@")[0];
-  return "Player";
+function isSyntheticPhoneLoginEmail(value) {
+  const email = String(value || "").trim().toLowerCase();
+  return email.endsWith("@phone.dominoeslakay.local");
+}
+
+function readAuthProfileHint(user) {
+  const uid = String(user?.uid || auth.currentUser?.uid || "").trim();
+  if (!uid) return null;
+  try {
+    const raw = window.localStorage?.getItem(AUTH_PROFILE_HINT_STORAGE_KEY) || "";
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    if (!parsed || typeof parsed !== "object") return null;
+    if (String(parsed.uid || "").trim() !== uid) return null;
+    return {
+      username: String(parsed.username || "").trim(),
+      phone: String(parsed.phone || "").trim(),
+      updatedAtMs: Number(parsed.updatedAtMs || 0) || 0,
+    };
+  } catch (_) {
+    return null;
+  }
+}
+
+function resolveDisplayName(user, clientData = null) {
+  const username = String(clientData?.username || "").trim();
+  if (username) return { value: username, source: "client.username" };
+  const profileHint = readAuthProfileHint(user);
+  if (profileHint?.username) return { value: profileHint.username, source: "local.username_hint" };
+  if (!user) return { value: "Guest", source: "guest" };
+  if (user.displayName) return { value: user.displayName, source: "auth.displayName" };
+  const phone = String(clientData?.phone || "").trim();
+  if (phone) return { value: phone, source: "client.phone" };
+  if (profileHint?.phone) return { value: profileHint.phone, source: "local.phone_hint" };
+  if (user.email && !isSyntheticPhoneLoginEmail(user.email)) return { value: user.email.split("@")[0], source: "auth.email" };
+  return { value: "Player", source: "fallback.player" };
+}
+
+function getDisplayName(user, clientData = null) {
+  return resolveDisplayName(user, clientData).value;
+}
+
+function getDisplayContact(user, clientData = null) {
+  const email = String(user?.email || "").trim();
+  if (email && !isSyntheticPhoneLoginEmail(email)) return email;
+  const phone = String(clientData?.phone || "").trim();
+  if (phone) return phone;
+  const profileHint = readAuthProfileHint(user);
+  if (profileHint?.phone) return profileHint.phone;
+  return "-";
 }
 
 function formatAmount(value) {
@@ -893,14 +939,28 @@ function updateProfileData(user) {
   }
 
   if (nameEl) {
-    const displayName = getDisplayName(user);
+    const displayResolution = resolveDisplayName(user, clientData);
+    const displayName = displayResolution.value;
     nameEl.textContent = displayName;
     nameEl.title = displayName || "";
+    if (BALANCE_DEBUG) {
+      console.log("[PROFILE_DEBUG][DISPLAY_NAME] resolution", {
+        uid: String(user?.uid || auth.currentUser?.uid || ""),
+        chosenValue: displayResolution.value,
+        source: displayResolution.source,
+        authDisplayName: String(user?.displayName || ""),
+        authEmail: String(user?.email || ""),
+        clientUsername: String(clientData?.username || ""),
+        clientPhone: String(clientData?.phone || ""),
+        localHint: readAuthProfileHint(user),
+        clientData,
+      });
+    }
   }
   if (emailEl) {
-    const email = user?.email || "-";
-    emailEl.textContent = email;
-    emailEl.title = email;
+    const contact = getDisplayContact(user, clientData);
+    emailEl.textContent = contact;
+    emailEl.title = contact;
   }
   if (balanceEl) balanceEl.textContent = formatAmount(resolvedAvailableHtg);
   if (approvedHtgEl) approvedHtgEl.textContent = formatAmount(approvedHtgAvailable);

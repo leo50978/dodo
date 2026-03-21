@@ -45,6 +45,13 @@ const FRIEND_ROOM_SEAT_QUERY = (() => {
   const parsed = Number.parseInt(String(URL_PARAMS.get("seat") || "-1"), 10);
   return Number.isFinite(parsed) && parsed >= 0 && parsed < 4 ? parsed : -1;
 })();
+const START_CINEMATIC_TOTAL_MS = 5000;
+const START_CINEMATIC_SHUFFLE_MS = 1800;
+const START_CINEMATIC_DEAL_MS = 2200;
+const START_CINEMATIC_REVEAL_MS = 1000;
+const START_CINEMATIC_TILE_COUNT = 28;
+const START_CINEMATIC_DEAL_GAP_MS = 46;
+const START_CINEMATIC_TILE_TRAVEL_MS = 310;
 
 function resolveEntryCostDoes(searchParams) {
   const rawStake = searchParams.get("stake");
@@ -134,6 +141,9 @@ let startRevealAckDoneId = "";
 let deckOrderSyncRoomId = "";
 let botTurnWakeTimer = null;
 let botTurnWakeKey = "";
+let startCinematicKey = "";
+let startCinematicAnimationFrame = 0;
+let startCinematicTiles = [];
 
 function readHudMinimalMode() {
   try {
@@ -244,6 +254,297 @@ function setMatchLoading(visible, text) {
     overlay.classList.add("hidden");
     overlay.classList.remove("flex");
   }
+}
+
+function lerpNumber(from, to, progress) {
+  return from + ((to - from) * progress);
+}
+
+function easeInOutCubic(progress) {
+  if (progress <= 0) return 0;
+  if (progress >= 1) return 1;
+  return progress < 0.5
+    ? 4 * progress * progress * progress
+    : 1 - Math.pow(-2 * progress + 2, 3) / 2;
+}
+
+function easeOutBack(progress) {
+  if (progress <= 0) return 0;
+  if (progress >= 1) return 1;
+  const c1 = 1.70158;
+  const c3 = c1 + 1;
+  return 1 + (c3 * Math.pow(progress - 1, 3)) + (c1 * Math.pow(progress - 1, 2));
+}
+
+function getRoomStartedAtMs(roomData = null) {
+  if (!roomData || typeof roomData !== "object") return 0;
+  const explicit = Number.parseInt(String(roomData.startedAtMs || 0), 10);
+  if (Number.isFinite(explicit) && explicit > 0) return explicit;
+  return tsToMs(roomData.startedAt);
+}
+
+function getRoomStartCinematicKey(roomData = null, targetRoomId = roomId) {
+  const safeRoomId = String(targetRoomId || "").trim();
+  const startedAtMs = getRoomStartedAtMs(roomData);
+  if (!safeRoomId || startedAtMs <= 0) return "";
+  return `${safeRoomId}:${startedAtMs}`;
+}
+
+function getStartCinematicElapsedMs(roomData = null) {
+  const startedAtMs = getRoomStartedAtMs(roomData);
+  if (startedAtMs <= 0) return START_CINEMATIC_TOTAL_MS;
+  return Math.max(0, Date.now() - startedAtMs);
+}
+
+function hasLocalStartCinematicElapsed(roomData = null) {
+  return getStartCinematicElapsedMs(roomData) >= START_CINEMATIC_TOTAL_MS;
+}
+
+function shouldHoldStartCinematic(roomData = null) {
+  if (!roomData || String(roomData.status || "") !== "playing") return false;
+  const startedAtMs = getRoomStartedAtMs(roomData);
+  if (startedAtMs <= 0) return false;
+  return roomData.startRevealPending === true || hasLocalStartCinematicElapsed(roomData) !== true;
+}
+
+function ensureStartCinematicNodes() {
+  const overlay = document.getElementById("GameStartCinematicOverlay");
+  const board = document.getElementById("GameStartCinematicBoard");
+  const layer = document.getElementById("GameStartCinematicTileLayer");
+  const text = document.getElementById("GameStartCinematicText");
+  const stage = document.getElementById("GameStartCinematicStage");
+  const revealTile = document.getElementById("GameStartCinematicRevealTile");
+  if (!overlay || !board || !layer || !text || !stage || !revealTile) {
+    return null;
+  }
+
+  if (startCinematicTiles.length !== START_CINEMATIC_TILE_COUNT || layer.children.length !== START_CINEMATIC_TILE_COUNT) {
+    layer.innerHTML = "";
+    startCinematicTiles = [];
+    for (let i = 0; i < START_CINEMATIC_TILE_COUNT; i += 1) {
+      const tile = document.createElement("div");
+      tile.className = "game-start-tile";
+      tile.setAttribute("aria-hidden", "true");
+      layer.appendChild(tile);
+      startCinematicTiles.push(tile);
+    }
+  }
+
+  return {
+    overlay,
+    board,
+    layer,
+    text,
+    stage,
+    revealTile,
+  };
+}
+
+function getRelativeSeatIndex(seat) {
+  const localSeat = Number.isFinite(Number(seatIndex)) && seatIndex >= 0 ? seatIndex : 0;
+  const safeSeat = Number.isFinite(Number(seat)) ? Math.trunc(Number(seat)) : 0;
+  return ((safeSeat - localSeat) + 4) % 4;
+}
+
+function getCinematicTargetPose(relativeSeat, handIndex, boardWidth, boardHeight) {
+  const spacing = Math.min(boardWidth, boardHeight) * 0.084;
+  const laneOffset = handIndex - 3;
+  const edgeX = boardWidth * 0.325;
+  const edgeY = boardHeight * 0.325;
+
+  if (relativeSeat === 0) {
+    return {
+      x: laneOffset * spacing,
+      y: edgeY,
+      rotateDeg: 90 + (laneOffset * 2.6),
+      scale: 0.98,
+    };
+  }
+
+  if (relativeSeat === 1) {
+    return {
+      x: edgeX,
+      y: laneOffset * spacing,
+      rotateDeg: laneOffset * 2.2,
+      scale: 0.98,
+    };
+  }
+
+  if (relativeSeat === 2) {
+    return {
+      x: laneOffset * spacing,
+      y: -edgeY,
+      rotateDeg: 90 - (laneOffset * 2.6),
+      scale: 0.98,
+    };
+  }
+
+  return {
+    x: -edgeX,
+    y: laneOffset * spacing,
+    rotateDeg: -(laneOffset * 2.2),
+    scale: 0.98,
+  };
+}
+
+function computeShufflePose(index, elapsedMs, boardWidth, boardHeight, deckOrder = []) {
+  const seedValue = Array.isArray(deckOrder) && Number.isFinite(Number(deckOrder[index]))
+    ? Math.trunc(Number(deckOrder[index]))
+    : index;
+  const seconds = elapsedMs / 1000;
+  const orbitBase = Math.min(boardWidth, boardHeight) * (0.044 + ((seedValue % 7) * 0.011));
+  const pulse = 1 + (0.18 * Math.sin((seconds * 4.6) + (seedValue * 0.39)));
+  const angle = ((seconds * (1.68 + ((seedValue % 5) * 0.19))) * Math.PI * 2) + (seedValue * 0.61);
+  const driftX = Math.sin((seconds * 3.2) + seedValue) * boardWidth * 0.028;
+  const driftY = Math.cos((seconds * 2.45) + (seedValue * 0.37)) * boardHeight * 0.024;
+  return {
+    x: (Math.cos(angle) * orbitBase * pulse) + driftX,
+    y: (Math.sin(angle * 1.11) * orbitBase * 0.82 * pulse) + driftY,
+    rotateDeg: ((angle * 57.2958) % 360) + (((seedValue % 4) - 1.5) * 9),
+    scale: 0.92 + ((seedValue % 5) * 0.018),
+  };
+}
+
+function applyStartCinematicTilePose(tile, pose, opacity = 1, zIndex = 1) {
+  if (!tile || !pose) return;
+  tile.style.opacity = String(opacity);
+  tile.style.zIndex = String(zIndex);
+  tile.style.transform =
+    `translate(-50%, -50%) translate(${pose.x.toFixed(2)}px, ${pose.y.toFixed(2)}px) rotate(${pose.rotateDeg.toFixed(2)}deg) scale(${pose.scale.toFixed(3)})`;
+}
+
+function renderStartCinematic(roomData = null) {
+  const nodes = ensureStartCinematicNodes();
+  if (!nodes || !roomData) return false;
+
+  const key = getRoomStartCinematicKey(roomData);
+  if (!key) {
+    hideStartCinematic(true);
+    return false;
+  }
+
+  const startedAtMs = getRoomStartedAtMs(roomData);
+  const elapsedMs = Math.max(0, Date.now() - startedAtMs);
+  const clampedElapsedMs = Math.min(elapsedMs, START_CINEMATIC_TOTAL_MS);
+  const boardWidth = Math.max(280, nodes.board.clientWidth || 0);
+  const boardHeight = Math.max(280, nodes.board.clientHeight || 0);
+  const deckOrder = Array.isArray(window.GameSession?.deckOrder) && window.GameSession.deckOrder.length === 28
+    ? window.GameSession.deckOrder
+    : (Array.isArray(roomData.privateDeckOrder) && roomData.privateDeckOrder.length === 28
+      ? roomData.privateDeckOrder
+      : (Array.isArray(roomData.deckOrder) && roomData.deckOrder.length === 28 ? roomData.deckOrder : []));
+
+  if (startCinematicKey !== key) {
+    startCinematicKey = key;
+    nodes.revealTile.classList.remove("visible");
+  }
+
+  nodes.overlay.classList.add("active");
+  nodes.overlay.setAttribute("aria-hidden", "false");
+
+  if (clampedElapsedMs < START_CINEMATIC_SHUFFLE_MS) {
+    nodes.stage.textContent = "Preparation de la main";
+    nodes.text.textContent = "Brassage des dominos en cours...";
+  } else if (clampedElapsedMs < START_CINEMATIC_SHUFFLE_MS + START_CINEMATIC_DEAL_MS) {
+    nodes.stage.textContent = "Distribution";
+    nodes.text.textContent = "Distribution des dominos a chaque joueur...";
+  } else if (roomData.startRevealPending === true && clampedElapsedMs >= START_CINEMATIC_TOTAL_MS) {
+    nodes.stage.textContent = "Verification";
+    nodes.text.textContent = "Chaque joueur confirme la mise en place...";
+  } else {
+    nodes.stage.textContent = "Ouverture";
+    nodes.text.textContent = "Le double six ouvre la main.";
+  }
+
+  const shuffleFinishedPoseMs = START_CINEMATIC_SHUFFLE_MS;
+  const revealPhaseProgress = clampNumber(
+    (clampedElapsedMs - (START_CINEMATIC_SHUFFLE_MS + START_CINEMATIC_DEAL_MS)) / START_CINEMATIC_REVEAL_MS,
+    0,
+    1
+  );
+
+  startCinematicTiles.forEach((tile, index) => {
+    const shufflePose = computeShufflePose(index, shuffleFinishedPoseMs, boardWidth, boardHeight, deckOrder);
+    const seat = index % 4;
+    const handIndex = Math.floor(index / 4);
+    const targetPose = getCinematicTargetPose(getRelativeSeatIndex(seat), handIndex, boardWidth, boardHeight);
+
+    let pose = shufflePose;
+    let opacity = 1;
+    let zIndex = 50 + index;
+
+    if (clampedElapsedMs < START_CINEMATIC_SHUFFLE_MS) {
+      pose = computeShufflePose(index, clampedElapsedMs, boardWidth, boardHeight, deckOrder);
+      zIndex = 160 + index;
+    } else {
+      const dealElapsedMs = clampedElapsedMs - START_CINEMATIC_SHUFFLE_MS;
+      const tileDelayMs = index * START_CINEMATIC_DEAL_GAP_MS;
+      const travelProgress = clampNumber(
+        (dealElapsedMs - tileDelayMs) / START_CINEMATIC_TILE_TRAVEL_MS,
+        0,
+        1
+      );
+      const eased = easeInOutCubic(travelProgress);
+      pose = {
+        x: lerpNumber(shufflePose.x, targetPose.x, eased),
+        y: lerpNumber(shufflePose.y, targetPose.y, eased),
+        rotateDeg: lerpNumber(shufflePose.rotateDeg, targetPose.rotateDeg, eased),
+        scale: lerpNumber(shufflePose.scale, targetPose.scale, eased),
+      };
+      opacity = revealPhaseProgress > 0 ? lerpNumber(1, 0.52, revealPhaseProgress) : 1;
+      zIndex = 90 - Math.floor(index / 4);
+    }
+
+    applyStartCinematicTilePose(tile, pose, opacity, zIndex);
+  });
+
+  if (revealPhaseProgress > 0) {
+    const revealScale = lerpNumber(0.68, 1, easeOutBack(revealPhaseProgress));
+    const revealRotate = lerpNumber(-14, 0, revealPhaseProgress);
+    const revealOpacity = lerpNumber(0.2, 1, revealPhaseProgress);
+    nodes.revealTile.classList.add("visible");
+    nodes.revealTile.style.opacity = String(revealOpacity);
+    nodes.revealTile.style.zIndex = "220";
+    nodes.revealTile.style.transform =
+      `translate(-50%, -50%) translate(0px, 0px) rotate(${revealRotate.toFixed(2)}deg) scale(${revealScale.toFixed(3)})`;
+  } else {
+    nodes.revealTile.classList.remove("visible");
+    nodes.revealTile.style.opacity = "0";
+    nodes.revealTile.style.transform = "translate(-50%, -50%) scale(0.72)";
+  }
+
+  return true;
+}
+
+function stopStartCinematicLoop() {
+  if (startCinematicAnimationFrame) {
+    cancelAnimationFrame(startCinematicAnimationFrame);
+    startCinematicAnimationFrame = 0;
+  }
+}
+
+function hideStartCinematic(forceReset = false) {
+  stopStartCinematicLoop();
+  const overlay = document.getElementById("GameStartCinematicOverlay");
+  const revealTile = document.getElementById("GameStartCinematicRevealTile");
+  if (overlay) {
+    overlay.classList.remove("active");
+    overlay.setAttribute("aria-hidden", "true");
+  }
+  if (revealTile) {
+    revealTile.classList.remove("visible");
+    revealTile.style.opacity = "0";
+    revealTile.style.transform = "translate(-50%, -50%) scale(0.72)";
+  }
+  if (forceReset) {
+    startCinematicKey = "";
+    startCinematicTiles = [];
+  }
+}
+
+function syncStartCinematic(roomData = null) {
+  hideStartCinematic();
+  return shouldHoldStartCinematic(roomData);
 }
 
 function hasSeenHowToPlayPrompt() {
@@ -1040,6 +1341,7 @@ function clearSubs() {
   lastRoomSnapshotData = null;
   clearTurnTimer();
   gameLaunched = false;
+  hideStartCinematic();
 }
 
 function actionCacheKey(id) {
@@ -1133,6 +1435,7 @@ function resetSessionState() {
   window.GameSession = null;
   setLeaveRoomButtonVisible(false);
   updateOrientationGuard();
+  hideStartCinematic(true);
 }
 
 function scheduleRehydrationRetry(targetRoomId, retryFn, reason, data = {}) {
@@ -1679,6 +1982,7 @@ function syncGameSessionFromRoom(roomData) {
   const seats = roomData.seats && typeof roomData.seats === "object" ? roomData.seats : {};
   const humanSeats = parseSeatsMap(seats);
   const hostSeat = seats[roomData.ownerUid] !== undefined ? seats[roomData.ownerUid] : window.GameSession.hostSeat || 0;
+  const startedAtMs = getRoomStartedAtMs(roomData);
   window.GameSession.status = roomData.status;
   window.GameSession.hostSeat = hostSeat;
   window.GameSession.isHost = window.GameSession.seatIndex === hostSeat;
@@ -1695,6 +1999,7 @@ function syncGameSessionFromRoom(roomData) {
   window.GameSession.lastActionSeq = typeof roomData.lastActionSeq === "number" ? roomData.lastActionSeq : window.GameSession.lastActionSeq;
   window.GameSession.entryCostDoes = getCurrentRoomEntryCostDoes(roomData);
   window.GameSession.rewardAmountDoes = getCurrentRoomRewardDoes(roomData);
+  window.GameSession.startedAtMs = startedAtMs > 0 ? startedAtMs : (window.GameSession.startedAtMs || 0);
   debugMatch("syncGameSessionFromRoom", {
     status: roomData.status || "",
     startRevealPending: roomData.startRevealPending === true,
@@ -1704,6 +2009,7 @@ function syncGameSessionFromRoom(roomData) {
     humanCount: roomData.humanCount,
     botCount: roomData.botCount,
     humanSeats,
+    startedAtMs,
   });
   if (window.Domino && window.Domino.Partida && typeof window.Domino.Partida.PrepararSesion === "function") {
     window.Domino.Partida.PrepararSesion();
@@ -1854,6 +2160,23 @@ function watchActions(id) {
         return;
       }
 
+      if (hasLocalStartCinematicElapsed(lastRoomSnapshotData) !== true) {
+        syncStartCinematic(lastRoomSnapshotData);
+        debugMatch("rehydration:wait-startCinematic", {
+          localTurn: partida.TurnoActual,
+          localPlayer: partida.JugadorActual,
+          nextSeq: partida.SiguienteAccionSeq,
+          cinematicElapsedMs: getStartCinematicElapsedMs(lastRoomSnapshotData),
+          cinematicRemainingMs: Math.max(0, START_CINEMATIC_TOTAL_MS - getStartCinematicElapsedMs(lastRoomSnapshotData)),
+        });
+        scheduleRehydrationRetry(id, maybeFinishRehydration, "rehydration:retryStartCinematic", {
+          localTurn: partida.TurnoActual,
+          nextSeq: partida.SiguienteAccionSeq,
+          cinematicElapsedMs: getStartCinematicElapsedMs(lastRoomSnapshotData),
+        });
+        return;
+      }
+
       debugMatch("rehydration:finish-startReveal", {
         localTurn: partida.TurnoActual,
         localPlayer: partida.JugadorActual,
@@ -1974,47 +2297,74 @@ function watchActions(id) {
         if (typeof window.Domino.Partida.IniciarRehidratacion === "function") {
           window.Domino.Partida.IniciarRehidratacion();
         }
-        try {
-          // Rebuild autoritaire depuis Firestore pour éviter toute dérive du cache local.
-          if (typeof window.Domino.Partida.Empezar === "function") {
-            window.Domino.Partida.Empezar();
-          }
-          if (shouldAckStartReveal === true) {
+        // Rebuild autoritaire depuis Firestore pour éviter toute dérive du cache local.
+        if (typeof window.Domino.Partida.Empezar === "function") {
+          window.Domino.Partida.Empezar();
+        }
+
+        const hydrateInitialSnapshot = () => {
+          if (
+            window.Domino &&
+            window.Domino.Partida &&
+            typeof window.Domino.Partida.HayAnimacionInicioActiva === "function" &&
+            window.Domino.Partida.HayAnimacionInicioActiva() === true
+          ) {
             setMatchLoading(false);
             updateOrientationGuard();
-            debugMatch("watchActions:firstSnapshot:startRevealVisible", {
+            debugMatch("watchActions:firstSnapshot:waitDealIntro", {
               docs: snap.size,
-              currentPlayer: lastRoomSnapshotData?.currentPlayer,
-              turnActual: lastRoomSnapshotData?.turnActual,
+              empty: snap.empty,
+              introElapsedMs: typeof window.Domino.Partida.ObtenerElapsedAnimacionInicioMs === "function"
+                ? window.Domino.Partida.ObtenerElapsedAnimacionInicioMs()
+                : -1,
             });
-          }
-          if (snap.empty) {
-            maybeFinishRehydration();
+            scheduleRehydrationRetry(id, hydrateInitialSnapshot, "watchActions:retryWaitDealIntro", {
+              docs: snap.size,
+              empty: snap.empty,
+            });
             return;
           }
-          snap.docs.forEach((d) => {
-            const action = d.data();
-            if (typeof action.seq !== "number") return;
-            debugMatch("watchActions:replay", {
-              seq: action.seq,
-              type: action.type,
-              player: action.player,
-              branch: action.branch || "",
-            });
-            saveActionToCache(id, action);
-            window.Domino.Partida.AplicarAccionMultijugador(action);
-          });
-        } finally {
-          markRoomActionsReady(id);
-          maybeFinishRehydration();
-          if (id === roomId && lastRoomSnapshotData && lastRoomSnapshotData.status === "playing") {
-            if (lastRoomSnapshotData.startRevealPending !== true) {
+
+          try {
+            if (shouldAckStartReveal === true) {
               setMatchLoading(false);
+              updateOrientationGuard();
+              debugMatch("watchActions:firstSnapshot:startRevealVisible", {
+                docs: snap.size,
+                currentPlayer: lastRoomSnapshotData?.currentPlayer,
+                turnActual: lastRoomSnapshotData?.turnActual,
+              });
             }
-            updateOrientationGuard();
-            scheduleTurnTimeout(id, lastRoomSnapshotData);
+            if (snap.empty) {
+              maybeFinishRehydration();
+              return;
+            }
+            snap.docs.forEach((d) => {
+              const action = d.data();
+              if (typeof action.seq !== "number") return;
+              debugMatch("watchActions:replay", {
+                seq: action.seq,
+                type: action.type,
+                player: action.player,
+                branch: action.branch || "",
+              });
+              saveActionToCache(id, action);
+              window.Domino.Partida.AplicarAccionMultijugador(action);
+            });
+          } finally {
+            markRoomActionsReady(id);
+            maybeFinishRehydration();
+            if (id === roomId && lastRoomSnapshotData && lastRoomSnapshotData.status === "playing") {
+              if (lastRoomSnapshotData.startRevealPending !== true) {
+                setMatchLoading(false);
+              }
+              updateOrientationGuard();
+              scheduleTurnTimeout(id, lastRoomSnapshotData);
+            }
           }
-        }
+        };
+
+        hydrateInitialSnapshot();
         return;
       }
 
@@ -2046,6 +2396,7 @@ function launchLocalGame(roomData) {
   const seats = roomData.seats || {};
   const humanSeats = parseSeatsMap(seats);
   const hostSeat = seats[roomData.ownerUid] !== undefined ? seats[roomData.ownerUid] : 0;
+  const startedAtMs = getRoomStartedAtMs(roomData);
   const effectiveDeckOrder = Array.isArray(roomData.privateDeckOrder) && roomData.privateDeckOrder.length === 28
     ? writeRoomDeckOrder(roomId, roomData.privateDeckOrder)
     : (Array.isArray(roomData.deckOrder) && roomData.deckOrder.length === 28
@@ -2069,6 +2420,7 @@ function launchLocalGame(roomData) {
     lastActionSeq: typeof roomData.lastActionSeq === "number" ? roomData.lastActionSeq : -1,
     entryCostDoes: getCurrentRoomEntryCostDoes(roomData),
     rewardAmountDoes: getCurrentRoomRewardDoes(roomData),
+    startedAtMs,
     deckOrder: effectiveDeckOrder,
   };
   if (String(roomData.status || "") === "playing" && effectiveDeckOrder.length !== 28) {
@@ -2114,6 +2466,7 @@ function launchLocalGame(roomData) {
     currentPlayer: window.GameSession.currentPlayer,
     turnActual: window.GameSession.turnActual,
     lastActionSeq: window.GameSession.lastActionSeq,
+    startedAtMs,
     deckOrderLength: window.GameSession.deckOrder.length,
   });
 
@@ -2133,6 +2486,7 @@ function watchRoom(id) {
         if (id === roomId) {
           resetSessionState();
           clearActionCache(id);
+          hideStartCinematic(true);
           setMatchLoading(false);
           if (window.UI && typeof window.UI.NotifierSalleSupprimee === "function") {
             window.UI.NotifierSalleSupprimee();
@@ -2156,6 +2510,7 @@ function watchRoom(id) {
       });
 
       if (data.status === "waiting") {
+        hideStartCinematic();
         clearBotTurnWakeTimer();
         clearTurnTimer();
         setMatchLoading(true, "Connexion des joueurs en cours.");
@@ -2164,6 +2519,7 @@ function watchRoom(id) {
       }
 
       if (data.status === "ended") {
+        hideStartCinematic();
         clearBotTurnWakeTimer();
         markRoomActionsReady(id);
         clearFinalizeGameTimer();
@@ -2202,24 +2558,30 @@ function watchRoom(id) {
       }
 
       if (data.status === "playing") {
+        const cinematicBlocking = syncStartCinematic(data);
         clearTimer();
         maybeSyncFriendRoomEntryCharge(data);
         syncGameSessionFromRoom(data);
         launchLocalGame(data);
         maybeNudgeServerForBotTurn(id, data);
         updateOrientationGuard();
-        if (areRoomActionsReady(id)) {
+        if (areRoomActionsReady(id) && cinematicBlocking !== true) {
           setMatchLoading(false);
           scheduleTurnTimeout(id, data);
         } else {
           clearTurnTimer();
-          setMatchLoading(true, "Synchronisation de la partie...");
+          if (cinematicBlocking === true) {
+            setMatchLoading(false);
+          } else {
+            setMatchLoading(true, "Synchronisation de la partie...");
+          }
         }
         matchmakingBusy = false;
         return;
       }
 
       if (data.status === "closing") {
+        hideStartCinematic();
         clearBotTurnWakeTimer();
         markRoomActionsReady(id);
         clearFinalizeGameTimer();
@@ -2231,6 +2593,7 @@ function watchRoom(id) {
       }
 
       if (data.status === "closed") {
+        hideStartCinematic();
         clearBotTurnWakeTimer();
         markRoomActionsReady(id);
         clearFinalizeGameTimer();
