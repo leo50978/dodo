@@ -40,6 +40,7 @@ const DEFAULT_GAME_STAKE_OPTIONS = Object.freeze([
 let page2NonCriticalRefreshTimer = null;
 let page2NonCriticalVisibilityHandler = null;
 let page2NonCriticalUid = "";
+let applyPage2AccountState = () => {};
 let page2PresenceVisibilityBound = false;
 let page2PresenceUser = null;
 let page2PresenceTick = null;
@@ -1197,7 +1198,7 @@ export function renderPage2(user, options = {}) {
     btn.setAttribute("aria-disabled", frozen === true ? "true" : "false");
   };
 
-  const applyPage2AccountState = (clientData = {}) => {
+  applyPage2AccountState = (clientData = {}) => {
     page2AccountFrozen = clientData?.accountFrozen === true;
     const frozenMessage = page2AccountFrozen
       ? "Ton compte a été temporairement gelé après plusieurs dépôts refusés. Dépôt, parties, tournois et bonus sont bloqués jusqu'au dégel."
