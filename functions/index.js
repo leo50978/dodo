@@ -113,6 +113,8 @@ const BOT_DIFFICULTY_LEVELS = new Set(["amateur", "expert", "ultra", "userpro"])
 const BOT_PILOT_MODES = new Set(["manual", "auto"]);
 const BOT_PILOT_WINDOW_MS = 24 * 60 * 60 * 1000;
 const BOT_PILOT_SNAPSHOT_LIMIT = 5000;
+const BOT_PILOT_TREND_POINT_LIMIT = 12;
+const BOT_PILOT_EQUITY_POINT_LIMIT = 24;
 const BOT_DIFFICULTY_LOOKAHEAD = Object.freeze({
   amateur: 0,
   expert: 3,
@@ -2101,6 +2103,10 @@ function chooseAutoBotDifficulty(snapshot = {}) {
   const netDoes = safeSignedInt(snapshot.netDoes);
   const collectedDoes = safeInt(snapshot.collectedDoes);
   const marginPct = collectedDoes > 0 ? (netDoes / collectedDoes) : 0;
+  const drawdownDoes = Math.max(0, safeInt(snapshot.drawdownDoes));
+  const drawdownPct = Math.max(0, Number(snapshot.drawdownPct || 0));
+  const highWaterMarkDoes = Math.max(0, safeInt(snapshot.highWaterMarkDoes));
+  const isNearPeak = highWaterMarkDoes <= 0 || drawdownPct <= 0.02;
 
   if (collectedDoes <= 0) {
     return {
@@ -2110,16 +2116,25 @@ function chooseAutoBotDifficulty(snapshot = {}) {
       marginPct: 0,
     };
   }
+  if (drawdownPct >= 0.18 || (drawdownDoes >= 400 && drawdownPct >= 0.12)) {
+    return { level: "ultra", band: "danger", reason: "drawdown_critical", marginPct, drawdownPct };
+  }
   if (netDoes < 0 || marginPct < 0.03) {
-    return { level: "ultra", band: "danger", reason: "margin_too_low", marginPct };
+    return { level: "ultra", band: "danger", reason: "margin_too_low", marginPct, drawdownPct };
+  }
+  if (drawdownPct >= 0.08) {
+    return { level: "expert", band: "defense", reason: "drawdown_high", marginPct, drawdownPct };
   }
   if (marginPct < 0.08) {
-    return { level: "expert", band: "defense", reason: "margin_low", marginPct };
+    return { level: "expert", band: "defense", reason: "margin_low", marginPct, drawdownPct };
+  }
+  if (!isNearPeak) {
+    return { level: "amateur", band: "equilibrium", reason: "recovery_guard", marginPct, drawdownPct };
   }
   if (marginPct < 0.16) {
-    return { level: "amateur", band: "equilibrium", reason: "margin_ok", marginPct };
+    return { level: "amateur", band: "equilibrium", reason: "margin_ok", marginPct, drawdownPct };
   }
-  return { level: "userpro", band: "comfort", reason: "margin_high", marginPct };
+  return { level: "userpro", band: "comfort", reason: "new_high_comfort", marginPct, drawdownPct };
 }
 
 async function computeBotPilotSnapshot(options = {}) {
@@ -2239,10 +2254,8 @@ async function computeBotPilotSnapshot(options = {}) {
      botMixMap.set(mixKey, mix);
   });
 
-  const recommended = chooseAutoBotDifficulty({ netDoes, collectedDoes });
-  const trend = Array.from(trendMap.values())
+  const fullTrend = Array.from(trendMap.values())
     .sort((a, b) => safeSignedInt(a.periodMs) - safeSignedInt(b.periodMs))
-    .slice(-12)
     .map((item) => ({
       key: item.key,
       label: item.label,
@@ -2256,6 +2269,49 @@ async function computeBotPilotSnapshot(options = {}) {
       grossNetDoes: safeSignedInt(item.grossNetDoes),
       promoExposureDoes: safeInt(item.promoExposureDoes),
     }));
+  let runningEquityDoes = 0;
+  let highWaterMarkDoes = 0;
+  let lastPeakAtMs = range.startMs;
+  const fullEquityCurve = [{
+    key: "baseline",
+    label: "Debut",
+    periodMs: range.startMs,
+    deltaNetDoes: 0,
+    equityDoes: 0,
+    drawdownDoes: 0,
+    drawdownPct: 0,
+  }];
+  fullTrend.forEach((item) => {
+    runningEquityDoes += safeSignedInt(item.netDoes);
+    if (runningEquityDoes >= highWaterMarkDoes) {
+      highWaterMarkDoes = runningEquityDoes;
+      lastPeakAtMs = safeSignedInt(item.periodMs) || lastPeakAtMs;
+    }
+    const pointDrawdownDoes = Math.max(0, highWaterMarkDoes - runningEquityDoes);
+    const pointDrawdownPct = highWaterMarkDoes > 0 ? (pointDrawdownDoes / highWaterMarkDoes) : 0;
+    fullEquityCurve.push({
+      key: item.key,
+      label: item.label,
+      periodMs: safeSignedInt(item.periodMs),
+      deltaNetDoes: safeSignedInt(item.netDoes),
+      equityDoes: runningEquityDoes,
+      drawdownDoes: pointDrawdownDoes,
+      drawdownPct: pointDrawdownPct,
+    });
+  });
+  const currentEquityDoes = runningEquityDoes;
+  const drawdownDoes = Math.max(0, highWaterMarkDoes - currentEquityDoes);
+  const drawdownPct = highWaterMarkDoes > 0 ? (drawdownDoes / highWaterMarkDoes) : 0;
+  const trend = fullTrend.slice(-BOT_PILOT_TREND_POINT_LIMIT);
+  const equityCurve = fullEquityCurve.slice(-(BOT_PILOT_EQUITY_POINT_LIMIT + 1));
+  const recommended = chooseAutoBotDifficulty({
+    netDoes,
+    collectedDoes,
+    highWaterMarkDoes,
+    currentEquityDoes,
+    drawdownDoes,
+    drawdownPct,
+  });
   const botMix = Array.from(botMixMap.values()).map((item) => ({
     botCount: safeInt(item.botCount),
     rooms: safeInt(item.rooms),
@@ -2279,6 +2335,11 @@ async function computeBotPilotSnapshot(options = {}) {
     grossNetDoes,
     promoExposureDoes,
     marginPct: collectedDoes > 0 ? netDoes / collectedDoes : 0,
+    currentEquityDoes,
+    highWaterMarkDoes,
+    drawdownDoes,
+    drawdownPct,
+    lastPeakAtMs,
     botRooms,
     humanWins,
     botWins,
@@ -2290,6 +2351,7 @@ async function computeBotPilotSnapshot(options = {}) {
     recommendedBand: recommended.band,
     recommendedReason: recommended.reason,
     trend,
+    equityCurve,
     botMix,
     computedAtMs: nowMs,
   };
@@ -8995,6 +9057,11 @@ exports.setBotPilotControl = publicOnCall("setBotPilotControl", async (request) 
       grossNetDoes: safeSignedInt(snapshot.grossNetDoes),
       promoExposureDoes: safeInt(snapshot.promoExposureDoes),
       marginPct: Number(snapshot.marginPct || 0),
+      currentEquityDoes: safeSignedInt(snapshot.currentEquityDoes),
+      highWaterMarkDoes: safeSignedInt(snapshot.highWaterMarkDoes),
+      drawdownDoes: safeInt(snapshot.drawdownDoes),
+      drawdownPct: Number(snapshot.drawdownPct || 0),
+      lastPeakAtMs: safeSignedInt(snapshot.lastPeakAtMs),
       recommendedLevel: normalizeBotDifficulty(snapshot.recommendedLevel),
       recommendedBand: String(snapshot.recommendedBand || ""),
       recommendedReason: String(snapshot.recommendedReason || ""),
@@ -9046,6 +9113,11 @@ exports.refreshBotPilotAuto = onSchedule("every 10 minutes", async () => {
       grossNetDoes: safeSignedInt(snapshot.grossNetDoes),
       promoExposureDoes: safeInt(snapshot.promoExposureDoes),
       marginPct: Number(snapshot.marginPct || 0),
+      currentEquityDoes: safeSignedInt(snapshot.currentEquityDoes),
+      highWaterMarkDoes: safeSignedInt(snapshot.highWaterMarkDoes),
+      drawdownDoes: safeInt(snapshot.drawdownDoes),
+      drawdownPct: Number(snapshot.drawdownPct || 0),
+      lastPeakAtMs: safeSignedInt(snapshot.lastPeakAtMs),
       recommendedLevel: normalizeBotDifficulty(snapshot.recommendedLevel),
       recommendedBand: String(snapshot.recommendedBand || ""),
       recommendedReason: String(snapshot.recommendedReason || ""),
