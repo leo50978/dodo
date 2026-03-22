@@ -25,6 +25,7 @@ const USER_REFERRAL_PREFIX = "USR";
 const AMBASSADOR_PROMO_PREFIX = "AMB";
 const AMBASSADOR_LINK_PREFIX = "AML";
 const AMBASSADOR_FEATURE_ENABLED = false;
+const PUBLIC_HOME_URL = "https://dominoeslakay.com/inedex.html";
 
 export const USER_REFERRAL_DEPOSIT_REWARD = 100;
 export const AMBASSADOR_LOSS_BONUS = 50;
@@ -91,7 +92,7 @@ function dedupeCandidates(entries) {
 }
 
 function buildHomeBaseUrl() {
-  const url = new URL("./inedex.html", window.location.href);
+  const url = new URL(PUBLIC_HOME_URL);
   url.hash = "";
   return url;
 }

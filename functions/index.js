@@ -49,6 +49,7 @@ const DEFAULT_STAKE_REWARD_MULTIPLIER = 3;
 const DEPOSIT_BONUS_MIN_HTG = 100;
 const DEPOSIT_BONUS_PERCENT = 10;
 const WELCOME_BONUS_LAUNCH_AT_MS = 1774142207000;
+const PUBLIC_HOME_URL = "https://dominoeslakay.com/inedex.html";
 const USER_REFERRAL_DEPOSIT_REWARD = 100;
 const FINANCE_ADMIN_EMAIL = "leovitch2004@gmail.com";
 const MIN_ORDER_HTG = 25;
@@ -1080,13 +1081,17 @@ function randomCode(size = 6) {
 function buildAmbassadorReferralLink(linkCode) {
   const normalized = normalizeCode(linkCode);
   if (!normalized) return "";
-  return `./inedex.html?amb=${encodeURIComponent(normalized)}`;
+  const url = new URL(PUBLIC_HOME_URL);
+  url.searchParams.set("amb", normalized);
+  return url.toString();
 }
 
 function buildUserReferralLink(referralCode) {
   const normalized = normalizeCode(referralCode);
   if (!normalized) return "";
-  return `./inedex.html?ref=${encodeURIComponent(normalized)}`;
+  const url = new URL(PUBLIC_HOME_URL);
+  url.searchParams.set("ref", normalized);
+  return url.toString();
 }
 
 function safeCompareText(a, b) {

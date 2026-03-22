@@ -7,6 +7,7 @@ import { getDepositFundingStatusSecure } from "./secure-functions.js";
 const BALANCE_DEBUG = true;
 const ASSISTANCE_PHONE = "50941752992";
 const AUTH_PROFILE_HINT_STORAGE_KEY = "domino_auth_profile_hint_v1";
+const PUBLIC_HOME_URL = "https://dominoeslakay.com/inedex.html";
 let referralLoadToken = 0;
 let referralHintFreezeUntil = 0;
 let referralHintRestoreTimer = null;
@@ -46,7 +47,7 @@ function normalizeReferralCode(value) {
 function buildProfileReferralLink(code) {
   const normalized = normalizeReferralCode(code);
   if (!normalized) return "";
-  const url = new URL("./inedex.html", window.location.href);
+  const url = new URL(PUBLIC_HOME_URL);
   url.hash = "";
   url.searchParams.set("ref", normalized);
   return url.toString();
