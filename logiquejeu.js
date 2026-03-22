@@ -24,7 +24,8 @@ import {
 } from "./secure-functions.js";
 
 const ROOMS = "rooms";
-const TURN_LIMIT_MS = 30 * 1000;
+const TURN_LIMIT_SECONDS = 15;
+const TURN_LIMIT_MS = TURN_LIMIT_SECONDS * 1000;
 const PRESENCE_PING_MS = 20 * 1000;
 const ACTION_CACHE_PREFIX = "domino_actions_";
 const ROOM_DECK_CACHE_PREFIX = "domino_deck_";
@@ -577,6 +578,9 @@ function ensureHowToPlayModal() {
       <div class="mt-4 space-y-3 text-sm text-white/85 sm:text-[15px]">
         <p>Pour jouer un domino, clique simplement sur le domino que tu veux poser.</p>
         <p>Si le domino peut se jouer par les deux cotes, clique sur le cote que tu choisis.</p>
+        <p class="rounded-2xl border border-[#58c4ff]/20 bg-[#58c4ff]/10 px-4 py-3 text-white/92">
+          Tu as <span class="font-semibold text-[#ffd8b5]">${TURN_LIMIT_SECONDS} secondes</span> pour jouer chaque coup.
+        </p>
         <p class="rounded-2xl border border-white/15 bg-white/8 px-4 py-3 text-white/90">
           Exemple: avec <span class="font-semibold text-[#ffd8b5]">6-3</span>, si tu peux jouer soit par le <span class="font-semibold">6</span> soit par le <span class="font-semibold">3</span>, clique directement sur le <span class="font-semibold">6</span> ou sur le <span class="font-semibold">3</span>.
         </p>
