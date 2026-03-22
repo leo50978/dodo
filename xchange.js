@@ -44,12 +44,16 @@ function defaultWallet() {
     exchangedGourdes: 0,
     approvedHtgAvailable: 0,
     provisionalHtgAvailable: 0,
+    welcomeBonusHtgAvailable: 0,
+    welcomeBonusHtgConverted: 0,
+    welcomeBonusHtgPlayed: 0,
     withdrawableHtg: 0,
     accountFrozen: false,
     freezeReason: "",
     rejectedDepositStrikeCount: 0,
     pendingPlayFromXchangeDoes: 0,
     pendingPlayFromReferralDoes: 0,
+    pendingPlayFromWelcomeDoes: 0,
     totalExchangedHtgEver: 0,
     loaded: false,
   };
@@ -92,7 +96,7 @@ function setCachedWallet(uid, data, loaded = true) {
     exchangeableDoesAvailable: safeInt(
       typeof data?.exchangeableDoesAvailable === "number"
         ? data.exchangeableDoesAvailable
-        : ((safeInt(data?.pendingPlayFromXchangeDoes) + safeInt(data?.pendingPlayFromReferralDoes)) <= 0
+        : ((safeInt(data?.pendingPlayFromXchangeDoes) + safeInt(data?.pendingPlayFromReferralDoes) + safeInt(data?.pendingPlayFromWelcomeDoes)) <= 0
             ? safeInt(
               typeof data?.doesApprovedBalance === "number"
                 ? data.doesApprovedBalance
@@ -103,12 +107,16 @@ function setCachedWallet(uid, data, loaded = true) {
     exchangedGourdes: safeSignedInt(data?.exchangedGourdes),
     approvedHtgAvailable: safeInt(data?.approvedHtgAvailable),
     provisionalHtgAvailable: safeInt(data?.provisionalHtgAvailable),
+    welcomeBonusHtgAvailable: safeInt(data?.welcomeBonusHtgAvailable),
+    welcomeBonusHtgConverted: safeInt(data?.welcomeBonusHtgConverted),
+    welcomeBonusHtgPlayed: safeInt(data?.welcomeBonusHtgPlayed),
     withdrawableHtg: safeInt(data?.withdrawableHtg),
     accountFrozen: data?.accountFrozen === true,
     freezeReason: String(data?.freezeReason || ""),
     rejectedDepositStrikeCount: safeInt(data?.rejectedDepositStrikeCount),
     pendingPlayFromXchangeDoes: safeInt(data?.pendingPlayFromXchangeDoes),
     pendingPlayFromReferralDoes: safeInt(data?.pendingPlayFromReferralDoes),
+    pendingPlayFromWelcomeDoes: safeInt(data?.pendingPlayFromWelcomeDoes),
     totalExchangedHtgEver: safeInt(data?.totalExchangedHtgEver),
     loaded,
   });
@@ -136,12 +144,16 @@ async function syncWalletFundingState(uid = currentUid()) {
       exchangedGourdes: safeSignedInt(funding?.exchangedApprovedHtg),
       approvedHtgAvailable: safeInt(funding?.approvedHtgAvailable),
       provisionalHtgAvailable: safeInt(funding?.provisionalHtgAvailable),
+      welcomeBonusHtgAvailable: safeInt(funding?.welcomeBonusHtgAvailable),
+      welcomeBonusHtgConverted: safeInt(funding?.welcomeBonusHtgConverted),
+      welcomeBonusHtgPlayed: safeInt(funding?.welcomeBonusHtgPlayed),
       withdrawableHtg: safeInt(funding?.withdrawableHtg),
       accountFrozen: funding?.accountFrozen === true,
       freezeReason: String(funding?.freezeReason || ""),
       rejectedDepositStrikeCount: safeInt(funding?.rejectedDepositStrikeCount),
       pendingPlayFromXchangeDoes: safeInt(funding?.pendingPlayFromXchangeDoes),
       pendingPlayFromReferralDoes: safeInt(funding?.pendingPlayFromReferralDoes),
+      pendingPlayFromWelcomeDoes: safeInt(funding?.pendingPlayFromWelcomeDoes),
       totalExchangedHtgEver: safeInt(funding?.totalExchangedApprovedHtg),
     }, true);
     return emitXchangeUpdated(safeUid);
@@ -222,7 +234,11 @@ async function applyWalletMutation({ uid, deltaDoes = 0, deltaExchangedGourdes =
     const nextExchangeableDoes = safeInt(result?.exchangeableDoesAvailable);
     const nextPendingFromXchange = safeInt(result?.pendingPlayFromXchangeDoes);
     const nextPendingFromReferral = safeInt(result?.pendingPlayFromReferralDoes);
+    const nextPendingFromWelcome = safeInt(result?.pendingPlayFromWelcomeDoes);
     const nextTotalExchanged = safeInt(result?.totalExchangedHtgEver);
+    const nextWelcomeBonusHtgAvailable = safeInt(result?.welcomeBonusHtgAvailable);
+    const nextWelcomeBonusHtgConverted = safeInt(result?.welcomeBonusHtgConverted);
+    const nextWelcomeBonusHtgPlayed = safeInt(result?.welcomeBonusHtgPlayed);
 
     setCachedWallet(uid, {
       does: nextDoes,
@@ -232,6 +248,10 @@ async function applyWalletMutation({ uid, deltaDoes = 0, deltaExchangedGourdes =
       exchangedGourdes: nextExchanged,
       pendingPlayFromXchangeDoes: nextPendingFromXchange,
       pendingPlayFromReferralDoes: nextPendingFromReferral,
+      pendingPlayFromWelcomeDoes: nextPendingFromWelcome,
+      welcomeBonusHtgAvailable: nextWelcomeBonusHtgAvailable,
+      welcomeBonusHtgConverted: nextWelcomeBonusHtgConverted,
+      welcomeBonusHtgPlayed: nextWelcomeBonusHtgPlayed,
       totalExchangedHtgEver: nextTotalExchanged,
     }, true);
     if (BALANCE_DEBUG) {
@@ -249,6 +269,10 @@ async function applyWalletMutation({ uid, deltaDoes = 0, deltaExchangedGourdes =
         afterExchanged: nextExchanged,
         pendingPlayFromXchangeDoes: nextPendingFromXchange,
         pendingPlayFromReferralDoes: nextPendingFromReferral,
+        pendingPlayFromWelcomeDoes: nextPendingFromWelcome,
+        welcomeBonusHtgAvailable: nextWelcomeBonusHtgAvailable,
+        welcomeBonusHtgConverted: nextWelcomeBonusHtgConverted,
+        welcomeBonusHtgPlayed: nextWelcomeBonusHtgPlayed,
         totalExchangedHtgEver: nextTotalExchanged,
       });
     }
@@ -266,6 +290,7 @@ async function applyWalletMutation({ uid, deltaDoes = 0, deltaExchangedGourdes =
       code: err?.code || "",
       pendingPlayFromXchangeDoes: safeInt(err?.pendingPlayFromXchangeDoes),
       pendingPlayFromReferralDoes: safeInt(err?.pendingPlayFromReferralDoes),
+      pendingPlayFromWelcomeDoes: safeInt(err?.pendingPlayFromWelcomeDoes),
       pendingPlayTotalDoes: safeInt(err?.pendingPlayTotalDoes),
       exchangeableDoesAvailable: safeInt(err?.exchangeableDoesAvailable),
     };
@@ -294,6 +319,7 @@ export function getXchangeState(balance = 0, uid = currentUid()) {
   const hasNonEmptyFundingBreakdown = (
     safeInt(wallet.approvedHtgAvailable) > 0
     || safeInt(wallet.provisionalHtgAvailable) > 0
+    || safeInt(wallet.welcomeBonusHtgAvailable) > 0
     || safeInt(wallet.withdrawableHtg) > 0
     || safeInt(wallet.doesApprovedBalance) > 0
     || safeInt(wallet.doesProvisionalBalance) > 0
@@ -308,12 +334,18 @@ export function getXchangeState(balance = 0, uid = currentUid()) {
   const provisionalGourdesAvailable = hasFundingBreakdown
     ? safeInt(wallet.provisionalHtgAvailable)
     : 0;
-  const available = approvedGourdesAvailable + provisionalGourdesAvailable;
+  const welcomeBonusGourdesAvailable = hasFundingBreakdown
+    ? safeInt(wallet.welcomeBonusHtgAvailable)
+    : 0;
+  const available = approvedGourdesAvailable + provisionalGourdesAvailable + welcomeBonusGourdesAvailable;
   return {
     totalBalance: hasFundingBreakdown ? available : totalBalance,
     availableGourdes: available,
     approvedGourdesAvailable,
     provisionalGourdesAvailable,
+    welcomeBonusHtgAvailable: welcomeBonusGourdesAvailable,
+    welcomeBonusHtgConverted: safeInt(wallet.welcomeBonusHtgConverted),
+    welcomeBonusHtgPlayed: safeInt(wallet.welcomeBonusHtgPlayed),
     exchangedGourdes: exchanged,
     does: safeInt(wallet.does),
     doesApprovedBalance: safeInt(wallet.doesApprovedBalance),
@@ -325,7 +357,8 @@ export function getXchangeState(balance = 0, uid = currentUid()) {
     rejectedDepositStrikeCount: safeInt(wallet.rejectedDepositStrikeCount),
     pendingPlayFromXchangeDoes: safeInt(wallet.pendingPlayFromXchangeDoes),
     pendingPlayFromReferralDoes: safeInt(wallet.pendingPlayFromReferralDoes),
-    pendingPlayTotalDoes: safeInt(wallet.pendingPlayFromXchangeDoes) + safeInt(wallet.pendingPlayFromReferralDoes),
+    pendingPlayFromWelcomeDoes: safeInt(wallet.pendingPlayFromWelcomeDoes),
+    pendingPlayTotalDoes: safeInt(wallet.pendingPlayFromXchangeDoes) + safeInt(wallet.pendingPlayFromReferralDoes) + safeInt(wallet.pendingPlayFromWelcomeDoes),
     totalExchangedHtgEver: safeInt(wallet.totalExchangedHtgEver),
     rate: RATE_HTG_TO_DOES,
     loaded: wallet.loaded === true,

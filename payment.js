@@ -1,6 +1,8 @@
 // ============= PAYMENT COMPONENT - PROCESSUS DE PAIEMENT =============
 import {
+  claimWelcomeBonusSecure,
   createOrderSecure,
+  getDepositFundingStatusSecure,
   getPublicPaymentOptionsSecure,
 } from './secure-functions.js';
 
@@ -8,6 +10,7 @@ const OCR_LANGUAGE = 'fra+eng';
 const DEPOSIT_BONUS_MIN_HTG = 100;
 const DEPOSIT_BONUS_PERCENT = 10;
 const DEPOSIT_BONUS_RATE_HTG_TO_DOES = 20;
+const WELCOME_BONUS_HTG = 25;
 let tesseractRuntimePromise = null;
 
 async function loadTesseractRuntime() {
@@ -149,6 +152,9 @@ class PaymentModal {
     this.isSubmitted = false;
     this.confirmationMessage = "";
     this.isCompleted = false;
+    this.fundingStatus = null;
+    this.proofMode = 'deposit';
+    this.completedFlowType = 'deposit';
     
     this.init();
   }
@@ -188,6 +194,7 @@ class PaymentModal {
   
   async init() {
     await this.loadSettings();
+    await this.loadFundingStatus();
     await this.loadPaymentMethods();
     this.render();
     this.attachEvents();
@@ -216,6 +223,15 @@ class PaymentModal {
       console.error('❌ Erreur chargement paramètres:', error);
       this.settings = { verificationHours: 12 };
       this.methods = [];
+    }
+  }
+
+  async loadFundingStatus() {
+    try {
+      this.fundingStatus = await getDepositFundingStatusSecure({});
+    } catch (error) {
+      console.warn('⚠️ Impossible de charger le statut funding:', error);
+      this.fundingStatus = null;
     }
   }
   
@@ -281,6 +297,35 @@ class PaymentModal {
       bonusDoes,
       rateHtgToDoes: DEPOSIT_BONUS_RATE_HTG_TO_DOES,
     };
+  }
+
+  getWelcomeBonusStatus() {
+    const funding = this.fundingStatus && typeof this.fundingStatus === 'object'
+      ? this.fundingStatus
+      : {};
+    const hasRealApprovedDeposit = funding.hasRealApprovedDeposit === true
+      || funding.hasApprovedDeposit === true
+      || Number(funding.realApprovedDepositsHtg) > 0
+      || Number(funding.approvedDepositsHtg) > 0;
+    const alreadyClaimed = funding.welcomeBonusClaimed === true
+      || Number(funding.welcomeBonusReceivedAtMs) > 0
+      || Number(funding.welcomeBonusApprovedHtg) > 0;
+    const eligibilityReason = String(funding.welcomeBonusEligibilityReason || '');
+    const eligible = funding.welcomeBonusEligible === true;
+
+    return {
+      eligible,
+      alreadyClaimed,
+      hasRealApprovedDeposit,
+      accountFrozen: funding.accountFrozen === true,
+      isLegacyAccount: funding.isLegacyAccount === true,
+      eligibilityReason,
+      grantedHtg: WELCOME_BONUS_HTG,
+    };
+  }
+
+  isWelcomeBonusSelected() {
+    return this.proofMode === 'welcome_bonus' && this.getWelcomeBonusStatus().eligible;
   }
   
   render() {
@@ -852,6 +897,8 @@ class PaymentModal {
     const safeExpectedAttr = escapeAttr(expectedName);
     const safeDepositorPhoneAttr = escapeAttr(expectedDepositorPhone);
     const safeButtonText = escapeHtml(step?.buttonText || 'Soumettre ma demande');
+    const welcomeBonus = this.getWelcomeBonusStatus();
+    const selectedProofMode = this.isWelcomeBonusSelected() ? 'welcome_bonus' : 'deposit';
     
     return `
       <div>
@@ -866,6 +913,58 @@ class PaymentModal {
         ` : ''}
         
         <p style="color: #8B7E6B; margin-bottom: 1.5rem;">${safeDescription}</p>
+
+        ${welcomeBonus.eligible ? `
+          <div id="proofModeWrap" style="
+            display: grid;
+            gap: 0.85rem;
+            margin-bottom: 1.35rem;
+          ">
+            <label
+              data-proof-mode-card="deposit"
+              style="
+                display: flex;
+                align-items: flex-start;
+                gap: 0.9rem;
+                padding: 1rem;
+                border-radius: 1rem;
+                border: 1px solid ${selectedProofMode === 'deposit' ? 'rgba(255,178,110,0.9)' : 'rgba(255,255,255,0.16)'};
+                background: ${selectedProofMode === 'deposit' ? 'rgba(245,124,0,0.14)' : 'rgba(255,255,255,0.08)'};
+                cursor: pointer;
+                transition: all 0.2s ease;
+              "
+            >
+              <input type="radio" name="depositMode" value="deposit" ${selectedProofMode === 'deposit' ? 'checked' : ''} style="margin-top: 0.2rem;">
+              <div>
+                <p style="margin: 0; font-size: 0.75rem; letter-spacing: 0.14em; text-transform: uppercase; color: #CBD5E1;">Demande normale</p>
+                <h4 style="margin: 0.35rem 0 0; font-size: 1rem; color: #FFFFFF;">J'envoie une vraie preuve de depot</h4>
+                <p style="margin: 0.45rem 0 0; font-size: 0.9rem; color: #D7DFEF;">Ta demande sera revue par l'administration comme d'habitude.</p>
+              </div>
+            </label>
+
+            <label
+              data-proof-mode-card="welcome_bonus"
+              style="
+                display: flex;
+                align-items: flex-start;
+                gap: 0.9rem;
+                padding: 1rem;
+                border-radius: 1rem;
+                border: 1px solid ${selectedProofMode === 'welcome_bonus' ? 'rgba(251,191,36,0.75)' : 'rgba(255,255,255,0.16)'};
+                background: ${selectedProofMode === 'welcome_bonus' ? 'rgba(251,191,36,0.14)' : 'rgba(255,255,255,0.08)'};
+                cursor: pointer;
+                transition: all 0.2s ease;
+              "
+            >
+              <input type="radio" name="depositMode" value="welcome_bonus" ${selectedProofMode === 'welcome_bonus' ? 'checked' : ''} style="margin-top: 0.2rem;">
+              <div>
+                <p style="margin: 0; font-size: 0.75rem; letter-spacing: 0.14em; text-transform: uppercase; color: #FCD34D;">Bonus bienvenue</p>
+                <h4 style="margin: 0.35rem 0 0; font-size: 1rem; color: #FFFFFF;">Prendre mon bonus ${escapeHtml(this.formatInlineNumber(welcomeBonus.grantedHtg, 0))} HTG</h4>
+                <p style="margin: 0.45rem 0 0; font-size: 0.9rem; color: #F8FAFC;">Tu suis les memes etapes pour te familiariser avec le depot, puis le bonus est credite automatiquement si ton compte est eligible.</p>
+              </div>
+            </label>
+          </div>
+        ` : ''}
         
         <form id="proofForm" class="space-y-4">
           <div class="form-group">
@@ -882,9 +981,15 @@ class PaymentModal {
           </div>
           
           <div class="form-group">
-            <label>Capture d'écran de la transaction *</label>
+            <label id="proofImageLabel">${selectedProofMode === 'welcome_bonus' ? "Image demandee pour le bonus *" : "Capture d'écran de la transaction *"}</label>
             <input type="file" id="proofImage" accept="image/*" required>
-            <p style="font-size: 0.8rem; color: #8B7E6B; margin-top: 0.25rem;">Format accepté : JPG, PNG (max 5 Mo)</p>
+            <p
+              id="proofImageHelp"
+              data-proof-mode-target="image-help"
+              style="font-size: 0.8rem; color: #8B7E6B; margin-top: 0.25rem;"
+            >${selectedProofMode === 'welcome_bonus'
+              ? 'Charge l image recue pour activer ton bonus de bienvenue. Format accepte : JPG, PNG (max 5 Mo).'
+              : "Format accepte : JPG, PNG (max 5 Mo)"}</p>
           </div>
           
           <div id="imagePreview" style="display: none; margin-top: 1rem; text-align: center;">
@@ -900,10 +1005,82 @@ class PaymentModal {
   }
   
   renderConfirmationStep(step) {
-    this.startCountdown();
+    if (this.completedFlowType === 'welcome_bonus') {
+      this.stopCountdown();
+    } else {
+      this.startCountdown();
+    }
     const safeMessage = escapeHtml(this.confirmationMessage || step?.message || 'Votre demande est en cours de vérification. Elle sera traitée sous 12 heures.');
     const bonusPreview = this.getDepositBonusPreview();
-    const bonusPanel = bonusPreview.eligible
+    const timingPanel = this.completedFlowType === 'welcome_bonus'
+      ? `
+        <div style="
+          background: rgba(255,255,255,0.08);
+          border-radius: 1rem;
+          padding: 1.2rem;
+          margin-bottom: 1.5rem;
+          border: 1px solid rgba(255,255,255,0.1);
+        ">
+          <p style="font-size: 0.9rem; color: #CBD5E1; margin-bottom: 0.45rem;">Statut</p>
+          <div style="font-size: 1.25rem; font-weight: 800; color: #FBBF24;">Activation immediate</div>
+        </div>
+      `
+      : `
+        <div style="
+          background: white;
+          border-radius: 1rem;
+          padding: 1.5rem;
+          margin-bottom: 1.5rem;
+        ">
+          <p style="font-size: 0.9rem; color: #8B7E6B; margin-bottom: 0.5rem;">Temps restant avant vérification</p>
+          <div class="countdown-timer" id="countdownTimer">12:00:00</div>
+        </div>
+      `;
+    const bonusPanel = this.completedFlowType === 'welcome_bonus'
+      ? `
+        <div style="
+          margin: 1.25rem 0 0;
+          border: 1px solid rgba(255,255,255,0.14);
+          border-radius: 1.15rem;
+          background: linear-gradient(180deg, rgba(44, 52, 78, 0.94), rgba(33, 39, 60, 0.96));
+          padding: 1rem;
+          text-align: left;
+          color: #F8FAFC;
+          box-shadow: 0 16px 34px rgba(15,23,42,0.24), inset 0 1px 0 rgba(255,255,255,0.06);
+        ">
+          <p style="margin: 0; font-size: 0.72rem; letter-spacing: 0.16em; text-transform: uppercase; color: #FBBF24; font-weight: 800;">Bonus bienvenue</p>
+          <h4 style="margin: 0.55rem 0 0; font-size: 1.05rem; color: #FFFFFF;">Ton bonus ${escapeHtml(this.formatInlineNumber(WELCOME_BONUS_HTG, 0))} HTG a ete ajoute</h4>
+          <div style="
+            margin-top: 0.9rem;
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+            gap: 0.75rem;
+          ">
+            <div style="border-radius: 0.95rem; background: rgba(255,255,255,0.08); padding: 0.9rem; border: 1px solid rgba(255,255,255,0.08);">
+              <p style="margin: 0; font-size: 0.75rem; color: #CBD5E1; font-weight: 700;">Bonus credite</p>
+              <p style="margin: 0.4rem 0 0; font-size: 1.05rem; color: #FFFFFF; font-weight: 900;">${escapeHtml(this.formatInlineNumber(WELCOME_BONUS_HTG, 0))} HTG</p>
+            </div>
+            <div style="border-radius: 0.95rem; background: rgba(251,191,36,0.12); padding: 0.9rem; border: 1px solid rgba(251,191,36,0.18);">
+              <p style="margin: 0; font-size: 0.75rem; color: #FCD34D; font-weight: 700;">Type</p>
+              <p style="margin: 0.4rem 0 0; font-size: 1.05rem; color: #FFFFFF; font-weight: 900;">Bienvenue</p>
+            </div>
+          </div>
+          <div style="
+            margin-top: 0.9rem;
+            border-radius: 0.95rem;
+            background: rgba(15,23,42,0.24);
+            padding: 0.9rem;
+            color: #E2E8F0;
+            line-height: 1.65;
+            font-size: 0.92rem;
+            border: 1px solid rgba(255,255,255,0.08);
+          ">
+            <p style="margin: 0;"><strong>Important :</strong> ce bonus de bienvenue est bien reel, mais il suit des regles bonus distinctes d un depot classique.</p>
+            <p style="margin: 0.65rem 0 0;">Tu peux maintenant explorer le systeme, jouer et te familiariser avec les etapes de depot avant ton premier vrai depot approuve.</p>
+          </div>
+        </div>
+      `
+      : bonusPreview.eligible
       ? `
         <div style="
           margin: 1.25rem 0 0;
@@ -988,15 +1165,7 @@ class PaymentModal {
           ${safeMessage}
         </p>
 
-        <div style="
-          background: white;
-          border-radius: 1rem;
-          padding: 1.5rem;
-          margin-bottom: 1.5rem;
-        ">
-          <p style="font-size: 0.9rem; color: #8B7E6B; margin-bottom: 0.5rem;">Temps restant avant vérification</p>
-          <div class="countdown-timer" id="countdownTimer">12:00:00</div>
-        </div>
+        ${timingPanel}
 
         ${bonusPanel}
         
@@ -1167,6 +1336,52 @@ class PaymentModal {
         }
       });
     }
+
+    this.modal.querySelectorAll('input[name="depositMode"]').forEach((input) => {
+      input.addEventListener('change', () => {
+        this.proofMode = input.value === 'welcome_bonus' ? 'welcome_bonus' : 'deposit';
+        this.syncProofModeUi();
+      });
+    });
+    this.syncProofModeUi();
+  }
+
+  syncProofModeUi() {
+    if (!this.modal) return;
+    const selectedMode = this.isWelcomeBonusSelected() ? 'welcome_bonus' : 'deposit';
+    this.proofMode = selectedMode;
+
+    this.modal.querySelectorAll('[data-proof-mode-card]').forEach((card) => {
+      const mode = card.getAttribute('data-proof-mode-card');
+      const active = mode === selectedMode;
+      card.style.borderColor = active
+        ? (mode === 'welcome_bonus' ? 'rgba(251,191,36,0.75)' : 'rgba(255,178,110,0.9)')
+        : 'rgba(255,255,255,0.16)';
+      card.style.background = active
+        ? (mode === 'welcome_bonus' ? 'rgba(251,191,36,0.14)' : 'rgba(245,124,0,0.14)')
+        : 'rgba(255,255,255,0.08)';
+    });
+
+    const helpEl = this.modal.querySelector('#proofImageHelp');
+    if (helpEl) {
+      helpEl.textContent = selectedMode === 'welcome_bonus'
+        ? "Charge l image recue pour activer ton bonus de bienvenue. Format accepte : JPG, PNG (max 5 Mo)."
+        : "Format accepte : JPG, PNG (max 5 Mo)";
+    }
+
+    const labelEl = this.modal.querySelector('#proofImageLabel');
+    if (labelEl) {
+      labelEl.textContent = selectedMode === 'welcome_bonus'
+        ? "Image demandee pour le bonus *"
+        : "Capture d'écran de la transaction *";
+    }
+
+    const nextBtn = this.modal.querySelector('#nextStepBtn');
+    if (nextBtn) {
+      nextBtn.textContent = selectedMode === 'welcome_bonus'
+        ? `Recevoir mon bonus ${this.formatInlineNumber(WELCOME_BONUS_HTG, 0)} HTG`
+        : 'Soumettre ma demande';
+    }
   }
   
   goBack() {
@@ -1207,7 +1422,11 @@ class PaymentModal {
       if (!isValid) {
         if (nextBtn) {
           nextBtn.disabled = false;
-          nextBtn.innerHTML = step.buttonText || 'Continuer';
+          nextBtn.innerHTML = step.type === 'proof'
+            ? (this.isWelcomeBonusSelected()
+              ? `Recevoir mon bonus ${this.formatInlineNumber(WELCOME_BONUS_HTG, 0)} HTG`
+              : (step.buttonText || 'Soumettre ma demande'))
+            : (step.buttonText || 'Continuer');
         }
         return;
       }
@@ -1230,7 +1449,11 @@ class PaymentModal {
       console.error('❌ Erreur:', error);
       if (nextBtn) {
         nextBtn.disabled = false;
-        nextBtn.innerHTML = step.buttonText || 'Continuer';
+        nextBtn.innerHTML = step.type === 'proof'
+          ? (this.isWelcomeBonusSelected()
+            ? `Recevoir mon bonus ${this.formatInlineNumber(WELCOME_BONUS_HTG, 0)} HTG`
+            : (step.buttonText || 'Soumettre ma demande'))
+          : (step.buttonText || 'Continuer');
       }
       alert(getPaymentFriendlyErrorMessage(error));
     }
@@ -1324,9 +1547,62 @@ class PaymentModal {
     }
 
     this.clientData.depositorPhone = proofDepositorPhone;
+
+    if (this.isWelcomeBonusSelected()) {
+      await this.saveWelcomeBonusClaim(proofName);
+    } else {
+      await this.saveOrder(proofName);
+    }
     
-    await this.saveOrder(proofName);
-    
+    return true;
+  }
+
+  async saveWelcomeBonusClaim(proofName) {
+    const customerName = this.clientData.fullName || this.clientData.name || this.options.client?.name || '';
+    const customerPhone = this.clientData.phone || this.options.client?.phone || '';
+    const depositorPhone = this.clientData.depositorPhone || '';
+
+    const response = await claimWelcomeBonusSecure({
+      customerName,
+      customerPhone,
+      depositorPhone,
+      proofRef: proofName,
+      methodId: this.selectedMethod?.id || 'welcome_bonus',
+    });
+    this.completedFlowType = 'welcome_bonus';
+    this.confirmationMessage = String(
+      response?.message
+      || `Ton bonus de bienvenue de ${WELCOME_BONUS_HTG} HTG a ete active avec succes.`
+    ).trim();
+    await this.loadFundingStatus();
+
+    try {
+      const { ensureXchangeState } = await import('./xchange.js');
+      await ensureXchangeState(this.options.client?.uid || this.options.client?.id || '');
+    } catch (error) {
+      console.warn('⚠️ Impossible de rafraichir l état Xchange après bonus:', error);
+    }
+
+    const eventDetail = {
+      uid: this.options.client?.uid || this.options.client?.id || '',
+      welcomeBonusHtgGranted: Number(response?.welcomeBonusHtgGranted) || WELCOME_BONUS_HTG,
+    };
+    document.dispatchEvent(new CustomEvent('welcomeBonusClaimed', {
+      detail: eventDetail
+    }));
+    window.dispatchEvent(new CustomEvent('welcomeBonusClaimed', {
+      detail: {
+        ...eventDetail,
+      }
+    }));
+
+    if (this.options.onSuccess) {
+      this.options.onSuccess({
+        type: 'welcome_bonus',
+        welcomeBonusHtgGranted: Number(response?.welcomeBonusHtgGranted) || WELCOME_BONUS_HTG,
+      });
+    }
+
     return true;
   }
   
@@ -1400,6 +1676,7 @@ class PaymentModal {
         extractedText: this.extractedText,
         extractedTextStatus: this.extractedTextStatus,
       });
+      this.completedFlowType = 'deposit';
       this.confirmationMessage = String(response?.message || "").trim();
       const orderId = response?.orderId || '';
       
@@ -1494,6 +1771,7 @@ class PaymentModal {
   }
   
   startCountdown() {
+    this.stopCountdown();
     const hours = this.settings.verificationHours || 12;
     this.timeLeft = hours * 60 * 60;
     
@@ -1523,6 +1801,13 @@ class PaymentModal {
     updateTimer();
     this.countdownInterval = setInterval(updateTimer, 1000);
   }
+
+  stopCountdown() {
+    if (this.countdownInterval) {
+      clearInterval(this.countdownInterval);
+      this.countdownInterval = null;
+    }
+  }
   
   animateIn() {
     setTimeout(() => {
@@ -1542,9 +1827,7 @@ class PaymentModal {
   }
   
   async close() {
-    if (this.countdownInterval) {
-      clearInterval(this.countdownInterval);
-    }
+    this.stopCountdown();
     
     await this.animateOut();
     this.modal.remove();

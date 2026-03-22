@@ -734,6 +734,7 @@ async function updateWithdrawalAvailability(user, xState) {
     }
 
     const provisionalLockedHtg = safeCount(ruleStatus.provisionalHtgAvailable);
+    const welcomeBonusHtg = safeCount(ruleStatus.welcomeBonusHtgAvailable);
     if (ruleStatus.canWithdraw) {
       if (hintEl) {
         hintEl.textContent = provisionalLockedHtg > 0
@@ -742,8 +743,8 @@ async function updateWithdrawalAvailability(user, xState) {
       }
       if (metaEl) {
         metaEl.textContent = provisionalLockedHtg > 0
-          ? `Retirable: ${formatAmount(withdrawableHtg)} | En examen: ${formatAmount(provisionalLockedHtg)}`
-          : `Base retrait: ${formatAmount(withdrawableHtg)} | Taux: 1 HTG = ${Number(xState?.rate || 20)} Does`;
+          ? `Retirable: ${formatAmount(withdrawableHtg)} | En examen: ${formatAmount(provisionalLockedHtg)}${welcomeBonusHtg > 0 ? ` | Bonus bienvenue: ${formatAmount(welcomeBonusHtg)}` : ""}`
+          : `Base retrait: ${formatAmount(withdrawableHtg)} | Taux: 1 HTG = ${Number(xState?.rate || 20)} Does${welcomeBonusHtg > 0 ? ` | Bonus bienvenue non inclus: ${formatAmount(welcomeBonusHtg)}` : ""}`;
       }
       return;
     }
@@ -753,16 +754,18 @@ async function updateWithdrawalAvailability(user, xState) {
         hintEl.textContent = "Retrait partiellement bloqué: une partie de ton solde est encore en cours d'examen.";
       }
       if (metaEl) {
-        metaEl.textContent = `En examen: ${formatAmount(provisionalLockedHtg)} | Retirable maintenant: ${formatAmount(withdrawableHtg)}`;
+        metaEl.textContent = `En examen: ${formatAmount(provisionalLockedHtg)} | Retirable maintenant: ${formatAmount(withdrawableHtg)}${welcomeBonusHtg > 0 ? ` | Bonus bienvenue: ${formatAmount(welcomeBonusHtg)}` : ""}`;
       }
       return;
     }
 
     if (hintEl) {
-      hintEl.textContent = `Retrait bloqué pour le moment: il reste ${formatAmount(ruleStatus.remainingToExchangeHtg)} à convertir en Does.`;
+      hintEl.textContent = welcomeBonusHtg > 0
+        ? `Retrait bloque pour le moment. Ton bonus bienvenue reste jouable, mais n'entre pas encore dans le retrait normal.`
+        : `Retrait bloqué pour le moment: il reste ${formatAmount(ruleStatus.remainingToExchangeHtg)} à convertir en Does.`;
     }
     if (metaEl) {
-      metaEl.textContent = `Dépôts approuvés: ${formatAmount(ruleStatus.approvedDepositsHtg)} | Déjà converti: ${formatAmount(ruleStatus.convertedHtg)}`;
+      metaEl.textContent = `Dépôts approuvés: ${formatAmount(ruleStatus.approvedDepositsHtg)} | Déjà converti: ${formatAmount(ruleStatus.convertedHtg)}${welcomeBonusHtg > 0 ? ` | Bonus bienvenue: ${formatAmount(welcomeBonusHtg)}` : ""}`;
     }
   } catch (error) {
     console.error("Erreur calcul disponibilité retrait profil:", error);
@@ -810,6 +813,13 @@ function updateProfileData(user) {
       fundingData.provisionalHtgAvailable,
       xState?.provisionalGourdesAvailable,
       clientData.provisionalHtgAvailable
+    )
+  );
+  const welcomeBonusHtgAvailable = safeCount(
+    pickFirstFiniteNumber(
+      fundingData.welcomeBonusHtgAvailable,
+      xState?.welcomeBonusHtgAvailable,
+      clientData.welcomeBonusHtgAvailable
     )
   );
   const doesApprovedBalance = safeCount(
@@ -926,6 +936,7 @@ function updateProfileData(user) {
       convertedApprovedHtg,
       approvedHtgAvailable,
       provisionalHtgAvailable,
+      welcomeBonusHtgAvailable,
       exchanged: resolvedXState.exchangedGourdes,
       does: resolvedDoesBalance,
       doesApprovedBalance,
@@ -971,8 +982,19 @@ function updateProfileData(user) {
   if (exchangeableDoesEl) exchangeableDoesEl.textContent = formatDoesAmount(exchangeableDoesAvailable);
   if (approvedDepositsSummaryEl) approvedDepositsSummaryEl.textContent = `Dépôts approuvés: ${formatAmount(approvedDepositsTotal)}`;
   if (exchangedEl) exchangedEl.textContent = `Déjà converti: ${formatAmount(convertedApprovedHtg)}`;
-  if (verifiedAvailableHintEl) verifiedAvailableHintEl.textContent = `HTG vérifié dispo: ${formatAmount(approvedHtgAvailable)}`;
-  if (pendingHintEl) pendingHintEl.textContent = `HTG en examen: ${formatAmount(provisionalHtgAvailable)} | HTG dispo échange: ${formatAmount(resolvedAvailableHtg)}`;
+  if (approvedDepositsSummaryEl && welcomeBonusHtgAvailable > 0) {
+    approvedDepositsSummaryEl.textContent = `Dépôts approuvés: ${formatAmount(approvedDepositsTotal)} | Bonus bienvenue: ${formatAmount(welcomeBonusHtgAvailable)}`;
+  }
+  if (verifiedAvailableHintEl) {
+    verifiedAvailableHintEl.textContent = welcomeBonusHtgAvailable > 0
+      ? `HTG vérifié dispo: ${formatAmount(approvedHtgAvailable)} | Bonus bienvenue jouable: ${formatAmount(welcomeBonusHtgAvailable)}`
+      : `HTG vérifié dispo: ${formatAmount(approvedHtgAvailable)}`;
+  }
+  if (pendingHintEl) {
+    pendingHintEl.textContent = welcomeBonusHtgAvailable > 0
+      ? `HTG en examen: ${formatAmount(provisionalHtgAvailable)} | Bonus bienvenue: ${formatAmount(welcomeBonusHtgAvailable)} | HTG dispo échange: ${formatAmount(resolvedAvailableHtg)}`
+      : `HTG en examen: ${formatAmount(provisionalHtgAvailable)} | HTG dispo échange: ${formatAmount(resolvedAvailableHtg)}`;
+  }
   if (doesBreakdownEl) doesBreakdownEl.textContent = `Total Does: ${formatDoesAmount(resolvedDoesBalance)} | Approuvés: ${formatDoesAmount(doesApprovedBalance)} | En examen: ${formatDoesAmount(doesProvisionalBalance)} | Dispo échange: ${formatDoesAmount(exchangeableDoesAvailable)}`;
   if (frozenBannerEl) frozenBannerEl.classList.toggle("hidden", withdrawalLocked !== true);
   if (frozenMessageEl) {

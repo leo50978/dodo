@@ -96,6 +96,10 @@ export async function createOrderSecure(payload = {}) {
   return invokeCallable("createOrderSecure", payload, "Impossible de créer la commande.");
 }
 
+export async function claimWelcomeBonusSecure(payload = {}) {
+  return invokeCallable("claimWelcomeBonusSecure", payload, "Impossible de réclamer le bonus de bienvenue.");
+}
+
 export async function createWithdrawalSecure(payload = {}) {
   return invokeCallable("createWithdrawalSecure", payload, "Impossible de créer le retrait.");
 }

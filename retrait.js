@@ -198,6 +198,11 @@ export async function getWithdrawalRuleStatus(uid) {
     approvedDepositsHtg,
     convertedHtg,
     remainingToExchangeHtg,
+    welcomeBonusHtgAvailable: safeInt(
+      typeof fundingStatus?.welcomeBonusHtgAvailable === "number"
+        ? fundingStatus.welcomeBonusHtgAvailable
+        : clientData.welcomeBonusHtgAvailable
+    ),
     canWithdraw: !withdrawalBlocked && withdrawableHtg > 0,
     withdrawableHtg,
     accountFrozen,

@@ -48,6 +48,7 @@ const RATE_HTG_TO_DOES = 20;
 const DEFAULT_STAKE_REWARD_MULTIPLIER = 3;
 const DEPOSIT_BONUS_MIN_HTG = 100;
 const DEPOSIT_BONUS_PERCENT = 10;
+const WELCOME_BONUS_LAUNCH_AT_MS = 1774142207000;
 const USER_REFERRAL_DEPOSIT_REWARD = 100;
 const FINANCE_ADMIN_EMAIL = "leovitch2004@gmail.com";
 const MIN_ORDER_HTG = 25;
@@ -72,6 +73,8 @@ const DEFAULT_PUBLIC_SETTINGS = Object.freeze({
   expiredMessage: "Le délai de vérification est dépassé. Contactez le support.",
   provisionalDepositsEnabled: true,
 });
+const WELCOME_BONUS_ORDER_TYPE = "welcome_bonus";
+const WELCOME_BONUS_HTG_AMOUNT = 25;
 const DPAYMENT_ADMIN_BOOTSTRAP_DOC = "dpayment_admin_bootstrap";
 const APP_PUBLIC_SETTINGS_DOC = "public_app_settings";
 const DASHBOARD_DEFAULT_NOTIFICATION_URL = "./Dpayment.html";
@@ -451,7 +454,7 @@ function computeWalletAvailableGourdes({
   exchangedGourdes = 0,
 } = {}) {
   const approvedDepositsHtg = (Array.isArray(orders) ? orders : []).reduce(
-    (sum, item) => sum + computeOrderAmount(item),
+    (sum, item) => sum + getOrderApprovedRealAmountHtg(item),
     0
   );
   const reservedWithdrawalsHtg = (Array.isArray(withdrawals) ? withdrawals : []).reduce((sum, item) => {
@@ -481,6 +484,14 @@ function isFundingV2Order(order = {}) {
     && String(order?.creditMode || "") === PROVISIONAL_CREDIT_MODE;
 }
 
+function getOrderType(order = {}) {
+  return String(order?.orderType || order?.kind || "").trim().toLowerCase();
+}
+
+function isWelcomeBonusOrder(order = {}) {
+  return getOrderType(order) === WELCOME_BONUS_ORDER_TYPE || order?.isWelcomeBonus === true;
+}
+
 function getOrderResolutionStatus(order = {}) {
   const resolution = String(order?.resolutionStatus || "").trim().toLowerCase();
   if (resolution === "approved" || resolution === "rejected" || resolution === "pending") {
@@ -500,6 +511,63 @@ function getOrderApprovedAmountHtg(order = {}) {
   return String(order?.status || "").trim().toLowerCase() === "approved"
     ? computeOrderAmount(order)
     : 0;
+}
+
+function getOrderApprovedRealAmountHtg(order = {}) {
+  if (isWelcomeBonusOrder(order)) return 0;
+  return getOrderApprovedAmountHtg(order);
+}
+
+function getOrderApprovedWelcomeAmountHtg(order = {}) {
+  if (!isWelcomeBonusOrder(order)) return 0;
+  return getOrderApprovedAmountHtg(order);
+}
+
+function hasRealApprovedDepositFromOrders(orders = []) {
+  return (Array.isArray(orders) ? orders : []).some((item) => getOrderApprovedRealAmountHtg(item) > 0);
+}
+
+function hasWelcomeBonusOrder(orders = []) {
+  return (Array.isArray(orders) ? orders : []).some((item) => isWelcomeBonusOrder(item));
+}
+
+function resolveWelcomeBonusEligibility({
+  walletData = {},
+  orders = [],
+  fundingSnapshot = {},
+} = {}) {
+  const createdAtMs = safeSignedInt(walletData.createdAtMs) || toMillis(walletData.createdAt);
+  const hasRealApprovedDeposit = fundingSnapshot.hasRealApprovedDeposit === true
+    || walletData.hasApprovedDeposit === true
+    || hasRealApprovedDepositFromOrders(orders);
+  const alreadyClaimed = walletData.welcomeBonusClaimed === true
+    || safeSignedInt(walletData.welcomeBonusReceivedAtMs) > 0
+    || !!String(walletData.welcomeBonusOrderId || "").trim()
+    || hasWelcomeBonusOrder(orders);
+  const accountFrozen = walletData.accountFrozen === true;
+  const launchedAccount = createdAtMs > 0 && createdAtMs >= WELCOME_BONUS_LAUNCH_AT_MS;
+
+  let reason = "eligible";
+  if (accountFrozen) {
+    reason = "account-frozen";
+  } else if (alreadyClaimed) {
+    reason = "already-claimed";
+  } else if (hasRealApprovedDeposit) {
+    reason = "existing-real-deposit";
+  } else if (!launchedAccount) {
+    reason = "legacy-account";
+  }
+
+  return {
+    eligible: reason === "eligible",
+    reason,
+    createdAtMs,
+    launchAtMs: WELCOME_BONUS_LAUNCH_AT_MS,
+    hasRealApprovedDeposit,
+    alreadyClaimed,
+    accountFrozen,
+    isLegacyAccount: !launchedAccount,
+  };
 }
 
 function getOrderProvisionalHtgRemaining(order = {}) {
@@ -586,8 +654,13 @@ function buildWalletFundingSnapshot({
   walletData = {},
   exchangeHistory = [],
 } = {}) {
-  const approvedDepositsHtg = (Array.isArray(orders) ? orders : []).reduce(
-    (sum, item) => sum + getOrderApprovedAmountHtg(item),
+  const normalizedOrders = Array.isArray(orders) ? orders : [];
+  const approvedDepositsHtg = normalizedOrders.reduce(
+    (sum, item) => sum + getOrderApprovedRealAmountHtg(item),
+    0
+  );
+  const welcomeBonusApprovedHtg = normalizedOrders.reduce(
+    (sum, item) => sum + getOrderApprovedWelcomeAmountHtg(item),
     0
   );
   const reservedWithdrawalsHtg = (Array.isArray(withdrawals) ? withdrawals : []).reduce((sum, item) => {
@@ -617,7 +690,11 @@ function buildWalletFundingSnapshot({
   );
   const pendingPlayFromXchangeDoes = safeInt(walletData.pendingPlayFromXchangeDoes);
   const pendingPlayFromReferralDoes = safeInt(walletData.pendingPlayFromReferralDoes);
-  const pendingPlayTotalDoes = pendingPlayFromXchangeDoes + pendingPlayFromReferralDoes;
+  const pendingPlayFromWelcomeDoes = safeInt(walletData.pendingPlayFromWelcomeDoes);
+  const welcomeBonusHtgAvailable = safeInt(walletData.welcomeBonusHtgAvailable);
+  const welcomeBonusHtgConverted = safeInt(walletData.welcomeBonusHtgConverted);
+  const welcomeBonusHtgPlayed = safeInt(walletData.welcomeBonusHtgPlayed);
+  const pendingPlayTotalDoes = pendingPlayFromXchangeDoes + pendingPlayFromReferralDoes + pendingPlayFromWelcomeDoes;
   const exchangeableDoesAvailable = safeInt(
     typeof walletData.exchangeableDoesAvailable === "number"
       ? Math.min(walletData.exchangeableDoesAvailable, approvedDoesBalance)
@@ -626,11 +703,13 @@ function buildWalletFundingSnapshot({
 
   return {
     approvedDepositsHtg,
+    realApprovedDepositsHtg: approvedDepositsHtg,
+    welcomeBonusApprovedHtg,
     reservedWithdrawalsHtg,
     approvedBaseHtg,
     approvedHtgAvailable,
     provisionalHtgAvailable,
-    playableHtg: approvedHtgAvailable + provisionalHtgAvailable,
+    playableHtg: approvedHtgAvailable + provisionalHtgAvailable + welcomeBonusHtgAvailable,
     exchangedApprovedHtg,
     totalExchangedApprovedHtg,
     remainingToExchangeHtg,
@@ -640,9 +719,15 @@ function buildWalletFundingSnapshot({
     provisionalDoesBalance,
     doesBalance: approvedDoesBalance + provisionalDoesBalance,
     exchangeableDoesAvailable,
+    welcomeBonusHtgAvailable,
+    welcomeBonusHtgConverted,
+    welcomeBonusHtgPlayed,
     pendingPlayFromXchangeDoes,
     pendingPlayFromReferralDoes,
+    pendingPlayFromWelcomeDoes,
     pendingPlayTotalDoes,
+    hasRealApprovedDeposit: hasRealApprovedDepositFromOrders(normalizedOrders),
+    hasApprovedDeposit: hasRealApprovedDepositFromOrders(normalizedOrders),
   };
 }
 
@@ -655,6 +740,9 @@ function buildFundingWalletPatch(snapshot = {}) {
     doesProvisionalBalance: safeInt(snapshot.provisionalDoesBalance),
     doesBalance: safeInt(snapshot.doesBalance),
     exchangeableDoesAvailable: safeInt(snapshot.exchangeableDoesAvailable),
+    welcomeBonusHtgAvailable: safeInt(snapshot.welcomeBonusHtgAvailable),
+    welcomeBonusHtgConverted: safeInt(snapshot.welcomeBonusHtgConverted),
+    welcomeBonusHtgPlayed: safeInt(snapshot.welcomeBonusHtgPlayed),
   };
 }
 
@@ -2047,6 +2135,10 @@ async function computeBotPilotSnapshot(options = {}) {
   let collectedDoes = 0;
   let payoutDoes = 0;
   let netDoes = 0;
+  let grossCollectedDoes = 0;
+  let grossPayoutDoes = 0;
+  let grossNetDoes = 0;
+  let promoExposureDoes = 0;
   let botRooms = 0;
   let humanWins = 0;
   let botWins = 0;
@@ -2066,13 +2158,34 @@ async function computeBotPilotSnapshot(options = {}) {
     if (String(data.status || "").trim().toLowerCase() !== "ended") return;
 
     roomsCount += 1;
-    const roomCollected = safeInt(data.companyCollectedDoes);
-    const roomPayout = safeInt(data.companyPayoutDoes);
-    const roomNet = safeSignedInt(
+    const roomCollectedGross = safeInt(data.companyCollectedDoes);
+    const roomPayoutGross = safeInt(data.companyPayoutDoes);
+    const roomNetGross = safeSignedInt(
       typeof data.companyNetDoes === "number"
         ? data.companyNetDoes
+        : (roomCollectedGross - roomPayoutGross)
+    );
+    const roomCollected = safeInt(
+      typeof data.companyCollectedRealDoes === "number"
+        ? data.companyCollectedRealDoes
+        : roomCollectedGross
+    );
+    const roomPayout = safeInt(
+      typeof data.companyPayoutRealDoes === "number"
+        ? data.companyPayoutRealDoes
+        : roomPayoutGross
+    );
+    const roomNet = safeSignedInt(
+      typeof data.companyNetRealDoes === "number"
+        ? data.companyNetRealDoes
         : (roomCollected - roomPayout)
     );
+    const roomPromoExposure = safeInt(data.companyPromoExposureDoes);
+
+    grossCollectedDoes += roomCollectedGross;
+    grossPayoutDoes += roomPayoutGross;
+    grossNetDoes += roomNetGross;
+    promoExposureDoes += roomPromoExposure;
     collectedDoes += roomCollected;
     payoutDoes += roomPayout;
     netDoes += roomNet;
@@ -2092,11 +2205,19 @@ async function computeBotPilotSnapshot(options = {}) {
        collectedDoes: 0,
        payoutDoes: 0,
        netDoes: 0,
+       grossCollectedDoes: 0,
+       grossPayoutDoes: 0,
+       grossNetDoes: 0,
+       promoExposureDoes: 0,
      };
      existingTrend.rooms += 1;
      existingTrend.collectedDoes += roomCollected;
      existingTrend.payoutDoes += roomPayout;
      existingTrend.netDoes += roomNet;
+     existingTrend.grossCollectedDoes += roomCollectedGross;
+     existingTrend.grossPayoutDoes += roomPayoutGross;
+     existingTrend.grossNetDoes += roomNetGross;
+     existingTrend.promoExposureDoes += roomPromoExposure;
      if (endedAtMs > safeSignedInt(existingTrend.periodMs)) {
        existingTrend.periodMs = endedAtMs;
        existingTrend.label = getBotPilotTrendLabel(range.windowKey, endedAtMs);
@@ -2130,6 +2251,10 @@ async function computeBotPilotSnapshot(options = {}) {
       collectedDoes: safeInt(item.collectedDoes),
       payoutDoes: safeInt(item.payoutDoes),
       netDoes: safeSignedInt(item.netDoes),
+      grossCollectedDoes: safeInt(item.grossCollectedDoes),
+      grossPayoutDoes: safeInt(item.grossPayoutDoes),
+      grossNetDoes: safeSignedInt(item.grossNetDoes),
+      promoExposureDoes: safeInt(item.promoExposureDoes),
     }));
   const botMix = Array.from(botMixMap.values()).map((item) => ({
     botCount: safeInt(item.botCount),
@@ -2149,6 +2274,10 @@ async function computeBotPilotSnapshot(options = {}) {
     collectedDoes,
     payoutDoes,
     netDoes,
+    grossCollectedDoes,
+    grossPayoutDoes,
+    grossNetDoes,
+    promoExposureDoes,
     marginPct: collectedDoes > 0 ? netDoes / collectedDoes : 0,
     botRooms,
     humanWins,
@@ -2217,6 +2346,7 @@ function buildPlayRequiredError(payload = {}) {
       code: "play-required-before-sell",
       pendingPlayFromXchangeDoes: safeInt(payload.pendingPlayFromXchangeDoes),
       pendingPlayFromReferralDoes: safeInt(payload.pendingPlayFromReferralDoes),
+      pendingPlayFromWelcomeDoes: safeInt(payload.pendingPlayFromWelcomeDoes),
       pendingPlayTotalDoes: safeInt(payload.pendingPlayTotalDoes),
       exchangeableDoesAvailable: safeInt(payload.exchangeableDoesAvailable),
     }
@@ -2412,9 +2542,29 @@ function buildRoomResultSnapshot(roomId = "", room = {}, overrides = {}) {
   const startedAtMs = safeSignedInt(snapshot.startedAtMs);
   const createdAtMs = safeSignedInt(snapshot.createdAtMs);
   const status = String(snapshot.status || "").trim().toLowerCase() || "ended";
+  const entryFundingByUid = snapshot.entryFundingByUid && typeof snapshot.entryFundingByUid === "object"
+    ? snapshot.entryFundingByUid
+    : {};
+  const welcomeFundedDoes = playerUids.reduce((sum, playerUid) => {
+    if (!playerUid) return sum;
+    const funding = entryFundingByUid[playerUid] && typeof entryFundingByUid[playerUid] === "object"
+      ? entryFundingByUid[playerUid]
+      : {};
+    return sum + safeInt(funding.welcomeDoes);
+  }, 0);
   const companyCollectedDoes = humanCount * entryCostDoes;
+  const companyCollectedRealDoes = Math.max(0, companyCollectedDoes - welcomeFundedDoes);
+  const companyPromoExposureDoes = welcomeFundedDoes;
+  const winnerFunding = winnerUid && entryFundingByUid[winnerUid] && typeof entryFundingByUid[winnerUid] === "object"
+    ? entryFundingByUid[winnerUid]
+    : {};
+  const winnerWelcomeEntryDoes = safeInt(winnerFunding.welcomeDoes);
   const companyPayoutDoes = winnerType === "human" ? rewardAmountDoes : 0;
+  const companyPayoutRealDoes = winnerType === "human"
+    ? Math.max(0, companyPayoutDoes - Math.min(companyPayoutDoes, Math.round((companyPayoutDoes * winnerWelcomeEntryDoes) / Math.max(1, entryCostDoes))))
+    : 0;
   const companyNetDoes = companyCollectedDoes - companyPayoutDoes;
+  const companyNetRealDoes = companyCollectedRealDoes - companyPayoutRealDoes;
 
   return {
     roomId: String(roomId || "").trim(),
@@ -2440,8 +2590,13 @@ function buildRoomResultSnapshot(roomId = "", room = {}, overrides = {}) {
     startedAtMs,
     endedAtMs,
     companyCollectedDoes,
+    companyCollectedRealDoes,
     companyPayoutDoes,
+    companyPayoutRealDoes,
     companyNetDoes,
+    companyNetRealDoes,
+    companyPromoExposureDoes,
+    welcomeFundedDoes,
     archiveVersion: 1,
     archivedAtMs: Date.now(),
     updatedAt: admin.firestore.FieldValue.serverTimestamp(),
@@ -3331,6 +3486,7 @@ async function applyWalletMutationTx(tx, options) {
       : (type === "game_reward" ? amountDoes : 0)
   );
   const rewardProvisionalDoes = safeInt(options.provisionalRewardDoes);
+  const rewardWelcomeDoes = safeInt(options.welcomeRewardDoes);
 
   const ref = walletRef(uid);
   const snap = await tx.get(ref);
@@ -3343,6 +3499,7 @@ async function applyWalletMutationTx(tx, options) {
   let beforeExchanged = safeSignedInt(data.exchangedGourdes);
   const beforePendingFromXchange = safeInt(data.pendingPlayFromXchangeDoes);
   const beforePendingFromReferral = safeInt(data.pendingPlayFromReferralDoes);
+  const beforePendingFromWelcome = safeInt(data.pendingPlayFromWelcomeDoes);
   let beforeTotalExchangedEver = safeInt(data.totalExchangedHtgEver);
   const beforeProvisionalDoes = safeInt(data.doesProvisionalBalance);
   const beforeApprovedDoes = safeInt(
@@ -3350,7 +3507,10 @@ async function applyWalletMutationTx(tx, options) {
       ? data.doesApprovedBalance
       : Math.max(0, beforeDoes - beforeProvisionalDoes)
   );
-  const beforePendingPlayTotal = beforePendingFromXchange + beforePendingFromReferral;
+  const beforeWelcomeBonusHtgAvailable = safeInt(data.welcomeBonusHtgAvailable);
+  const beforeWelcomeBonusHtgConverted = safeInt(data.welcomeBonusHtgConverted);
+  const beforeWelcomeBonusHtgPlayed = safeInt(data.welcomeBonusHtgPlayed);
+  const beforePendingPlayTotal = beforePendingFromXchange + beforePendingFromReferral + beforePendingFromWelcome;
   const beforeExchangeableDoes = safeInt(
     typeof data.exchangeableDoesAvailable === "number"
       ? Math.min(data.exchangeableDoesAvailable, beforeApprovedDoes)
@@ -3364,11 +3524,16 @@ async function applyWalletMutationTx(tx, options) {
 
   let afterPendingFromXchange = beforePendingFromXchange;
   let afterPendingFromReferral = beforePendingFromReferral;
+  let afterPendingFromWelcome = beforePendingFromWelcome;
   let afterTotalExchangedEver = beforeTotalExchangedEver;
+  let afterWelcomeBonusHtgAvailable = beforeWelcomeBonusHtgAvailable;
+  let afterWelcomeBonusHtgConverted = beforeWelcomeBonusHtgConverted;
+  let afterWelcomeBonusHtgPlayed = beforeWelcomeBonusHtgPlayed;
   let fundingPatch = {};
   let gameEntryFunding = {
     approvedDoes: 0,
     provisionalDoes: 0,
+    welcomeDoes: 0,
     provisionalSources: [],
   };
   let provisionalConversion = {
@@ -3528,10 +3693,16 @@ async function applyWalletMutationTx(tx, options) {
         ...data,
         exchangedGourdes: beforeExchanged,
         totalExchangedHtgEver: beforeTotalExchangedEver,
+        welcomeBonusHtgAvailable: beforeWelcomeBonusHtgAvailable,
+        welcomeBonusHtgConverted: beforeWelcomeBonusHtgConverted,
+        welcomeBonusHtgPlayed: beforeWelcomeBonusHtgPlayed,
+        pendingPlayFromWelcomeDoes: beforePendingFromWelcome,
       },
     });
     provisionalConversion = await consumeProvisionalHtgForConversion(amountGourdes);
-    const remainingApprovedAmount = Math.max(0, amountGourdes - provisionalConversion.consumedGourdes);
+    const remainingAfterProvisionalAmount = Math.max(0, amountGourdes - provisionalConversion.consumedGourdes);
+    const consumeWelcomeAmount = Math.min(remainingAfterProvisionalAmount, beforeWelcomeBonusHtgAvailable);
+    const remainingApprovedAmount = Math.max(0, remainingAfterProvisionalAmount - consumeWelcomeAmount);
     const availableApprovedToConvertHtg = safeInt(fundingSnapshot.approvedHtgAvailable);
 
     console.log("[BALANCE_DEBUG][FUNCTIONS][xchange_buy] snapshot", JSON.stringify({
@@ -3539,6 +3710,8 @@ async function applyWalletMutationTx(tx, options) {
       amountGourdes,
       beforeExchanged,
       beforeTotalExchangedEver,
+      beforeWelcomeBonusHtgAvailable,
+      consumeWelcomeAmount,
       availableApprovedToConvertHtg,
       remainingApprovedAmount,
       provisionalConversion,
@@ -3572,6 +3745,13 @@ async function applyWalletMutationTx(tx, options) {
     }
 
     afterProvisionalDoes += provisionalConversion.consumedDoes;
+    if (consumeWelcomeAmount > 0) {
+      const welcomeDoesDelta = consumeWelcomeAmount * RATE_HTG_TO_DOES;
+      afterApprovedDoes += welcomeDoesDelta;
+      afterPendingFromWelcome = beforePendingFromWelcome + welcomeDoesDelta;
+      afterWelcomeBonusHtgAvailable = Math.max(0, beforeWelcomeBonusHtgAvailable - consumeWelcomeAmount);
+      afterWelcomeBonusHtgConverted = beforeWelcomeBonusHtgConverted + consumeWelcomeAmount;
+    }
     if (remainingApprovedAmount > 0) {
       const approvedDoesDelta = remainingApprovedAmount * RATE_HTG_TO_DOES;
       afterApprovedDoes += approvedDoesDelta;
@@ -3600,6 +3780,10 @@ async function applyWalletMutationTx(tx, options) {
         doesApprovedBalance: afterApprovedDoes,
         doesProvisionalBalance: afterProvisionalDoes,
         doesBalance: afterApprovedDoes + afterProvisionalDoes,
+        welcomeBonusHtgAvailable: afterWelcomeBonusHtgAvailable,
+        welcomeBonusHtgConverted: afterWelcomeBonusHtgConverted,
+        welcomeBonusHtgPlayed: afterWelcomeBonusHtgPlayed,
+        pendingPlayFromWelcomeDoes: afterPendingFromWelcome,
       },
     }));
   }
@@ -3621,22 +3805,35 @@ async function applyWalletMutationTx(tx, options) {
     afterApprovedDoes = Math.max(0, afterApprovedDoes - approvedSpentDoes);
 
     let playedApprovedDoes = approvedSpentDoes;
+    let consumedXchangeDoes = 0;
+    let consumedReferralDoes = 0;
+    let consumedWelcomeDoes = 0;
     if (playedApprovedDoes > 0 && afterPendingFromXchange > 0) {
       const consumeXchange = Math.min(playedApprovedDoes, afterPendingFromXchange);
       afterPendingFromXchange -= consumeXchange;
       playedApprovedDoes -= consumeXchange;
+      consumedXchangeDoes += consumeXchange;
       afterExchangeableDoes += consumeXchange;
     }
     if (playedApprovedDoes > 0 && afterPendingFromReferral > 0) {
       const consumeReferral = Math.min(playedApprovedDoes, afterPendingFromReferral);
       afterPendingFromReferral -= consumeReferral;
       playedApprovedDoes -= consumeReferral;
+      consumedReferralDoes += consumeReferral;
       afterExchangeableDoes += consumeReferral;
+    }
+    if (playedApprovedDoes > 0 && afterPendingFromWelcome > 0) {
+      const consumeWelcome = Math.min(playedApprovedDoes, afterPendingFromWelcome);
+      afterPendingFromWelcome -= consumeWelcome;
+      playedApprovedDoes -= consumeWelcome;
+      consumedWelcomeDoes += consumeWelcome;
+      afterWelcomeBonusHtgPlayed += Math.floor(consumeWelcome / RATE_HTG_TO_DOES);
     }
 
     gameEntryFunding = {
       approvedDoes: approvedSpentDoes,
       provisionalDoes: provisionalSpentDoes,
+      welcomeDoes: consumedWelcomeDoes,
       provisionalSources: normalizeFundingSources(provisionalSpend.sources),
     };
     console.log("[BALANCE_DEBUG][FUNCTIONS][game_entry]", JSON.stringify({
@@ -3664,20 +3861,26 @@ async function applyWalletMutationTx(tx, options) {
   if (type === "game_reward") {
     const approvedReward = safeInt(rewardApprovedDoes);
     const provisionalReward = safeInt(rewardProvisionalDoes);
+    const welcomeReward = safeInt(rewardWelcomeDoes);
     if ((approvedReward + provisionalReward) !== amountDoes) {
       throw new HttpsError("failed-precondition", "Répartition de gain invalide.");
     }
+    if (welcomeReward > approvedReward) {
+      throw new HttpsError("failed-precondition", "Répartition bonus bienvenue invalide.");
+    }
     afterApprovedDoes += approvedReward;
     afterProvisionalDoes += provisionalReward;
+    afterPendingFromWelcome += welcomeReward;
   }
 
   if (type === "xchange_sell") {
-    const pendingTotal = afterPendingFromXchange + afterPendingFromReferral;
+    const pendingTotal = afterPendingFromXchange + afterPendingFromReferral + afterPendingFromWelcome;
     const availableExchangeableDoes = Math.min(beforeApprovedDoes, beforeExchangeableDoes);
     if (amountDoes > availableExchangeableDoes) {
       throw buildPlayRequiredError({
         pendingPlayFromXchangeDoes: afterPendingFromXchange,
         pendingPlayFromReferralDoes: afterPendingFromReferral,
+        pendingPlayFromWelcomeDoes: afterPendingFromWelcome,
         pendingPlayTotalDoes: pendingTotal,
         exchangeableDoesAvailable: availableExchangeableDoes,
       });
@@ -3701,6 +3904,10 @@ async function applyWalletMutationTx(tx, options) {
         doesApprovedBalance: afterApprovedDoes,
         doesProvisionalBalance: afterProvisionalDoes,
         doesBalance: afterApprovedDoes + afterProvisionalDoes,
+        welcomeBonusHtgAvailable: afterWelcomeBonusHtgAvailable,
+        welcomeBonusHtgConverted: afterWelcomeBonusHtgConverted,
+        welcomeBonusHtgPlayed: afterWelcomeBonusHtgPlayed,
+        pendingPlayFromWelcomeDoes: afterPendingFromWelcome,
       },
     }));
   }
@@ -3717,7 +3924,7 @@ async function applyWalletMutationTx(tx, options) {
   if (afterDoes < 0) {
     throw new HttpsError("failed-precondition", "Solde Does insuffisant.");
   }
-  if ((afterPendingFromXchange + afterPendingFromReferral) <= 0) {
+  if ((afterPendingFromXchange + afterPendingFromReferral + afterPendingFromWelcome) <= 0) {
     afterExchangeableDoes = safeInt(afterApprovedDoes);
   } else {
     afterExchangeableDoes = Math.min(safeInt(afterApprovedDoes), safeInt(afterExchangeableDoes));
@@ -3734,6 +3941,10 @@ async function applyWalletMutationTx(tx, options) {
     exchangeableDoesAvailable: safeInt(afterExchangeableDoes),
     pendingPlayFromXchangeDoes: afterPendingFromXchange,
     pendingPlayFromReferralDoes: afterPendingFromReferral,
+    pendingPlayFromWelcomeDoes: afterPendingFromWelcome,
+    welcomeBonusHtgAvailable: safeInt(afterWelcomeBonusHtgAvailable),
+    welcomeBonusHtgConverted: safeInt(afterWelcomeBonusHtgConverted),
+    welcomeBonusHtgPlayed: safeInt(afterWelcomeBonusHtgPlayed),
     totalExchangedHtgEver: afterTotalExchangedEver,
     updatedAt: admin.firestore.FieldValue.serverTimestamp(),
   };
@@ -3762,12 +3973,20 @@ async function applyWalletMutationTx(tx, options) {
     afterPendingPlayFromXchangeDoes: afterPendingFromXchange,
     beforePendingPlayFromReferralDoes: beforePendingFromReferral,
     afterPendingPlayFromReferralDoes: afterPendingFromReferral,
+    beforePendingPlayFromWelcomeDoes: beforePendingFromWelcome,
+    afterPendingPlayFromWelcomeDoes: afterPendingFromWelcome,
     beforeExchangeableDoesAvailable: beforeExchangeableDoes,
     afterExchangeableDoesAvailable: safeInt(afterExchangeableDoes),
     beforeApprovedDoesBalance: beforeApprovedDoes,
     afterApprovedDoesBalance: safeInt(afterApprovedDoes),
     beforeProvisionalDoesBalance: beforeProvisionalDoes,
     afterProvisionalDoesBalance: safeInt(afterProvisionalDoes),
+    beforeWelcomeBonusHtgAvailable,
+    afterWelcomeBonusHtgAvailable: safeInt(afterWelcomeBonusHtgAvailable),
+    beforeWelcomeBonusHtgConverted,
+    afterWelcomeBonusHtgConverted: safeInt(afterWelcomeBonusHtgConverted),
+    beforeWelcomeBonusHtgPlayed,
+    afterWelcomeBonusHtgPlayed: safeInt(afterWelcomeBonusHtgPlayed),
     gameEntryFunding,
     provisionalConversion,
     createdAt: admin.firestore.FieldValue.serverTimestamp(),
@@ -3780,10 +3999,14 @@ async function applyWalletMutationTx(tx, options) {
     afterExchanged,
     afterPendingFromXchange,
     afterPendingFromReferral,
+    afterPendingFromWelcome,
     afterTotalExchangedEver,
     afterExchangeableDoes: safeInt(afterExchangeableDoes),
     afterApprovedDoes: safeInt(afterApprovedDoes),
     afterProvisionalDoes: safeInt(afterProvisionalDoes),
+    afterWelcomeBonusHtgAvailable: safeInt(afterWelcomeBonusHtgAvailable),
+    afterWelcomeBonusHtgConverted: safeInt(afterWelcomeBonusHtgConverted),
+    afterWelcomeBonusHtgPlayed: safeInt(afterWelcomeBonusHtgPlayed),
     gameEntryFunding,
     provisionalConversion,
   };
@@ -4045,6 +4268,7 @@ async function chargeRoomEntriesTx(tx, room = {}, playerUids = [], stakeDoes = 0
     entryFundingByUid[playerUid] = {
       approvedDoes: safeInt(walletMutation.gameEntryFunding?.approvedDoes),
       provisionalDoes: safeInt(walletMutation.gameEntryFunding?.provisionalDoes),
+      welcomeDoes: safeInt(walletMutation.gameEntryFunding?.welcomeDoes),
       provisionalSources: normalizeFundingSources(walletMutation.gameEntryFunding?.provisionalSources),
     };
     afterDoesByUid[playerUid] = safeInt(walletMutation.afterDoes);
@@ -4246,8 +4470,12 @@ exports.walletMutate = publicOnCall("walletMutate", async (request) => {
     afterExchanged: result.afterExchanged,
     afterPendingFromXchange: result.afterPendingFromXchange,
     afterPendingFromReferral: result.afterPendingFromReferral,
+    afterPendingFromWelcome: result.afterPendingFromWelcome,
     afterTotalExchangedEver: result.afterTotalExchangedEver,
     afterExchangeableDoes: result.afterExchangeableDoes,
+    afterWelcomeBonusHtgAvailable: result.afterWelcomeBonusHtgAvailable,
+    afterWelcomeBonusHtgConverted: result.afterWelcomeBonusHtgConverted,
+    afterWelcomeBonusHtgPlayed: result.afterWelcomeBonusHtgPlayed,
     provisionalConversion: result.provisionalConversion,
     gameEntryFunding: result.gameEntryFunding,
   }));
@@ -4260,6 +4488,10 @@ exports.walletMutate = publicOnCall("walletMutate", async (request) => {
     exchangedGourdes: result.afterExchanged,
     pendingPlayFromXchangeDoes: result.afterPendingFromXchange,
     pendingPlayFromReferralDoes: result.afterPendingFromReferral,
+    pendingPlayFromWelcomeDoes: result.afterPendingFromWelcome,
+    welcomeBonusHtgAvailable: result.afterWelcomeBonusHtgAvailable,
+    welcomeBonusHtgConverted: result.afterWelcomeBonusHtgConverted,
+    welcomeBonusHtgPlayed: result.afterWelcomeBonusHtgPlayed,
     totalExchangedHtgEver: result.afterTotalExchangedEver,
     gameEntryFunding: result.gameEntryFunding,
     provisionalConversion: result.provisionalConversion,
@@ -4876,6 +5108,7 @@ exports.joinMatchmaking = publicOnCall("joinMatchmaking", async (request) => {
         currentEntryFunding[uid] = {
           approvedDoes: safeInt(walletMutation.gameEntryFunding?.approvedDoes),
           provisionalDoes: safeInt(walletMutation.gameEntryFunding?.provisionalDoes),
+          welcomeDoes: safeInt(walletMutation.gameEntryFunding?.welcomeDoes),
           provisionalSources: normalizeFundingSources(walletMutation.gameEntryFunding?.provisionalSources),
         };
 
@@ -5067,6 +5300,7 @@ exports.joinMatchmaking = publicOnCall("joinMatchmaking", async (request) => {
                 currentEntryFunding[uid] = {
                   approvedDoes: safeInt(walletMutation.gameEntryFunding?.approvedDoes),
                   provisionalDoes: safeInt(walletMutation.gameEntryFunding?.provisionalDoes),
+                  welcomeDoes: safeInt(walletMutation.gameEntryFunding?.welcomeDoes),
                   provisionalSources: normalizeFundingSources(walletMutation.gameEntryFunding?.provisionalSources),
                 };
 
@@ -5174,6 +5408,7 @@ exports.joinMatchmaking = publicOnCall("joinMatchmaking", async (request) => {
         [uid]: {
           approvedDoes: safeInt(walletMutation.gameEntryFunding?.approvedDoes),
           provisionalDoes: safeInt(walletMutation.gameEntryFunding?.provisionalDoes),
+          welcomeDoes: safeInt(walletMutation.gameEntryFunding?.welcomeDoes),
           provisionalSources: normalizeFundingSources(walletMutation.gameEntryFunding?.provisionalSources),
         },
       },
@@ -6086,14 +6321,20 @@ exports.claimWinReward = publicOnCall("claimWinReward", async (request) => {
     const provisionalSources = normalizeFundingSources(entryFundingRaw?.provisionalSources);
     const approvedEntryDoes = safeInt(entryFundingRaw?.approvedDoes);
     const provisionalEntryDoes = safeInt(entryFundingRaw?.provisionalDoes);
+    const welcomeEntryDoes = safeInt(entryFundingRaw?.welcomeDoes);
     let approvedRewardDoes = rewardAmountDoes;
     let provisionalRewardDoes = 0;
+    let welcomeRewardDoes = 0;
 
-    if (provisionalEntryDoes > 0 && provisionalSources.length > 0) {
-      const totalEntryDoes = Math.max(approvedEntryDoes + provisionalEntryDoes, provisionalEntryDoes);
+    if ((provisionalEntryDoes > 0 && provisionalSources.length > 0) || welcomeEntryDoes > 0) {
+      const totalEntryDoes = Math.max(approvedEntryDoes + provisionalEntryDoes + welcomeEntryDoes, provisionalEntryDoes + welcomeEntryDoes);
       const provisionalRewardPool = Math.min(
         rewardAmountDoes,
         Math.round((rewardAmountDoes * provisionalEntryDoes) / Math.max(1, totalEntryDoes))
+      );
+      welcomeRewardDoes = Math.min(
+        rewardAmountDoes - provisionalRewardPool,
+        Math.round((rewardAmountDoes * welcomeEntryDoes) / Math.max(1, totalEntryDoes))
       );
       const allocatedRewardSources = allocateDoesProportionally(provisionalRewardPool, provisionalSources.map((item) => ({
         orderId: item.orderId,
@@ -6123,7 +6364,7 @@ exports.claimWinReward = publicOnCall("claimWinReward", async (request) => {
       });
 
       provisionalRewardDoes = pendingRewardDoes;
-      approvedRewardDoes = Math.max(0, rewardAmountDoes - provisionalRewardPool) + promotedApprovedRewardDoes;
+      approvedRewardDoes = Math.max(0, rewardAmountDoes - provisionalRewardPool - welcomeRewardDoes) + promotedApprovedRewardDoes + welcomeRewardDoes;
     } else if (approvedEntryDoes <= 0 && provisionalEntryDoes > 0) {
       approvedRewardDoes = 0;
       provisionalRewardDoes = rewardAmountDoes;
@@ -6135,9 +6376,11 @@ exports.claimWinReward = publicOnCall("claimWinReward", async (request) => {
       rewardAmountDoes,
       approvedEntryDoes,
       provisionalEntryDoes,
+      welcomeEntryDoes,
       provisionalSources,
       approvedRewardDoes,
       provisionalRewardDoes,
+      welcomeRewardDoes,
     }));
 
     const walletMutation = await applyWalletMutationTx(tx, {
@@ -6148,6 +6391,7 @@ exports.claimWinReward = publicOnCall("claimWinReward", async (request) => {
       amountDoes: rewardAmountDoes,
       approvedRewardDoes,
       provisionalRewardDoes,
+      welcomeRewardDoes,
       amountGourdes: 0,
       deltaDoes: rewardAmountDoes,
       deltaExchangedGourdes: 0,
@@ -6159,6 +6403,7 @@ exports.claimWinReward = publicOnCall("claimWinReward", async (request) => {
       afterDoes: safeInt(walletMutation.afterDoes),
       approvedRewardDoes,
       provisionalRewardDoes,
+      welcomeRewardDoes,
     }));
 
     tx.set(settlementRef, {
@@ -7263,7 +7508,14 @@ exports.updateClientProfileSecure = publicOnCall("updateClientProfileSecure", as
     profile.exchangedGourdes = safeSignedInt(current.exchangedGourdes);
     profile.pendingPlayFromXchangeDoes = safeInt(current.pendingPlayFromXchangeDoes);
     profile.pendingPlayFromReferralDoes = safeInt(current.pendingPlayFromReferralDoes);
+    profile.pendingPlayFromWelcomeDoes = safeInt(current.pendingPlayFromWelcomeDoes);
     profile.totalExchangedHtgEver = safeInt(current.totalExchangedHtgEver);
+    profile.welcomeBonusClaimed = current.welcomeBonusClaimed === true;
+    profile.welcomeBonusOrderId = sanitizeText(current.welcomeBonusOrderId || "", 160);
+    profile.welcomeBonusReceivedAtMs = safeInt(current.welcomeBonusReceivedAtMs);
+    profile.welcomeBonusHtgAvailable = safeInt(current.welcomeBonusHtgAvailable);
+    profile.welcomeBonusHtgConverted = safeInt(current.welcomeBonusHtgConverted);
+    profile.welcomeBonusHtgPlayed = safeInt(current.welcomeBonusHtgPlayed);
     profile.referralSignupsTotal = safeInt(current.referralSignupsTotal);
     profile.referralSignupsViaLink = safeInt(current.referralSignupsViaLink);
     profile.referralSignupsViaCode = safeInt(current.referralSignupsViaCode);
@@ -7273,6 +7525,13 @@ exports.updateClientProfileSecure = publicOnCall("updateClientProfileSecure", as
     if (typeof current.referralSignupsViaLink !== "number") profile.referralSignupsViaLink = safeInt(current.referralSignupsViaLink);
     if (typeof current.referralSignupsViaCode !== "number") profile.referralSignupsViaCode = safeInt(current.referralSignupsViaCode);
     if (typeof current.referralDepositsTotal !== "number") profile.referralDepositsTotal = safeInt(current.referralDepositsTotal);
+    if (typeof current.pendingPlayFromWelcomeDoes !== "number") profile.pendingPlayFromWelcomeDoes = safeInt(current.pendingPlayFromWelcomeDoes);
+    if (typeof current.welcomeBonusReceivedAtMs !== "number") profile.welcomeBonusReceivedAtMs = safeInt(current.welcomeBonusReceivedAtMs);
+    if (typeof current.welcomeBonusHtgAvailable !== "number") profile.welcomeBonusHtgAvailable = safeInt(current.welcomeBonusHtgAvailable);
+    if (typeof current.welcomeBonusHtgConverted !== "number") profile.welcomeBonusHtgConverted = safeInt(current.welcomeBonusHtgConverted);
+    if (typeof current.welcomeBonusHtgPlayed !== "number") profile.welcomeBonusHtgPlayed = safeInt(current.welcomeBonusHtgPlayed);
+    if (current.welcomeBonusClaimed !== true) profile.welcomeBonusClaimed = false;
+    if (!current.welcomeBonusOrderId) profile.welcomeBonusOrderId = sanitizeText(current.welcomeBonusOrderId || "", 160);
   }
 
   await ref.set(profile, { merge: true });
@@ -7446,6 +7705,155 @@ exports.createOrderSecure = publicOnCall("createOrderSecure", async (request) =>
   };
 });
 
+exports.claimWelcomeBonusSecure = publicOnCall("claimWelcomeBonusSecure", async (request) => {
+  const { uid, email } = assertAuth(request);
+  const payload = request.data && typeof request.data === "object" ? request.data : {};
+  const customerName = sanitizeText(payload.customerName || "", 120);
+  const customerPhone = sanitizePhone(payload.customerPhone || "", 40);
+  const depositorPhone = sanitizePhone(payload.depositorPhone || "", 40);
+  const proofRef = sanitizeText(payload.proofRef || "", 180);
+  const methodId = sanitizeText(payload.methodId || "welcome_bonus", 120) || "welcome_bonus";
+  const nowIso = new Date().toISOString();
+  const nowMs = Date.now();
+  const orderRef = db.collection(CLIENTS_COLLECTION).doc(uid).collection("orders").doc();
+
+  if (!proofRef) {
+    throw new HttpsError("invalid-argument", "Preuve bienvenue requise.");
+  }
+
+  return db.runTransaction(async (tx) => {
+    const [walletSnap, ordersSnap, withdrawalsSnap, xchangesSnap] = await Promise.all([
+      tx.get(walletRef(uid)),
+      tx.get(db.collection(CLIENTS_COLLECTION).doc(uid).collection("orders")),
+      tx.get(db.collection(CLIENTS_COLLECTION).doc(uid).collection("withdrawals")),
+      tx.get(walletHistoryRef(uid)),
+    ]);
+
+    const walletData = walletSnap.exists ? (walletSnap.data() || {}) : {};
+    assertWalletNotFrozen(walletData);
+
+    const existingOrders = ordersSnap.docs.map((item) => ({ id: item.id, ...(item.data() || {}) }));
+    const existingWithdrawals = withdrawalsSnap.docs.map((item) => item.data() || {});
+    const existingXchanges = xchangesSnap.docs.map((item) => item.data() || {});
+    const fundingSnapshotBefore = buildWalletFundingSnapshot({
+      orders: existingOrders,
+      withdrawals: existingWithdrawals,
+      walletData,
+      exchangeHistory: existingXchanges,
+    });
+    const eligibility = resolveWelcomeBonusEligibility({
+      walletData,
+      orders: existingOrders,
+      fundingSnapshot: fundingSnapshotBefore,
+    });
+    if (!eligibility.eligible) {
+      throw new HttpsError(
+        "failed-precondition",
+        eligibility.reason === "already-claimed"
+          ? "Bonus bienvenue déjà réclamé."
+          : "Ce compte n'est pas éligible au bonus de bienvenue.",
+        {
+          code: eligibility.reason === "already-claimed"
+            ? "welcome-bonus-already-claimed"
+            : "welcome-bonus-not-eligible",
+          reason: eligibility.reason,
+          launchAtMs: eligibility.launchAtMs,
+        }
+      );
+    }
+
+    const nextWallet = {
+      uid,
+      email: sanitizeEmail(email || walletData.email || "", 160),
+      name: customerName || sanitizeText(walletData.name || String(email || "").split("@")[0] || "Player", 80),
+      phone: customerPhone || sanitizePhone(walletData.phone || ""),
+      welcomeBonusClaimed: true,
+      welcomeBonusOrderId: orderRef.id,
+      welcomeBonusReceivedAtMs: nowMs,
+      welcomeBonusHtgAvailable: safeInt(walletData.welcomeBonusHtgAvailable) + WELCOME_BONUS_HTG_AMOUNT,
+      welcomeBonusHtgConverted: safeInt(walletData.welcomeBonusHtgConverted),
+      welcomeBonusHtgPlayed: safeInt(walletData.welcomeBonusHtgPlayed),
+      pendingPlayFromWelcomeDoes: safeInt(walletData.pendingPlayFromWelcomeDoes),
+      updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      lastSeenAt: admin.firestore.FieldValue.serverTimestamp(),
+      lastSeenAtMs: nowMs,
+    };
+
+    const welcomeOrder = {
+      uid,
+      clientId: uid,
+      clientUid: uid,
+      amount: WELCOME_BONUS_HTG_AMOUNT,
+      approvedAmountHtg: WELCOME_BONUS_HTG_AMOUNT,
+      methodId,
+      methodName: "Bonus bienvenue",
+      orderType: WELCOME_BONUS_ORDER_TYPE,
+      kind: WELCOME_BONUS_ORDER_TYPE,
+      isWelcomeBonus: true,
+      autoApproved: true,
+      countsAsCashIn: false,
+      countsAsApprovedDeposit: false,
+      countsForReferral: false,
+      countsForDepositBonus: false,
+      excludeFromProfit: true,
+      customerName: nextWallet.name,
+      customerEmail: nextWallet.email,
+      customerPhone: nextWallet.phone,
+      depositorPhone,
+      proofRef,
+      status: "approved",
+      resolutionStatus: "approved",
+      rejectedReason: "",
+      createdAtMs: nowMs,
+      createdAt: nowIso,
+      updatedAtMs: nowMs,
+      updatedAt: nowIso,
+      resolvedAtMs: nowMs,
+      approvedAtMs: nowMs,
+      deviceId: sanitizeText(walletData.deviceId || "", 120),
+      appVersion: sanitizeText(walletData.appVersion || "", 48),
+      country: sanitizeText(walletData.country || "", 48),
+      browser: sanitizeText(walletData.browser || "", 120),
+      ipHash: sanitizeText(walletData.ipHash || "", 64),
+      utmSource: sanitizeText(walletData.utmSource || "", 80),
+      utmCampaign: sanitizeText(walletData.utmCampaign || "", 120),
+      landingPage: sanitizeText(walletData.landingPage || "", 240),
+      creativeId: sanitizeText(walletData.creativeId || "", 120),
+      uniqueCode: `WBON-${crypto.randomBytes(3).toString("hex").toUpperCase()}-${Date.now().toString(36).toUpperCase()}`,
+    };
+
+    const fundingSnapshot = buildWalletFundingSnapshot({
+      orders: [
+        ...existingOrders,
+        welcomeOrder,
+      ],
+      withdrawals: existingWithdrawals,
+      walletData: nextWallet,
+      exchangeHistory: existingXchanges,
+    });
+
+    tx.set(orderRef, welcomeOrder, { merge: true });
+    tx.set(walletRef(uid), {
+      ...buildFundingWalletPatch(fundingSnapshot),
+      welcomeBonusClaimed: true,
+      welcomeBonusOrderId: orderRef.id,
+      welcomeBonusReceivedAtMs: nowMs,
+      pendingPlayFromWelcomeDoes: safeInt(nextWallet.pendingPlayFromWelcomeDoes),
+      updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      lastSeenAt: admin.firestore.FieldValue.serverTimestamp(),
+      lastSeenAtMs: nowMs,
+    }, { merge: true });
+
+    return {
+      ok: true,
+      orderId: orderRef.id,
+      welcomeBonusHtgGranted: WELCOME_BONUS_HTG_AMOUNT,
+      welcomeBonusClaimed: true,
+      ...fundingSnapshot,
+    };
+  });
+});
+
 exports.notifyDashboardClientCreated = onDocumentCreated(`${CLIENTS_COLLECTION}/{clientId}`, async (event) => {
   const snapshot = event.data;
   if (!snapshot?.exists) return;
@@ -7486,6 +7894,7 @@ exports.notifyDashboardOrderCreated = onDocumentCreated(`${CLIENTS_COLLECTION}/{
   if (!snapshot?.exists) return;
   const orderId = String(event.params?.orderId || snapshot.id || "").trim();
   const data = snapshot.data() || {};
+  if (isWelcomeBonusOrder(data)) return;
   const amount = safeInt(data.amount || data.amountHtg);
   const methodName = sanitizeText(data.methodName || data.methodId || "", 80);
   const labelParts = [];
@@ -7667,9 +8076,21 @@ exports.getDepositFundingStatusSecure = publicOnCall("getDepositFundingStatusSec
     walletData,
     exchangeHistory: xchangesSnap.docs.map((item) => item.data() || {}),
   });
+  const welcomeBonusEligibility = resolveWelcomeBonusEligibility({
+    walletData,
+    orders: ordersSnap.docs.map((item) => item.data() || {}),
+    fundingSnapshot,
+  });
 
   return {
     ...fundingSnapshot,
+    welcomeBonusClaimed: walletData.welcomeBonusClaimed === true,
+    welcomeBonusOrderId: String(walletData.welcomeBonusOrderId || ""),
+    welcomeBonusReceivedAtMs: safeInt(walletData.welcomeBonusReceivedAtMs),
+    welcomeBonusEligible: welcomeBonusEligibility.eligible === true,
+    welcomeBonusEligibilityReason: String(welcomeBonusEligibility.reason || ""),
+    welcomeBonusLaunchAtMs: safeSignedInt(welcomeBonusEligibility.launchAtMs),
+    isLegacyAccount: welcomeBonusEligibility.isLegacyAccount === true,
     accountFrozen: walletData.accountFrozen === true,
     freezeReason: String(walletData.freezeReason || ""),
     withdrawalHold: walletData.withdrawalHold === true,
@@ -7794,7 +8215,8 @@ exports.resolveDepositReviewSecure = publicOnCall("resolveDepositReviewSecure", 
     );
     const beforePendingFromXchange = safeInt(walletData.pendingPlayFromXchangeDoes);
     const beforePendingFromReferral = safeInt(walletData.pendingPlayFromReferralDoes);
-    const beforePendingPlayTotal = beforePendingFromXchange + beforePendingFromReferral;
+    const beforePendingFromWelcome = safeInt(walletData.pendingPlayFromWelcomeDoes);
+    const beforePendingPlayTotal = beforePendingFromXchange + beforePendingFromReferral + beforePendingFromWelcome;
     const beforeExchangeableDoes = safeInt(
       typeof walletData.exchangeableDoesAvailable === "number"
         ? Math.min(walletData.exchangeableDoesAvailable, beforeApprovedDoes)
@@ -7874,6 +8296,7 @@ exports.resolveDepositReviewSecure = publicOnCall("resolveDepositReviewSecure", 
       nextWallet.totalExchangedHtgEver = safeInt(walletData.totalExchangedHtgEver) + safeInt(orderData.provisionalHtgConverted);
       nextWallet.pendingPlayFromXchangeDoes = beforePendingFromXchange + promoteCapitalDoes;
       nextWallet.pendingPlayFromReferralDoes = beforePendingFromReferral + bonusDoesAwarded;
+      nextWallet.pendingPlayFromWelcomeDoes = beforePendingFromWelcome;
       nextWallet.exchangeableDoesAvailable = beforeExchangeableDoes + unlockedFromPlayedDoes;
     } else {
       const removeDoes = settledPendingTotalDoes;
@@ -7912,10 +8335,17 @@ exports.resolveDepositReviewSecure = publicOnCall("resolveDepositReviewSecure", 
       nextWallet.frozenAtMs = safeInt(walletData.frozenAtMs);
       nextWallet.pendingPlayFromXchangeDoes = beforePendingFromXchange;
       nextWallet.pendingPlayFromReferralDoes = beforePendingFromReferral;
+      nextWallet.pendingPlayFromWelcomeDoes = beforePendingFromWelcome;
       nextWallet.exchangeableDoesAvailable = beforeExchangeableDoes;
     }
 
-    if ((safeInt(nextWallet.pendingPlayFromXchangeDoes) + safeInt(nextWallet.pendingPlayFromReferralDoes)) <= 0) {
+    if (
+      (
+        safeInt(nextWallet.pendingPlayFromXchangeDoes)
+        + safeInt(nextWallet.pendingPlayFromReferralDoes)
+        + safeInt(nextWallet.pendingPlayFromWelcomeDoes)
+      ) <= 0
+    ) {
       nextWallet.exchangeableDoesAvailable = safeInt(nextWallet.doesApprovedBalance);
     } else {
       nextWallet.exchangeableDoesAvailable = Math.min(
@@ -7944,7 +8374,9 @@ exports.resolveDepositReviewSecure = publicOnCall("resolveDepositReviewSecure", 
       exchangedGourdes: safeSignedInt(nextWallet.exchangedGourdes),
       pendingPlayFromXchangeDoes: safeInt(nextWallet.pendingPlayFromXchangeDoes),
       pendingPlayFromReferralDoes: safeInt(nextWallet.pendingPlayFromReferralDoes),
+      pendingPlayFromWelcomeDoes: safeInt(nextWallet.pendingPlayFromWelcomeDoes),
       totalExchangedHtgEver: safeInt(nextWallet.totalExchangedHtgEver),
+      hasApprovedDeposit: fundingSnapshot.hasRealApprovedDeposit === true,
       rejectedDepositStrikeCount: safeInt(nextWallet.rejectedDepositStrikeCount),
       accountFrozen: nextWallet.accountFrozen === true,
       freezeReason: String(nextWallet.freezeReason || ""),
@@ -8558,6 +8990,10 @@ exports.setBotPilotControl = publicOnCall("setBotPilotControl", async (request) 
       collectedDoes: safeInt(snapshot.collectedDoes),
       payoutDoes: safeInt(snapshot.payoutDoes),
       netDoes: safeSignedInt(snapshot.netDoes),
+      grossCollectedDoes: safeInt(snapshot.grossCollectedDoes),
+      grossPayoutDoes: safeInt(snapshot.grossPayoutDoes),
+      grossNetDoes: safeSignedInt(snapshot.grossNetDoes),
+      promoExposureDoes: safeInt(snapshot.promoExposureDoes),
       marginPct: Number(snapshot.marginPct || 0),
       recommendedLevel: normalizeBotDifficulty(snapshot.recommendedLevel),
       recommendedBand: String(snapshot.recommendedBand || ""),
@@ -8605,6 +9041,10 @@ exports.refreshBotPilotAuto = onSchedule("every 10 minutes", async () => {
       collectedDoes: safeInt(snapshot.collectedDoes),
       payoutDoes: safeInt(snapshot.payoutDoes),
       netDoes: safeSignedInt(snapshot.netDoes),
+      grossCollectedDoes: safeInt(snapshot.grossCollectedDoes),
+      grossPayoutDoes: safeInt(snapshot.grossPayoutDoes),
+      grossNetDoes: safeSignedInt(snapshot.grossNetDoes),
+      promoExposureDoes: safeInt(snapshot.promoExposureDoes),
       marginPct: Number(snapshot.marginPct || 0),
       recommendedLevel: normalizeBotDifficulty(snapshot.recommendedLevel),
       recommendedBand: String(snapshot.recommendedBand || ""),
