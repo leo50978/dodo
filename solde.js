@@ -9,11 +9,12 @@ import {
   getDocs,
   onAuthStateChanged,
 } from "./firebase-init.js";
-import { orderClientActionSecure } from "./secure-functions.js";
+import { getDepositFundingStatusSecure, orderClientActionSecure } from "./secure-functions.js";
 const BALANCE_DEBUG = true;
 const DEPOSIT_INFO_DISMISSED_KEY = "domino_deposit_info_hidden_v1";
 const REJECTED_ORDER_ALERT_SEEN_KEY = "domino_rejected_order_alert_seen_v1";
 const REJECTED_ORDER_SUPPORT_PHONE = "50941752992";
+const WELCOME_BONUS_HTG = 25;
 
 let cachedOrders = [];
 let cachedWithdrawals = [];
@@ -170,20 +171,38 @@ function openRejectedOrderSupport() {
   }
 }
 
-function openPaymentDepositDirectly(amount = 500) {
+async function getWelcomeBonusEntryStatus() {
+  try {
+    const funding = await getDepositFundingStatusSecure({});
+    return {
+      eligible: funding?.welcomeBonusEligible === true,
+      reason: String(funding?.welcomeBonusEligibilityReason || ""),
+    };
+  } catch (error) {
+    console.warn("[SOLDE] welcome bonus eligibility unavailable", error);
+    return {
+      eligible: false,
+      reason: "unavailable",
+    };
+  }
+}
+
+function openPaymentDepositDirectly(amount = 500, options = {}) {
   const numericAmount = Number(amount || 0);
   if (numericAmount < MIN_DEPOSIT_HTG) return false;
 
   const client = buildClientFromAuth();
   if (!client) return false;
+  const flowType = options?.flowType === "welcome_bonus" ? "welcome_bonus" : "deposit";
 
   new PaymentModal({
     amount: numericAmount,
+    flowType,
     client,
     cart: [
       {
-        id: `deposit_${Date.now()}`,
-        name: "Depot de solde",
+        id: `${flowType}_${Date.now()}`,
+        name: flowType === "welcome_bonus" ? "Bonus de bienvenue" : "Depot de solde",
         price: numericAmount,
         quantity: 1,
         image: "",
@@ -192,7 +211,12 @@ function openPaymentDepositDirectly(amount = 500) {
     ],
     delivery: null,
     onSuccess: () => {
-      const event = new CustomEvent("balanceDepositSuccess", { detail: { amount: numericAmount } });
+      const event = new CustomEvent("balanceDepositSuccess", {
+        detail: {
+          amount: numericAmount,
+          flowType,
+        }
+      });
       document.dispatchEvent(event);
     },
   });
@@ -975,6 +999,17 @@ function ensureSoldeModal() {
         Total du dépôt: <span id="soldeTotal" class="font-semibold text-white"></span>
       </div>
 
+      <div id="soldeWelcomeBonusWrap" class="mt-4 hidden rounded-2xl border border-amber-300/25 bg-[linear-gradient(180deg,rgba(245,158,11,0.16),rgba(251,113,133,0.12))] p-4 text-white shadow-[10px_12px_24px_rgba(82,38,10,0.24)]">
+        <p class="text-[11px] font-semibold uppercase tracking-[0.18em] text-amber-200">Nouveau compte</p>
+        <h4 class="mt-2 text-lg font-bold text-white">Prendre mon bonus ${WELCOME_BONUS_HTG} HTG</h4>
+        <p class="mt-2 text-sm leading-6 text-white/85">
+          Ce chemin est séparé du dépôt normal pour éviter toute confusion avec un montant libre.
+        </p>
+        <button id="soldeWelcomeBonusBtn" type="button" class="mt-4 h-12 w-full rounded-2xl border border-amber-200/35 bg-white/12 text-sm font-semibold text-white shadow-[8px_10px_20px_rgba(78,38,8,0.2)]">
+          Recevoir mon bonus ${WELCOME_BONUS_HTG} HTG
+        </button>
+      </div>
+
       <div id="soldeError" class="mt-3 min-h-5 text-sm text-[#ffb0b0]"></div>
 
       <button id="soldeCheckout" type="button" class="mt-2 h-12 w-full rounded-2xl border border-[#ffb26e] bg-[#F57C00] font-semibold text-white shadow-[9px_9px_20px_rgba(155,78,25,0.45),-7px_-7px_16px_rgba(255,173,96,0.2)] transition hover:-translate-y-0.5">
@@ -989,6 +1024,8 @@ function ensureSoldeModal() {
   const closeBtn = overlay.querySelector("#soldeClose");
   const amountInput = overlay.querySelector("#soldeAmount");
   const totalEl = overlay.querySelector("#soldeTotal");
+  const welcomeBonusWrap = overlay.querySelector("#soldeWelcomeBonusWrap");
+  const welcomeBonusBtn = overlay.querySelector("#soldeWelcomeBonusBtn");
   const errorEl = overlay.querySelector("#soldeError");
   const checkoutBtn = overlay.querySelector("#soldeCheckout");
 
@@ -1004,6 +1041,18 @@ function ensureSoldeModal() {
     if (errorEl) errorEl.textContent = "";
   };
 
+  const refreshWelcomeBonusAction = async () => {
+    if (!welcomeBonusWrap || !welcomeBonusBtn) return;
+    welcomeBonusWrap.classList.add("hidden");
+    welcomeBonusBtn.disabled = true;
+
+    const status = await getWelcomeBonusEntryStatus();
+    if (!status?.eligible) return;
+
+    welcomeBonusWrap.classList.remove("hidden");
+    welcomeBonusBtn.disabled = false;
+  };
+
   const open = () => {
     refreshTotal();
     overlay.classList.remove("hidden");
@@ -1011,6 +1060,7 @@ function ensureSoldeModal() {
     document.body.classList.add("overflow-hidden");
     void attachOrdersListener();
     void attachWithdrawalsListener();
+    void refreshWelcomeBonusAction();
     renderOrdersSection(cachedOrders, cachedWithdrawals);
     bindOrdersActions();
   };
@@ -1046,6 +1096,34 @@ function ensureSoldeModal() {
       }
 
       close();
+    });
+  }
+
+  if (welcomeBonusBtn) {
+    welcomeBonusBtn.addEventListener("click", async () => {
+      if (errorEl) errorEl.textContent = "";
+      welcomeBonusBtn.disabled = true;
+
+      try {
+        const status = await getWelcomeBonusEntryStatus();
+        if (!status?.eligible) {
+          if (welcomeBonusWrap) welcomeBonusWrap.classList.add("hidden");
+          if (errorEl) errorEl.textContent = "Ce bonus n'est plus disponible pour ce compte.";
+          return;
+        }
+
+        const opened = openPaymentDepositDirectly(WELCOME_BONUS_HTG, {
+          flowType: "welcome_bonus",
+        });
+        if (!opened) {
+          if (errorEl) errorEl.textContent = "Utilisateur non connecté.";
+          return;
+        }
+
+        close();
+      } finally {
+        welcomeBonusBtn.disabled = false;
+      }
     });
   }
 

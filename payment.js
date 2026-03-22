@@ -153,8 +153,8 @@ class PaymentModal {
     this.confirmationMessage = "";
     this.isCompleted = false;
     this.fundingStatus = null;
-    this.proofMode = 'deposit';
-    this.completedFlowType = 'deposit';
+    this.proofMode = this.options.flowType === 'welcome_bonus' ? 'welcome_bonus' : 'deposit';
+    this.completedFlowType = this.options.flowType === 'welcome_bonus' ? 'welcome_bonus' : 'deposit';
     
     this.init();
   }
@@ -898,6 +898,7 @@ class PaymentModal {
     const safeDepositorPhoneAttr = escapeAttr(expectedDepositorPhone);
     const safeButtonText = escapeHtml(step?.buttonText || 'Soumettre ma demande');
     const welcomeBonus = this.getWelcomeBonusStatus();
+    const allowWelcomeChoice = this.options.allowWelcomeBonusChoice === true && welcomeBonus.eligible;
     const selectedProofMode = this.isWelcomeBonusSelected() ? 'welcome_bonus' : 'deposit';
     
     return `
@@ -914,7 +915,7 @@ class PaymentModal {
         
         <p style="color: #8B7E6B; margin-bottom: 1.5rem;">${safeDescription}</p>
 
-        ${welcomeBonus.eligible ? `
+        ${allowWelcomeChoice ? `
           <div id="proofModeWrap" style="
             display: grid;
             gap: 0.85rem;
