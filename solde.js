@@ -1013,9 +1013,6 @@ function ensureSoldeModal() {
       <div id="soldeWelcomeBonusWrap" class="mt-4 hidden rounded-2xl border border-amber-300/25 bg-[linear-gradient(180deg,rgba(245,158,11,0.16),rgba(251,113,133,0.12))] p-4 text-white shadow-[10px_12px_24px_rgba(82,38,10,0.24)]">
         <p class="text-[11px] font-semibold uppercase tracking-[0.18em] text-amber-200">Nouveau compte</p>
         <h4 class="mt-2 text-lg font-bold text-white">Prendre mon bonus ${WELCOME_BONUS_HTG} HTG</h4>
-        <p class="mt-2 text-sm leading-6 text-white/85">
-          Ce chemin est séparé du dépôt normal pour éviter toute confusion avec un montant libre.
-        </p>
         <button id="soldeWelcomeBonusBtn" type="button" class="mt-4 h-12 w-full rounded-2xl border border-amber-200/35 bg-white/12 text-sm font-semibold text-white shadow-[8px_10px_20px_rgba(78,38,8,0.2)]">
           Recevoir mon bonus ${WELCOME_BONUS_HTG} HTG
         </button>
