@@ -14,8 +14,9 @@ import {
   joinFriendRoomByCodeSecure,
   getActiveSurveyForUserSecure,
   submitSurveyResponseSecure,
+  ackClientFinanceNoticeSecure,
 } from "./secure-functions.js";
-import { auth, db, collection, query, orderBy, limit, doc, getDoc, getDocs, setDoc, serverTimestamp } from "./firebase-init.js";
+import { auth, db, collection, query, orderBy, limit, doc, getDoc, getDocs, setDoc, serverTimestamp, onSnapshot } from "./firebase-init.js";
 
 const CHAT_COLLECTION = "globalChannelMessages";
 const SUPPORT_THREADS_COLLECTION = "supportThreads";
@@ -31,6 +32,7 @@ const SHARE_SITE_PROMO_REWARD_DOES = 100;
 const SHARE_SITE_PROMO_LINK = "https://dominoeslakay.com";
 const SHARE_SITE_PROMO_TITLE = "Dominoes Lakay";
 const SHARE_SITE_PROMO_TEXT = "Viens jouer au domino avec moi et gagne de l'argent. 25 Gdes gratuit comme prime d'inscription.";
+const CLIENT_FINANCE_NOTICE_LAUNCH_MS = Date.parse("2026-03-23T00:00:00Z");
 const DEFAULT_GAME_STAKE_OPTIONS = Object.freeze([
   Object.freeze({ id: "stake_100", stakeDoes: 100, rewardDoes: 300, enabled: true, sortOrder: 10 }),
   Object.freeze({ id: "stake_500", stakeDoes: 500, rewardDoes: 1500, enabled: false, sortOrder: 20 }),
@@ -52,6 +54,13 @@ let soldeUiReadyRunId = 0;
 let soldeUiReadyPromise = null;
 let page2HeroRotationTimer = null;
 let page2SharePromoCountdownTimer = null;
+let page2FinanceNoticeUid = "";
+let page2FinanceNoticeUnsubs = [];
+let page2FinanceOrderDocs = [];
+let page2FinanceWithdrawalDocs = [];
+let page2FinanceNoticeQueue = [];
+let page2FinanceNoticeActive = null;
+const page2FinanceNoticeSessionSeen = new Set();
 const PAGE2_PRESENCE_PING_MS = 10 * 60 * 1000;
 const PAGE2_NON_CRITICAL_REFRESH_MS = 2 * 60 * 1000;
 
@@ -443,6 +452,21 @@ function stopPage2ChatWatchers() {
   page2NonCriticalUid = "";
 }
 
+function stopPage2FinanceNoticeWatchers() {
+  page2FinanceNoticeUnsubs.forEach((unsubscribe) => {
+    try {
+      unsubscribe?.();
+    } catch (_) {
+    }
+  });
+  page2FinanceNoticeUnsubs = [];
+  page2FinanceNoticeUid = "";
+  page2FinanceOrderDocs = [];
+  page2FinanceWithdrawalDocs = [];
+  page2FinanceNoticeQueue = [];
+  page2FinanceNoticeActive = null;
+}
+
 async function refreshDiscussionFabState(user) {
   const badge = document.getElementById("discussionFabBadge");
   const uid = String(user?.uid || "");
@@ -546,6 +570,238 @@ function tsToMs(value) {
   if (typeof value.seconds === "number") return value.seconds * 1000;
   const parsed = Date.parse(String(value));
   return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function formatFinanceAmountHtg(value = 0) {
+  const amount = Number(value) || 0;
+  if (!Number.isFinite(amount) || amount <= 0) return "0 HTG";
+  const rounded = Math.round(amount * 100) / 100;
+  const formatted = Number.isInteger(rounded)
+    ? String(rounded)
+    : rounded.toLocaleString("fr-FR", { minimumFractionDigits: 0, maximumFractionDigits: 2 });
+  return `${formatted} HTG`;
+}
+
+function getFinanceNoticeEventMs(data = {}) {
+  const candidates = [
+    data.clientStatusNoticeEventAtMs,
+    data.reviewResolvedAtMs,
+    data.withdrawalApprovedAtMs,
+    data.withdrawalRejectedAtMs,
+    data.approvedAtMs,
+    data.rejectedAtMs,
+    data.fundingSettledAtMs,
+    data.updatedAtMs,
+    tsToMs(data.updatedAt),
+    data.createdAtMs,
+    tsToMs(data.createdAt),
+  ];
+  for (const candidate of candidates) {
+    const numeric = Number(candidate) || 0;
+    if (numeric > 0) return numeric;
+  }
+  return 0;
+}
+
+function getFinanceNoticeAmountHtg(kind, data = {}) {
+  if (kind === "withdrawal") {
+    return Number(
+      data.requestedAmountHtg
+      ?? data.amountHtg
+      ?? data.amount
+      ?? 0,
+    ) || 0;
+  }
+  return Number(
+    data.approvedAmountHtg
+    ?? data.convertedAmountHtg
+    ?? data.amountHtg
+    ?? data.amount
+    ?? 0,
+  ) || 0;
+}
+
+function buildFinanceNotice(kind, id, data = {}) {
+  const status = String(data.status || "").trim().toLowerCase();
+  if (status !== "approved" && status !== "rejected") return null;
+  if (data.userHiddenByClient === true) return null;
+
+  const eventMs = getFinanceNoticeEventMs(data);
+  if (!(eventMs >= CLIENT_FINANCE_NOTICE_LAUNCH_MS)) return null;
+
+  const noticeKey = `${kind}:${id}:${status}:${eventMs}`;
+  if (String(data.clientStatusNoticeSeenKey || "").trim() === noticeKey) return null;
+
+  const amountLabel = formatFinanceAmountHtg(getFinanceNoticeAmountHtg(kind, data));
+  const isApproved = status === "approved";
+  const isWithdrawal = kind === "withdrawal";
+  const title = isWithdrawal
+    ? (isApproved ? "Ton retrait est approuvé" : "Ton retrait a été refusé")
+    : (isApproved ? "Ton dépôt est approuvé" : "Ton dépôt a été refusé");
+  const body = isWithdrawal
+    ? (isApproved
+      ? `Ta demande de retrait de ${amountLabel} a été validée.`
+      : `Ta demande de retrait de ${amountLabel} n'a pas été validée.`)
+    : (isApproved
+      ? `Ton dépôt de ${amountLabel} a été approuvé et ajouté à ton compte.`
+      : `Ton dépôt de ${amountLabel} n'a pas été approuvé.`);
+  const reason = String(
+    data.reviewReason
+    || data.rejectionReason
+    || data.adminNote
+    || data.reason
+    || "",
+  ).trim();
+
+  return {
+    kind,
+    id,
+    status,
+    eventMs,
+    noticeKey,
+    amountLabel,
+    title,
+    body,
+    reason,
+    accentClass: isApproved
+      ? "border-emerald-300/35 bg-emerald-500/18 text-emerald-100"
+      : "border-rose-300/35 bg-rose-500/18 text-rose-100",
+    iconClass: isApproved
+      ? "fa-solid fa-badge-check"
+      : "fa-solid fa-circle-exclamation",
+  };
+}
+
+function rebuildPage2FinanceNoticeQueue() {
+  const candidates = [
+    ...page2FinanceOrderDocs.map((item) => buildFinanceNotice("order", item.id, item.data)),
+    ...page2FinanceWithdrawalDocs.map((item) => buildFinanceNotice("withdrawal", item.id, item.data)),
+  ]
+    .filter(Boolean)
+    .filter((item) => !page2FinanceNoticeSessionSeen.has(item.noticeKey))
+    .filter((item) => item.noticeKey !== page2FinanceNoticeActive?.noticeKey)
+    .sort((left, right) => left.eventMs - right.eventMs);
+
+  page2FinanceNoticeQueue = candidates;
+}
+
+function setPage2FinanceNoticeOpen(isOpen) {
+  const overlay = document.getElementById("financeNoticeOverlay");
+  if (!overlay) return;
+  overlay.classList.toggle("hidden", !isOpen);
+  overlay.classList.toggle("flex", isOpen);
+  if (!isOpen) {
+    if (
+      document.getElementById("sharePromoOverlay")?.classList.contains("hidden")
+      && document.getElementById("sharePromoSuccessOverlay")?.classList.contains("hidden")
+      && document.getElementById("stakeSelectionOverlay")?.classList.contains("hidden")
+      && document.getElementById("friendModeOverlay")?.classList.contains("hidden")
+      && document.getElementById("friendCreateOverlay")?.classList.contains("hidden")
+      && document.getElementById("friendJoinOverlay")?.classList.contains("hidden")
+      && document.getElementById("friendCodeOverlay")?.classList.contains("hidden")
+      && document.getElementById("doesRequiredOverlay")?.classList.contains("hidden")
+      && document.getElementById("surveyPromptOverlay")?.classList.contains("hidden")
+      && document.getElementById("tournamentIntroOverlay")?.classList.contains("hidden")
+    ) {
+      document.body.classList.remove("overflow-hidden");
+    }
+    return;
+  }
+  document.body.classList.add("overflow-hidden");
+}
+
+function renderPage2FinanceNotice() {
+  const notice = page2FinanceNoticeActive;
+  const badge = document.getElementById("financeNoticeBadge");
+  const icon = document.getElementById("financeNoticeIcon");
+  const title = document.getElementById("financeNoticeTitle");
+  const body = document.getElementById("financeNoticeBody");
+  const amount = document.getElementById("financeNoticeAmount");
+  const reasonWrap = document.getElementById("financeNoticeReasonWrap");
+  const reasonText = document.getElementById("financeNoticeReasonText");
+
+  if (!notice || !badge || !icon || !title || !body || !amount || !reasonWrap || !reasonText) {
+    setPage2FinanceNoticeOpen(false);
+    return;
+  }
+
+  badge.className = `inline-flex w-fit rounded-full border px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.18em] ${notice.accentClass}`;
+  badge.textContent = notice.kind === "withdrawal" ? "Retrait" : "Dépôt";
+  icon.className = `${notice.iconClass} text-[22px]`;
+  title.textContent = notice.title;
+  body.textContent = notice.body;
+  amount.textContent = notice.amountLabel;
+  reasonWrap.classList.toggle("hidden", !notice.reason);
+  reasonText.textContent = notice.reason || "";
+  setPage2FinanceNoticeOpen(true);
+}
+
+function maybeShowNextPage2FinanceNotice() {
+  if (page2FinanceNoticeActive) {
+    renderPage2FinanceNotice();
+    return;
+  }
+  if (!page2FinanceNoticeQueue.length) {
+    setPage2FinanceNoticeOpen(false);
+    return;
+  }
+  page2FinanceNoticeActive = page2FinanceNoticeQueue.shift() || null;
+  renderPage2FinanceNotice();
+}
+
+async function acknowledgeActivePage2FinanceNotice() {
+  const activeNotice = page2FinanceNoticeActive;
+  if (!activeNotice) {
+    setPage2FinanceNoticeOpen(false);
+    return;
+  }
+
+  page2FinanceNoticeSessionSeen.add(activeNotice.noticeKey);
+  page2FinanceNoticeActive = null;
+  setPage2FinanceNoticeOpen(false);
+
+  try {
+    await ackClientFinanceNoticeSecure({
+      kind: activeNotice.kind,
+      id: activeNotice.id,
+      status: activeNotice.status,
+      noticeKey: activeNotice.noticeKey,
+    });
+  } catch (error) {
+    console.warn("[PAGE2] finance notice ack failed", error);
+  } finally {
+    rebuildPage2FinanceNoticeQueue();
+    maybeShowNextPage2FinanceNotice();
+  }
+}
+
+function startPage2FinanceNoticeWatchers(user) {
+  const uid = String(user?.uid || "");
+  stopPage2FinanceNoticeWatchers();
+  if (!uid) return;
+
+  page2FinanceNoticeUid = uid;
+  const clientRef = doc(db, "clients", uid);
+  const ordersRef = collection(clientRef, "orders");
+  const withdrawalsRef = collection(clientRef, "withdrawals");
+
+  page2FinanceNoticeUnsubs.push(onSnapshot(ordersRef, (snap) => {
+    if (page2FinanceNoticeUid !== String(auth.currentUser?.uid || uid)) return;
+    page2FinanceOrderDocs = snap.docs.map((item) => ({ id: item.id, data: item.data() || {} }));
+    rebuildPage2FinanceNoticeQueue();
+    maybeShowNextPage2FinanceNotice();
+  }, (error) => {
+    console.error("Erreur écoute notifications dépôts:", error);
+  }));
+
+  page2FinanceNoticeUnsubs.push(onSnapshot(withdrawalsRef, (snap) => {
+    if (page2FinanceNoticeUid !== String(auth.currentUser?.uid || uid)) return;
+    page2FinanceWithdrawalDocs = snap.docs.map((item) => ({ id: item.id, data: item.data() || {} }));
+    rebuildPage2FinanceNoticeQueue();
+    maybeShowNextPage2FinanceNotice();
+  }, (error) => {
+    console.error("Erreur écoute notifications retraits:", error);
+  }));
 }
 
 function consumeAuthSuccessNotice() {
@@ -670,6 +926,7 @@ function initAgentSupportAlert(user) {
 
 export function renderPage2(user, options = {}) {
   stopPage2ChatWatchers();
+  stopPage2FinanceNoticeWatchers();
   stopPage2HeroRotation();
   if (page2SharePromoCountdownTimer) {
     window.clearInterval(page2SharePromoCountdownTimer);
@@ -863,6 +1120,32 @@ export function renderPage2(user, options = {}) {
           <p id="sharePromoSuccessCooldown" class="mt-2 text-sm font-semibold text-[#ffd7b2]">Disponible de nouveau dans 3 jours</p>
         </div>
         <button id="sharePromoSuccessCloseBtn" type="button" class="mt-5 h-12 w-full rounded-[18px] border border-[#ffb26e] bg-[#F57C00] text-sm font-semibold text-white shadow-[9px_9px_20px_rgba(155,78,25,0.45),-7px_-7px_16px_rgba(255,173,96,0.2)] transition hover:-translate-y-0.5">
+          Compris
+        </button>
+      </div>
+    </div>
+  `);
+
+  pageShell.insertAdjacentHTML("beforeend", `
+    <div id="financeNoticeOverlay" class="fixed inset-0 z-[3459] hidden items-end justify-center bg-[#12192b]/72 px-[max(12px,env(safe-area-inset-left))] pb-[max(12px,env(safe-area-inset-bottom))] pt-[max(12px,env(safe-area-inset-top))] backdrop-blur-sm sm:items-center sm:px-4 sm:py-4">
+      <div id="financeNoticePanel" class="w-full rounded-[28px] border border-white/15 bg-[linear-gradient(180deg,rgba(82,94,132,0.98),rgba(55,65,95,0.98))] px-4 pb-[max(1rem,env(safe-area-inset-bottom))] pt-5 text-white shadow-[0_-16px_38px_rgba(12,18,31,0.42)] sm:max-w-md sm:rounded-[30px] sm:border-white/20 sm:px-6 sm:pb-6 sm:pt-6 sm:shadow-[14px_14px_34px_rgba(16,23,40,0.5),-10px_-10px_24px_rgba(112,126,165,0.2)]">
+        <div class="mx-auto flex h-14 w-14 items-center justify-center rounded-[20px] border border-white/18 bg-white/10 text-[#ffe1c4] shadow-[inset_4px_4px_10px_rgba(20,28,45,0.42),inset_-4px_-4px_10px_rgba(123,137,180,0.18)]">
+          <i id="financeNoticeIcon" class="fa-solid fa-badge-check text-[22px]"></i>
+        </div>
+        <div class="mt-4 flex justify-center">
+          <span id="financeNoticeBadge" class="inline-flex w-fit rounded-full border border-emerald-300/35 bg-emerald-500/18 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.18em] text-emerald-100">Dépôt</span>
+        </div>
+        <h3 id="financeNoticeTitle" class="mt-4 text-center text-[1.28rem] font-bold leading-tight sm:text-[1.45rem]">Ton dépôt est approuvé</h3>
+        <p id="financeNoticeBody" class="mt-3 text-center text-sm leading-6 text-white/88">Ton opération a bien été traitée.</p>
+        <div class="mt-4 rounded-[22px] border border-white/12 bg-white/8 p-4 text-center shadow-[inset_4px_4px_10px_rgba(20,28,45,0.28),inset_-4px_-4px_10px_rgba(123,137,180,0.08)]">
+          <p class="text-xs font-semibold uppercase tracking-[0.18em] text-white/56">Montant</p>
+          <p id="financeNoticeAmount" class="mt-2 text-lg font-semibold text-[#ffd7b2]">0 HTG</p>
+        </div>
+        <div id="financeNoticeReasonWrap" class="mt-4 hidden rounded-[22px] border border-white/12 bg-white/8 p-4 text-left shadow-[inset_4px_4px_10px_rgba(20,28,45,0.28),inset_-4px_-4px_10px_rgba(123,137,180,0.08)]">
+          <p class="text-xs font-semibold uppercase tracking-[0.18em] text-white/56">Détail</p>
+          <p id="financeNoticeReasonText" class="mt-2 text-sm leading-6 text-white/82"></p>
+        </div>
+        <button id="financeNoticeCloseBtn" type="button" class="mt-5 h-12 w-full rounded-[18px] border border-[#ffb26e] bg-[#F57C00] text-sm font-semibold text-white shadow-[9px_9px_20px_rgba(155,78,25,0.45),-7px_-7px_16px_rgba(255,173,96,0.2)] transition hover:-translate-y-0.5">
           Compris
         </button>
       </div>
@@ -1178,6 +1461,9 @@ export function renderPage2(user, options = {}) {
   const surveyPromptSubmitBtn = document.getElementById("surveyPromptSubmitBtn");
   const surveyPromptDismissBtn = document.getElementById("surveyPromptDismissBtn");
   const surveyPromptCloseBtn = document.getElementById("surveyPromptCloseBtn");
+  const financeNoticeOverlay = document.getElementById("financeNoticeOverlay");
+  const financeNoticePanel = document.getElementById("financeNoticePanel");
+  const financeNoticeCloseBtn = document.getElementById("financeNoticeCloseBtn");
   const page2FrozenBanner = document.getElementById("page2FrozenBanner");
   const page2FrozenBannerText = document.getElementById("page2FrozenBannerText");
   let sharePromoState = null;
@@ -2280,6 +2566,24 @@ export function renderPage2(user, options = {}) {
     });
   }
 
+  if (financeNoticeCloseBtn) {
+    financeNoticeCloseBtn.addEventListener("click", () => {
+      void acknowledgeActivePage2FinanceNotice();
+    });
+  }
+  if (financeNoticeOverlay) {
+    financeNoticeOverlay.addEventListener("click", (event) => {
+      if (event.target === financeNoticeOverlay) {
+        void acknowledgeActivePage2FinanceNotice();
+      }
+    });
+  }
+  if (financeNoticePanel) {
+    financeNoticePanel.addEventListener("click", (event) => {
+      event.stopPropagation();
+    });
+  }
+
   bindDeferredModalTrigger(soldBadgeBtn, () => ensureSoldeUiReady("#soldBadge"), "Chargement du solde...");
   applyPage2AccountState({});
 
@@ -2298,6 +2602,7 @@ export function renderPage2(user, options = {}) {
     initDiscussionFab(effectiveUser);
     initAgentSupportAlert(effectiveUser);
     startPage2NonCriticalPolling(effectiveUser);
+    startPage2FinanceNoticeWatchers(effectiveUser);
   }, 460);
   void runPage2BootstrapFlow({
     runId,

@@ -108,6 +108,10 @@ export async function orderClientActionSecure(payload = {}) {
   return invokeCallable("orderClientActionSecure", payload, "Impossible de mettre à jour la demande.");
 }
 
+export async function ackClientFinanceNoticeSecure(payload = {}) {
+  return invokeCallable("ackClientFinanceNoticeSecure", payload, "Impossible de marquer la notification comme lue.");
+}
+
 export async function getPublicPaymentOptionsSecure(payload = {}) {
   return invokeCallable("getPublicPaymentOptionsSecure", payload, "Impossible de charger les options de paiement.");
 }

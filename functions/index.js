@@ -8216,6 +8216,40 @@ exports.orderClientActionSecure = publicOnCall("orderClientActionSecure", async 
   return { ok: true };
 });
 
+exports.ackClientFinanceNoticeSecure = publicOnCall("ackClientFinanceNoticeSecure", async (request) => {
+  const { uid } = assertAuth(request);
+  const payload = request.data && typeof request.data === "object" ? request.data : {};
+  const kind = String(payload.kind || "").trim();
+  const id = sanitizeText(payload.id || "", 160);
+  const noticeKey = sanitizeText(payload.noticeKey || "", 240);
+  const status = sanitizeText(payload.status || "", 80);
+
+  if (!id || !noticeKey || (kind !== "order" && kind !== "withdrawal")) {
+    throw new HttpsError("invalid-argument", "Accusé de notification invalide.");
+  }
+
+  const subcollection = kind === "withdrawal" ? "withdrawals" : "orders";
+  const ref = db.collection(CLIENTS_COLLECTION).doc(uid).collection(subcollection).doc(id);
+  const nowIso = new Date().toISOString();
+  const nowMs = Date.now();
+
+  await ref.set({
+    clientStatusNoticeSeenKey: noticeKey,
+    clientStatusNoticeSeenStatus: status || "",
+    clientStatusNoticeSeenAt: nowIso,
+    clientStatusNoticeSeenAtMs: nowMs,
+    updatedAt: nowIso,
+  }, { merge: true });
+
+  return {
+    ok: true,
+    kind,
+    id,
+    noticeKey,
+    seenAtMs: nowMs,
+  };
+});
+
 exports.getDepositFundingStatusSecure = publicOnCall("getDepositFundingStatusSecure", async (request) => {
   const { uid } = assertAuth(request);
   const [ordersSnap, withdrawalsSnap, walletSnap, xchangesSnap] = await Promise.all([
