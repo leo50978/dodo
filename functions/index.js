@@ -658,6 +658,7 @@ function buildWalletFundingSnapshot({
   exchangeHistory = [],
 } = {}) {
   const normalizedOrders = Array.isArray(orders) ? orders : [];
+  const normalizedExchangeHistory = Array.isArray(exchangeHistory) ? exchangeHistory : [];
   const approvedDepositsHtg = normalizedOrders.reduce(
     (sum, item) => sum + getOrderApprovedRealAmountHtg(item),
     0
@@ -693,16 +694,32 @@ function buildWalletFundingSnapshot({
   );
   const pendingPlayFromXchangeDoes = safeInt(walletData.pendingPlayFromXchangeDoes);
   const pendingPlayFromReferralDoes = safeInt(walletData.pendingPlayFromReferralDoes);
-  const pendingPlayFromWelcomeDoes = safeInt(walletData.pendingPlayFromWelcomeDoes);
   const welcomeBonusHtgAvailable = safeInt(walletData.welcomeBonusHtgAvailable);
   const welcomeBonusHtgConverted = safeInt(walletData.welcomeBonusHtgConverted);
-  const welcomePlayedDoesFromHistory = (Array.isArray(exchangeHistory) ? exchangeHistory : []).reduce((sum, item) => {
+  const hasRealApprovedDeposit = hasRealApprovedDepositFromOrders(normalizedOrders);
+  const onlyWelcomeLockedContext = !hasRealApprovedDeposit
+    && welcomeBonusHtgConverted > 0
+    && pendingPlayFromXchangeDoes <= 0
+    && pendingPlayFromReferralDoes <= 0;
+  const welcomePlayedDoesFromHistory = normalizedExchangeHistory.reduce((sum, item) => {
     if (String(item?.type || "").trim() !== "game_entry") return sum;
-    return sum + safeInt(item?.gameEntryFunding?.welcomeDoes);
+    const explicitWelcomeDoes = safeInt(item?.gameEntryFunding?.welcomeDoes);
+    if (explicitWelcomeDoes > 0) return sum + explicitWelcomeDoes;
+    if (!onlyWelcomeLockedContext) return sum;
+    const inferredAmountDoes = Math.min(
+      safeInt(item?.amountDoes),
+      safeInt(item?.beforePendingPlayFromWelcomeDoes)
+    );
+    return sum + Math.max(0, inferredAmountDoes);
   }, 0);
   const welcomeBonusHtgPlayed = Math.max(
     safeInt(walletData.welcomeBonusHtgPlayed),
     Math.floor(welcomePlayedDoesFromHistory / RATE_HTG_TO_DOES)
+  );
+  const pendingPlayFromWelcomeDoes = safeInt(
+    onlyWelcomeLockedContext
+      ? approvedDoesBalance
+      : walletData.pendingPlayFromWelcomeDoes
   );
   const pendingPlayTotalDoes = pendingPlayFromXchangeDoes + pendingPlayFromReferralDoes + pendingPlayFromWelcomeDoes;
   const exchangeableDoesAvailable = safeInt(
@@ -740,8 +757,8 @@ function buildWalletFundingSnapshot({
     pendingPlayFromReferralDoes,
     pendingPlayFromWelcomeDoes,
     pendingPlayTotalDoes,
-    hasRealApprovedDeposit: hasRealApprovedDepositFromOrders(normalizedOrders),
-    hasApprovedDeposit: hasRealApprovedDepositFromOrders(normalizedOrders),
+    hasRealApprovedDeposit,
+    hasApprovedDeposit: hasRealApprovedDeposit,
   };
 }
 
@@ -3577,7 +3594,7 @@ async function applyWalletMutationTx(tx, options) {
   let beforeExchanged = safeSignedInt(data.exchangedGourdes);
   const beforePendingFromXchange = safeInt(data.pendingPlayFromXchangeDoes);
   const beforePendingFromReferral = safeInt(data.pendingPlayFromReferralDoes);
-  const beforePendingFromWelcome = safeInt(data.pendingPlayFromWelcomeDoes);
+  let beforePendingFromWelcome = safeInt(data.pendingPlayFromWelcomeDoes);
   let beforeTotalExchangedEver = safeInt(data.totalExchangedHtgEver);
   const beforeProvisionalDoes = safeInt(data.doesProvisionalBalance);
   const beforeApprovedDoes = safeInt(
@@ -3587,14 +3604,7 @@ async function applyWalletMutationTx(tx, options) {
   );
   const beforeWelcomeBonusHtgAvailable = safeInt(data.welcomeBonusHtgAvailable);
   const beforeWelcomeBonusHtgConverted = safeInt(data.welcomeBonusHtgConverted);
-  const beforeWelcomeBonusHtgPlayed = safeInt(data.welcomeBonusHtgPlayed);
-  const beforePendingPlayTotal = beforePendingFromXchange + beforePendingFromReferral + beforePendingFromWelcome;
-  const beforeExchangeableDoes = safeInt(
-    typeof data.exchangeableDoesAvailable === "number"
-      ? Math.min(data.exchangeableDoesAvailable, beforeApprovedDoes)
-      : (beforePendingPlayTotal <= 0 ? beforeApprovedDoes : 0)
-  );
-
+  let beforeWelcomeBonusHtgPlayed = safeInt(data.welcomeBonusHtgPlayed);
   let afterApprovedDoes = beforeApprovedDoes;
   let afterProvisionalDoes = beforeProvisionalDoes;
   let afterExchanged = safeSignedInt(beforeExchanged + deltaExchangedGourdes);
@@ -3642,6 +3652,40 @@ async function applyWalletMutationTx(tx, options) {
     cachedExchangeHistory = historySnap.docs.map((item) => item.data() || {});
     return cachedExchangeHistory;
   };
+
+  if (beforeWelcomeBonusHtgConverted > 0) {
+    const [allOrders, exchangeHistory] = await Promise.all([
+      loadAllOrders(),
+      loadExchangeHistory(),
+    ]);
+    const hasRealApprovedDeposit = hasRealApprovedDepositFromOrders(allOrders.map((item) => item.data || {}));
+    const onlyWelcomeLockedContext = !hasRealApprovedDeposit
+      && beforePendingFromXchange <= 0
+      && beforePendingFromReferral <= 0;
+    if (onlyWelcomeLockedContext) {
+      beforePendingFromWelcome = Math.max(0, beforeApprovedDoes);
+      const inferredWelcomePlayedDoes = exchangeHistory.reduce((sum, item) => {
+        if (String(item?.type || "").trim() !== "game_entry") return sum;
+        const explicitWelcomeDoes = safeInt(item?.gameEntryFunding?.welcomeDoes);
+        if (explicitWelcomeDoes > 0) return sum + explicitWelcomeDoes;
+        const inferredAmountDoes = Math.min(
+          safeInt(item?.amountDoes),
+          safeInt(item?.beforePendingPlayFromWelcomeDoes)
+        );
+        return sum + Math.max(0, inferredAmountDoes);
+      }, 0);
+      beforeWelcomeBonusHtgPlayed = Math.max(
+        beforeWelcomeBonusHtgPlayed,
+        Math.floor(inferredWelcomePlayedDoes / RATE_HTG_TO_DOES)
+      );
+    }
+  }
+  const beforePendingPlayTotal = beforePendingFromXchange + beforePendingFromReferral + beforePendingFromWelcome;
+  const beforeExchangeableDoes = safeInt(
+    typeof data.exchangeableDoesAvailable === "number"
+      ? Math.min(data.exchangeableDoesAvailable, beforeApprovedDoes)
+      : (beforePendingPlayTotal <= 0 ? beforeApprovedDoes : 0)
+  );
 
   const consumeProvisionalHtgForConversion = async (requestedAmountHtg = 0) => {
     const remainingTarget = safeInt(requestedAmountHtg);
@@ -8297,7 +8341,11 @@ exports.resolveDepositReviewSecure = publicOnCall("resolveDepositReviewSecure", 
     );
     const beforePendingFromXchange = safeInt(walletData.pendingPlayFromXchangeDoes);
     const beforePendingFromReferral = safeInt(walletData.pendingPlayFromReferralDoes);
-    const beforePendingFromWelcome = safeInt(walletData.pendingPlayFromWelcomeDoes);
+    let beforePendingFromWelcome = safeInt(walletData.pendingPlayFromWelcomeDoes);
+    const hasRealApprovedDepositBefore = hasRealApprovedDepositFromOrders(ordersSnap.docs.map((item) => item.data() || {}));
+    if (!hasRealApprovedDepositBefore && safeInt(walletData.welcomeBonusHtgConverted) > 0 && beforePendingFromXchange <= 0 && beforePendingFromReferral <= 0) {
+      beforePendingFromWelcome = Math.max(0, beforeApprovedDoes);
+    }
     const beforePendingPlayTotal = beforePendingFromXchange + beforePendingFromReferral + beforePendingFromWelcome;
     const beforeExchangeableDoes = safeInt(
       typeof walletData.exchangeableDoesAvailable === "number"
