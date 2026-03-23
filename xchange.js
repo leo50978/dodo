@@ -55,6 +55,7 @@ function defaultWallet() {
     pendingPlayFromReferralDoes: 0,
     pendingPlayFromWelcomeDoes: 0,
     totalExchangedHtgEver: 0,
+    hasRealApprovedDeposit: false,
     loaded: false,
   };
 }
@@ -118,6 +119,7 @@ function setCachedWallet(uid, data, loaded = true) {
     pendingPlayFromReferralDoes: safeInt(data?.pendingPlayFromReferralDoes),
     pendingPlayFromWelcomeDoes: safeInt(data?.pendingPlayFromWelcomeDoes),
     totalExchangedHtgEver: safeInt(data?.totalExchangedHtgEver),
+    hasRealApprovedDeposit: data?.hasRealApprovedDeposit === true,
     loaded,
   });
 }
@@ -155,6 +157,7 @@ async function syncWalletFundingState(uid = currentUid()) {
       pendingPlayFromReferralDoes: safeInt(funding?.pendingPlayFromReferralDoes),
       pendingPlayFromWelcomeDoes: safeInt(funding?.pendingPlayFromWelcomeDoes),
       totalExchangedHtgEver: safeInt(funding?.totalExchangedApprovedHtg),
+      hasRealApprovedDeposit: funding?.hasRealApprovedDeposit === true,
     }, true);
     return emitXchangeUpdated(safeUid);
   } catch (error) {
@@ -253,6 +256,7 @@ async function applyWalletMutation({ uid, deltaDoes = 0, deltaExchangedGourdes =
       welcomeBonusHtgConverted: nextWelcomeBonusHtgConverted,
       welcomeBonusHtgPlayed: nextWelcomeBonusHtgPlayed,
       totalExchangedHtgEver: nextTotalExchanged,
+      hasRealApprovedDeposit: getCachedWallet(uid).hasRealApprovedDeposit === true,
     }, true);
     if (BALANCE_DEBUG) {
       console.log("[BALANCE_DEBUG][XCHANGE] applyWalletMutation success", {
@@ -360,9 +364,34 @@ export function getXchangeState(balance = 0, uid = currentUid()) {
     pendingPlayFromWelcomeDoes: safeInt(wallet.pendingPlayFromWelcomeDoes),
     pendingPlayTotalDoes: safeInt(wallet.pendingPlayFromXchangeDoes) + safeInt(wallet.pendingPlayFromReferralDoes) + safeInt(wallet.pendingPlayFromWelcomeDoes),
     totalExchangedHtgEver: safeInt(wallet.totalExchangedHtgEver),
+    hasRealApprovedDeposit: wallet.hasRealApprovedDeposit === true,
     rate: RATE_HTG_TO_DOES,
     loaded: wallet.loaded === true,
   };
+}
+
+function updateWelcomeLockUi(overlay, state) {
+  const noticeEl = overlay?.querySelector("#xchangeWelcomeLockNotice");
+  const titleEl = overlay?.querySelector("#xchangeWelcomeLockTitle");
+  const bodyEl = overlay?.querySelector("#xchangeWelcomeLockBody");
+  const inlineLineEl = overlay?.querySelector("#xchangeLockedWelcomeDoesLine");
+  const inlineValueEl = overlay?.querySelector("#xchangeLockedWelcomeDoes");
+  if (!noticeEl || !titleEl || !bodyEl || !inlineLineEl || !inlineValueEl) return;
+
+  const blockedWelcomeDoes = safeInt(state?.pendingPlayFromWelcomeDoes);
+  const showNotice = blockedWelcomeDoes > 0 && state?.hasRealApprovedDeposit !== true;
+
+  if (!showNotice) {
+    noticeEl.classList.add("hidden");
+    inlineLineEl.classList.add("hidden");
+    return;
+  }
+
+  titleEl.textContent = "Does bonus temporairement bloques";
+  bodyEl.textContent = `${blockedWelcomeDoes} Does issus du bonus bienvenue sont bloques jusqu'a l'approbation de ton premier depot reel.`;
+  inlineValueEl.textContent = String(blockedWelcomeDoes);
+  inlineLineEl.classList.remove("hidden");
+  noticeEl.classList.remove("hidden");
 }
 
 export function getDoesBalance(uid = currentUid()) {
@@ -504,6 +533,12 @@ function ensureXchangeModal() {
         <p>1 Gourde = <span class="font-semibold text-white">20 Does</span></p>
         <p class="mt-1">Solde HTG: <span id="xchangeAvailableHtg" class="font-semibold text-white">0</span> HTG</p>
         <p class="mt-1">Solde Does: <span id="xchangeAvailableDoes" class="font-semibold text-white">0</span> Does</p>
+        <p id="xchangeLockedWelcomeDoesLine" class="mt-1 hidden text-[#ffd89a]">Does bonus bloques: <span id="xchangeLockedWelcomeDoes" class="font-semibold text-[#fff3d1]">0</span> Does</p>
+      </div>
+
+      <div id="xchangeWelcomeLockNotice" class="mt-4 hidden rounded-2xl border border-[#f6c177]/40 bg-[#5b4020]/55 p-4 text-sm text-[#fff5df] shadow-[inset_6px_6px_12px_rgba(48,31,10,0.28),inset_-4px_-4px_10px_rgba(146,107,54,0.1)]">
+        <p id="xchangeWelcomeLockTitle" class="font-semibold text-[#ffd89a]">Does bonus temporairement bloques</p>
+        <p id="xchangeWelcomeLockBody" class="mt-1 text-[#fff1d4]"></p>
       </div>
 
       <div class="mt-4 grid grid-cols-2 gap-2 rounded-2xl border border-white/20 bg-white/10 p-2">
@@ -594,6 +629,7 @@ function ensureXchangeModal() {
     }
     if (availableHtgEl) availableHtgEl.textContent = String(safeState.availableGourdes);
     if (availableDoesEl) availableDoesEl.textContent = String(safeState.does || 0);
+    updateWelcomeLockUi(overlay, safeState);
   };
 
   const refreshPreview = () => {
@@ -625,6 +661,7 @@ function ensureXchangeModal() {
     }
     if (availableHtgEl) availableHtgEl.textContent = String(state.availableGourdes);
     if (availableDoesEl) availableDoesEl.textContent = String(state.does || 0);
+    updateWelcomeLockUi(overlay, state);
     if (amountInput) amountInput.value = "";
     if (errorEl) errorEl.textContent = "";
     setModeUi("buy", state);
@@ -724,17 +761,28 @@ function ensureXchangeModal() {
             if (res.code === "play-required-before-sell") {
               const pendingFromXchange = safeInt(res.pendingPlayFromXchangeDoes);
               const pendingFromReferral = safeInt(res.pendingPlayFromReferralDoes);
-              const pendingTotal = safeInt(res.pendingPlayTotalDoes || (pendingFromXchange + pendingFromReferral));
+              const pendingFromWelcome = safeInt(res.pendingPlayFromWelcomeDoes);
+              const pendingTotal = safeInt(res.pendingPlayTotalDoes || (pendingFromXchange + pendingFromReferral + pendingFromWelcome));
               const exchangeableDoesAvailable = safeInt(res.exchangeableDoesAvailable);
+              const lines = [
+                `Reste a jouer (Does achetes): ${pendingFromXchange} Does`,
+                `Reste a jouer (bonus parrainage): ${pendingFromReferral} Does`,
+              ];
+              if (pendingFromWelcome > 0) {
+                lines.push(`Bloques jusqu'au premier depot approuve: ${pendingFromWelcome} Does`);
+              }
+              lines.push(`Total encore bloque: ${pendingTotal} Does`);
+              lines.push(
+                pendingFromWelcome > 0
+                  ? "Fais approuver un vrai depot pour debloquer les Does issus du bonus bienvenue."
+                  : "Joue des parties pour debloquer plus de reconversion."
+              );
               showXchangeRuleModal({
                 title: "Conversion bloquée",
-                message: `Tu peux reconvertir ${exchangeableDoesAvailable} Does pour le moment. Le reste sera débloqué en jouant.`,
-                lines: [
-                  `Reste à jouer (Does achetés): ${pendingFromXchange} Does`,
-                  `Reste à jouer (bonus parrainage): ${pendingFromReferral} Does`,
-                  `Total encore bloqué: ${pendingTotal} Does`,
-                  "Joue des parties pour débloquer plus de reconversion.",
-                ],
+                message: pendingFromWelcome > 0
+                  ? `Tu peux reconvertir ${exchangeableDoesAvailable} Does pour le moment. Une partie vient du bonus bienvenue et attend un depot approuve.`
+                  : `Tu peux reconvertir ${exchangeableDoesAvailable} Does pour le moment. Le reste sera debloque en jouant.`,
+                lines,
               });
             }
             if (errorEl) errorEl.textContent = res.error || "Erreur de conversion.";

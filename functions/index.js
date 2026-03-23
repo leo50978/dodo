@@ -8336,6 +8336,7 @@ exports.resolveDepositReviewSecure = publicOnCall("resolveDepositReviewSecure", 
       const bonusAwardedAt = bonusAwardedAtMs > 0
         ? String(orderData.bonusAwardedAt || nowIso)
         : "";
+      const unlockWelcomeOnApprovedDeposit = beforePendingFromWelcome > 0;
       nextOrder = {
         ...nextOrder,
         status: "approved",
@@ -8363,8 +8364,10 @@ exports.resolveDepositReviewSecure = publicOnCall("resolveDepositReviewSecure", 
       nextWallet.totalExchangedHtgEver = safeInt(walletData.totalExchangedHtgEver) + safeInt(orderData.provisionalHtgConverted);
       nextWallet.pendingPlayFromXchangeDoes = beforePendingFromXchange + promoteCapitalDoes;
       nextWallet.pendingPlayFromReferralDoes = beforePendingFromReferral + bonusDoesAwarded;
-      nextWallet.pendingPlayFromWelcomeDoes = beforePendingFromWelcome;
-      nextWallet.exchangeableDoesAvailable = beforeExchangeableDoes + unlockedFromPlayedDoes;
+      nextWallet.pendingPlayFromWelcomeDoes = unlockWelcomeOnApprovedDeposit ? 0 : beforePendingFromWelcome;
+      nextWallet.exchangeableDoesAvailable = beforeExchangeableDoes
+        + unlockedFromPlayedDoes
+        + (unlockWelcomeOnApprovedDeposit ? beforePendingFromWelcome : 0);
     } else {
       const removeDoes = settledPendingTotalDoes;
       const nextStrikeCount = safeInt(walletData.rejectedDepositStrikeCount) + 1;
