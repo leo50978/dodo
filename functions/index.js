@@ -3605,6 +3605,12 @@ async function applyWalletMutationTx(tx, options) {
   const beforeWelcomeBonusHtgAvailable = safeInt(data.welcomeBonusHtgAvailable);
   const beforeWelcomeBonusHtgConverted = safeInt(data.welcomeBonusHtgConverted);
   let beforeWelcomeBonusHtgPlayed = safeInt(data.welcomeBonusHtgPlayed);
+  const beforePendingPlayTotal = beforePendingFromXchange + beforePendingFromReferral + beforePendingFromWelcome;
+  const beforeExchangeableDoes = safeInt(
+    typeof data.exchangeableDoesAvailable === "number"
+      ? Math.min(data.exchangeableDoesAvailable, beforeApprovedDoes)
+      : (beforePendingPlayTotal <= 0 ? beforeApprovedDoes : 0)
+  );
   let afterApprovedDoes = beforeApprovedDoes;
   let afterProvisionalDoes = beforeProvisionalDoes;
   let afterExchanged = safeSignedInt(beforeExchanged + deltaExchangedGourdes);
@@ -3680,13 +3686,6 @@ async function applyWalletMutationTx(tx, options) {
       );
     }
   }
-  const beforePendingPlayTotal = beforePendingFromXchange + beforePendingFromReferral + beforePendingFromWelcome;
-  const beforeExchangeableDoes = safeInt(
-    typeof data.exchangeableDoesAvailable === "number"
-      ? Math.min(data.exchangeableDoesAvailable, beforeApprovedDoes)
-      : (beforePendingPlayTotal <= 0 ? beforeApprovedDoes : 0)
-  );
-
   const consumeProvisionalHtgForConversion = async (requestedAmountHtg = 0) => {
     const remainingTarget = safeInt(requestedAmountHtg);
     if (remainingTarget <= 0 || !provisionalDepositsEnabled) {
