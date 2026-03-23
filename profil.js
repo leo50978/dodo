@@ -7,6 +7,7 @@ import { getDepositFundingStatusSecure } from "./secure-functions.js";
 const BALANCE_DEBUG = true;
 const ASSISTANCE_PHONE = "50941752992";
 const AUTH_PROFILE_HINT_STORAGE_KEY = "domino_auth_profile_hint_v1";
+const WELCOME_LOCKED_SELL_STORAGE_KEY = "domino_welcome_locked_sell_attempt_v1";
 const PUBLIC_HOME_URL = "https://dominoeslakay.com/inedex.html";
 let referralLoadToken = 0;
 let referralHintFreezeUntil = 0;
@@ -82,6 +83,26 @@ function readAuthProfileHint(user) {
       updatedAtMs: Number(parsed.updatedAtMs || 0) || 0,
     };
   } catch (_) {
+    return null;
+  }
+}
+
+function getWelcomeLockedSellStorageKey(uid = "") {
+  return `${WELCOME_LOCKED_SELL_STORAGE_KEY}:${String(uid || "").trim()}`;
+}
+
+function readWelcomeLockedSellAttempt(uid = "") {
+  const safeUid = String(uid || "").trim();
+  if (!safeUid) return null;
+  try {
+    const raw = window.localStorage?.getItem(getWelcomeLockedSellStorageKey(safeUid)) || "";
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    return {
+      amountDoes: safeCount(parsed?.amountDoes),
+      updatedAtMs: Number.isFinite(Number(parsed?.updatedAtMs)) ? Number(parsed.updatedAtMs) : 0,
+    };
+  } catch {
     return null;
   }
 }
@@ -867,7 +888,16 @@ function updateProfileData(user) {
   const hasRealApprovedDeposit = fundingData.hasRealApprovedDeposit === true
     || xState?.hasRealApprovedDeposit === true
     || clientData.hasApprovedDeposit === true;
-  const lockedWelcomeDoes = hasRealApprovedDeposit ? 0 : pendingPlayFromWelcomeDoes;
+  const requestedLockedWelcomeDoes = safeCount(
+    readWelcomeLockedSellAttempt(String(user?.uid || auth.currentUser?.uid || ""))?.amountDoes
+  );
+  const lockedWelcomeDoes = hasRealApprovedDeposit
+    ? 0
+    : Math.min(
+      requestedLockedWelcomeDoes,
+      pendingPlayFromWelcomeDoes,
+      safeCount(doesApprovedBalance || resolvedDoesBalance)
+    );
   const allowLegacyAvailableFallback = !latestProfileFundingData
     && safeCount(approvedHtgAvailable + provisionalHtgAvailable) <= 0
     && xState?.loaded !== true;

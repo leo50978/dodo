@@ -7,6 +7,7 @@ import { getDepositFundingStatusSecure, walletMutateSecure } from "./secure-func
 
 const RATE_HTG_TO_DOES = 20;
 const BALANCE_DEBUG = true;
+const WELCOME_LOCKED_SELL_STORAGE_KEY = "domino_welcome_locked_sell_attempt_v1";
 const WALLET_CACHE = new Map();
 let walletUnsub = null;
 let activeUid = null;
@@ -62,6 +63,61 @@ function defaultWallet() {
 
 function currentUid() {
   return auth.currentUser?.uid || "guest";
+}
+
+function getWelcomeLockedSellStorageKey(uid = currentUid()) {
+  return `${WELCOME_LOCKED_SELL_STORAGE_KEY}:${String(uid || "").trim()}`;
+}
+
+function readWelcomeLockedSellAttempt(uid = currentUid()) {
+  const safeUid = String(uid || "").trim();
+  if (!safeUid || safeUid === "guest") return null;
+  try {
+    const raw = window.localStorage?.getItem(getWelcomeLockedSellStorageKey(safeUid)) || "";
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    return {
+      amountDoes: safeInt(parsed?.amountDoes),
+      updatedAtMs: safeSignedInt(parsed?.updatedAtMs),
+    };
+  } catch {
+    return null;
+  }
+}
+
+function writeWelcomeLockedSellAttempt(uid = currentUid(), amountDoes = 0) {
+  const safeUid = String(uid || "").trim();
+  const safeAmount = safeInt(amountDoes);
+  if (!safeUid || safeUid === "guest" || safeAmount <= 0) return;
+  try {
+    window.localStorage?.setItem(
+      getWelcomeLockedSellStorageKey(safeUid),
+      JSON.stringify({
+        uid: safeUid,
+        amountDoes: safeAmount,
+        updatedAtMs: Date.now(),
+      })
+    );
+  } catch {}
+}
+
+function clearWelcomeLockedSellAttempt(uid = currentUid()) {
+  const safeUid = String(uid || "").trim();
+  if (!safeUid || safeUid === "guest") return;
+  try {
+    window.localStorage?.removeItem(getWelcomeLockedSellStorageKey(safeUid));
+  } catch {}
+}
+
+function getVisibleLockedWelcomeDoes(state = {}, uid = currentUid()) {
+  if (state?.hasRealApprovedDeposit === true) return 0;
+  const pendingWelcome = safeInt(state?.pendingPlayFromWelcomeDoes);
+  if (pendingWelcome <= 0) return 0;
+  const savedAttempt = readWelcomeLockedSellAttempt(uid);
+  const requestedLocked = safeInt(savedAttempt?.amountDoes);
+  if (requestedLocked <= 0) return 0;
+  const currentApprovedDoes = safeInt(state?.doesApprovedBalance ?? state?.does);
+  return Math.min(requestedLocked, pendingWelcome, currentApprovedDoes || requestedLocked);
 }
 
 async function waitForXchangeBalanceHydration(uid = currentUid(), timeoutMs = 2600) {
@@ -159,6 +215,9 @@ async function syncWalletFundingState(uid = currentUid()) {
       totalExchangedHtgEver: safeInt(funding?.totalExchangedApprovedHtg),
       hasRealApprovedDeposit: funding?.hasRealApprovedDeposit === true,
     }, true);
+    if (funding?.hasRealApprovedDeposit === true || safeInt(funding?.pendingPlayFromWelcomeDoes) <= 0) {
+      clearWelcomeLockedSellAttempt(safeUid);
+    }
     return emitXchangeUpdated(safeUid);
   } catch (error) {
     console.warn("[XCHANGE] syncWalletFundingState failed", error);
@@ -378,8 +437,8 @@ function updateWelcomeLockUi(overlay, state) {
   const inlineValueEl = overlay?.querySelector("#xchangeLockedWelcomeDoes");
   if (!noticeEl || !titleEl || !bodyEl || !inlineLineEl || !inlineValueEl) return;
 
-  const blockedWelcomeDoes = safeInt(state?.pendingPlayFromWelcomeDoes);
-  const showNotice = blockedWelcomeDoes > 0 && state?.hasRealApprovedDeposit !== true;
+  const blockedWelcomeDoes = getVisibleLockedWelcomeDoes(state, currentUid());
+  const showNotice = blockedWelcomeDoes > 0;
 
   if (!showNotice) {
     noticeEl.classList.add("hidden");
@@ -388,7 +447,7 @@ function updateWelcomeLockUi(overlay, state) {
   }
 
   titleEl.textContent = "Does bonus temporairement bloques";
-  bodyEl.textContent = `${blockedWelcomeDoes} Does issus du bonus bienvenue sont bloques jusqu'a l'approbation de ton premier depot reel.`;
+  bodyEl.textContent = `${blockedWelcomeDoes} Does de ta demande d'echange sont bloques jusqu'a l'approbation de ton premier depot reel.`;
   inlineValueEl.textContent = String(blockedWelcomeDoes);
   inlineLineEl.classList.remove("hidden");
   noticeEl.classList.remove("hidden");
@@ -764,12 +823,19 @@ function ensureXchangeModal() {
               const pendingFromWelcome = safeInt(res.pendingPlayFromWelcomeDoes);
               const pendingTotal = safeInt(res.pendingPlayTotalDoes || (pendingFromXchange + pendingFromReferral + pendingFromWelcome));
               const exchangeableDoesAvailable = safeInt(res.exchangeableDoesAvailable);
+              const requestedBlockedDoes = Math.min(
+                pendingFromWelcome,
+                Math.max(0, amount - exchangeableDoesAvailable)
+              );
+              if (requestedBlockedDoes > 0) {
+                writeWelcomeLockedSellAttempt(currentUid(), requestedBlockedDoes);
+              }
               const lines = [
                 `Reste a jouer (Does achetes): ${pendingFromXchange} Does`,
                 `Reste a jouer (bonus parrainage): ${pendingFromReferral} Does`,
               ];
               if (pendingFromWelcome > 0) {
-                lines.push(`Bloques jusqu'au premier depot approuve: ${pendingFromWelcome} Does`);
+                lines.push(`Demande gelee jusqu'au premier depot approuve: ${requestedBlockedDoes} Does`);
               }
               lines.push(`Total encore bloque: ${pendingTotal} Does`);
               lines.push(
