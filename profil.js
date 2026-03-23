@@ -493,6 +493,11 @@ function ensureProfileModal() {
             <p class="mt-2 text-sm font-semibold text-white"><span id="profileExchangeableDoesAvailable">0</span> Does</p>
             <p class="mt-1 text-xs text-white/70">Does approuvés que tu peux reconvertir.</p>
           </div>
+          <div id="profileLockedWelcomeDoesCard" class="hidden rounded-2xl border border-[#f6c177]/35 bg-[#3b2a16]/72 p-4 shadow-[8px_8px_18px_rgba(19,25,40,0.34),-6px_-6px_14px_rgba(111,126,164,0.2)]">
+            <p class="text-[11px] uppercase tracking-[0.14em] text-[#ffd89a]">Does gelés en attente de dépôt</p>
+            <p class="mt-2 text-sm font-semibold text-white"><span id="profileLockedWelcomeDoes">0</span> Does</p>
+            <p class="mt-1 text-xs text-[#f7e8c7]">Ces Does viennent du bonus bienvenue. Ils seront débloqués après l'approbation de ton premier dépôt réel.</p>
+          </div>
           <div class="rounded-2xl border border-white/20 bg-white/10 p-4 shadow-[8px_8px_18px_rgba(19,25,40,0.34),-6px_-6px_14px_rgba(111,126,164,0.2)] sm:col-span-2 xl:col-span-3">
             <p id="profileApprovedDepositsSummary" class="text-xs text-white/70">Dépôts approuvés: 0 HTG</p>
             <p id="profileExchanged" class="mt-1 text-xs text-white/70">Déjà converti: 0 HTG</p>
@@ -790,6 +795,8 @@ function updateProfileData(user) {
   const verifiedAvailableHintEl = document.getElementById("profileVerifiedAvailableHint");
   const withdrawAvailableEl = document.getElementById("profileWithdrawAvailable");
   const exchangeableDoesEl = document.getElementById("profileExchangeableDoesAvailable");
+  const lockedWelcomeDoesCardEl = document.getElementById("profileLockedWelcomeDoesCard");
+  const lockedWelcomeDoesEl = document.getElementById("profileLockedWelcomeDoes");
   const pendingHintEl = document.getElementById("profilePendingBalanceHint");
   const doesBreakdownEl = document.getElementById("profileDoesBreakdown");
   const frozenBannerEl = document.getElementById("profileFrozenBanner");
@@ -850,6 +857,17 @@ function updateProfileData(user) {
       clientData.exchangeableDoesAvailable
     )
   );
+  const pendingPlayFromWelcomeDoes = safeCount(
+    pickFirstFiniteNumber(
+      fundingData.pendingPlayFromWelcomeDoes,
+      xState?.pendingPlayFromWelcomeDoes,
+      clientData.pendingPlayFromWelcomeDoes
+    )
+  );
+  const hasRealApprovedDeposit = fundingData.hasRealApprovedDeposit === true
+    || xState?.hasRealApprovedDeposit === true
+    || clientData.hasApprovedDeposit === true;
+  const lockedWelcomeDoes = hasRealApprovedDeposit ? 0 : pendingPlayFromWelcomeDoes;
   const allowLegacyAvailableFallback = !latestProfileFundingData
     && safeCount(approvedHtgAvailable + provisionalHtgAvailable) <= 0
     && xState?.loaded !== true;
@@ -995,6 +1013,8 @@ function updateProfileData(user) {
   if (provisionalDoesEl) provisionalDoesEl.textContent = formatDoesAmount(doesProvisionalBalance);
   if (withdrawAvailableEl) withdrawAvailableEl.textContent = formatAmount(resolvedXState.withdrawableHtg);
   if (exchangeableDoesEl) exchangeableDoesEl.textContent = formatDoesAmount(exchangeableDoesAvailable);
+  if (lockedWelcomeDoesEl) lockedWelcomeDoesEl.textContent = formatDoesAmount(lockedWelcomeDoes);
+  if (lockedWelcomeDoesCardEl) lockedWelcomeDoesCardEl.classList.toggle("hidden", lockedWelcomeDoes <= 0);
   if (approvedDepositsSummaryEl) approvedDepositsSummaryEl.textContent = `Dépôts approuvés: ${formatAmount(approvedDepositsTotal)}`;
   if (exchangedEl) exchangedEl.textContent = `Déjà converti: ${formatAmount(convertedApprovedHtg)}`;
   if (approvedDepositsSummaryEl && welcomeBonusHtgAvailable > 0) {
@@ -1010,7 +1030,11 @@ function updateProfileData(user) {
       ? `HTG en examen: ${formatAmount(provisionalHtgAvailable)} | Bonus bienvenue: ${formatAmount(welcomeBonusHtgAvailable)} | HTG dispo échange: ${formatAmount(resolvedAvailableHtg)}`
       : `HTG en examen: ${formatAmount(provisionalHtgAvailable)} | HTG dispo échange: ${formatAmount(resolvedAvailableHtg)}`;
   }
-  if (doesBreakdownEl) doesBreakdownEl.textContent = `Total Does: ${formatDoesAmount(resolvedDoesBalance)} | Approuvés: ${formatDoesAmount(doesApprovedBalance)} | En examen: ${formatDoesAmount(doesProvisionalBalance)} | Dispo échange: ${formatDoesAmount(exchangeableDoesAvailable)}`;
+  if (doesBreakdownEl) {
+    doesBreakdownEl.textContent = lockedWelcomeDoes > 0
+      ? `Total Does: ${formatDoesAmount(resolvedDoesBalance)} | Approuvés: ${formatDoesAmount(doesApprovedBalance)} | En examen: ${formatDoesAmount(doesProvisionalBalance)} | Dispo échange: ${formatDoesAmount(exchangeableDoesAvailable)} | Gelés: ${formatDoesAmount(lockedWelcomeDoes)}`
+      : `Total Does: ${formatDoesAmount(resolvedDoesBalance)} | Approuvés: ${formatDoesAmount(doesApprovedBalance)} | En examen: ${formatDoesAmount(doesProvisionalBalance)} | Dispo échange: ${formatDoesAmount(exchangeableDoesAvailable)}`;
+  }
   if (frozenBannerEl) frozenBannerEl.classList.toggle("hidden", withdrawalLocked !== true);
   if (frozenMessageEl) {
     frozenMessageEl.textContent = accountFrozen
