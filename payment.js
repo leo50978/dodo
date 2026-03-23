@@ -975,7 +975,7 @@ class PaymentModal {
 
           <div class="form-group">
             <label>Numero qui a effectue le depot *</label>
-            <input type="tel" id="proofDepositorPhone" required inputmode="tel" autocomplete="tel" placeholder="Ex: 50941752992" value="${safeDepositorPhoneAttr}">
+            <input type="tel" id="proofDepositorPhone" required inputmode="tel" autocomplete="tel" placeholder="Ex: 50940507232" value="${safeDepositorPhoneAttr}">
             <p style="font-size: 0.8rem; color: #8B7E6B; margin-top: 0.25rem;">
               Cette information doit etre exacte. Une erreur peut entrainer le rejet de la demande.
             </p>

@@ -17,7 +17,7 @@ import { waitForBalanceHydration } from "./solde.js";
 import { getXchangeState } from "./xchange.js";
 const MIN_WITHDRAWAL_HTG = 50;
 const BALANCE_DEBUG = true;
-const ASSISTANCE_PHONE = "50941752992";
+const ASSISTANCE_PHONE = "50940507232";
 
 function createClientRequestId(prefix = "wd") {
   const safePrefix = String(prefix || "req").replace(/[^a-zA-Z0-9_-]/g, "").slice(0, 12) || "req";

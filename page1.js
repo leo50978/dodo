@@ -243,7 +243,7 @@ function writeDeviceAccountLock(payload = {}) {
 }
 
 function createDeviceAccountLockError() {
-  const error = new Error("Un compte existe déjà sur cet appareil. Connecte-toi avec ce compte ou contacte l'assistance au 50941752992.");
+  const error = new Error("Un compte existe déjà sur cet appareil. Connecte-toi avec ce compte ou contacte l'assistance au 50940507232.");
   error.code = "auth/device-account-exists";
   return error;
 }
@@ -1133,7 +1133,7 @@ function renderPage1() {
           class="block w-full rounded-2xl border border-white/20 bg-white/10 px-5 py-3.5 text-sm text-white placeholder-white/60 shadow-[inset_6px_6px_12px_rgba(34,40,59,0.45),inset_-6px_-6px_12px_rgba(93,105,143,0.28)] backdrop-blur-md outline-none ring-0 transition focus:border-[#f48f45] sm:text-base"
         />
         <div class="px-1 text-[11px] text-white/65 sm:text-xs">
-          Entre ton numero WhatsApp ou telephone. Exemple: 50941752992.
+          Entre ton numero WhatsApp ou telephone. Exemple: 50940507232.
         </div>
         <div class="relative">
           <input

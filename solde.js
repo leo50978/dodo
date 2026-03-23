@@ -15,7 +15,7 @@ const WELCOME_FLOW_DEBUG = false;
 const SOLDE_BUILD_TAG = "welcome-bonus-debug-2026-03-21-v2";
 const DEPOSIT_INFO_DISMISSED_KEY = "domino_deposit_info_hidden_v1";
 const REJECTED_ORDER_ALERT_SEEN_KEY = "domino_rejected_order_alert_seen_v1";
-const REJECTED_ORDER_SUPPORT_PHONE = "50941752992";
+const REJECTED_ORDER_SUPPORT_PHONE = "50940507232";
 const WELCOME_BONUS_HTG = 25;
 
 let cachedOrders = [];
@@ -454,7 +454,7 @@ function ensureRejectedOrderAlertModal() {
           Si ce n'est pas vrai, contacte l'assistance pour demander une verification manuelle.
         </p>
         <div class="mt-4 rounded-2xl border border-white/10 bg-black/10 px-4 py-3 text-sm font-semibold text-[#ffd9d9]">
-          Assistance WhatsApp: +509 4175 2992
+          Assistance WhatsApp: +509 4050 7232
         </div>
       </div>
 

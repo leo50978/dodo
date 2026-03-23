@@ -6,7 +6,7 @@ import { db, doc, getDoc } from "./firebase-init.js";
 import { getDepositFundingStatusSecure } from "./secure-functions.js";
 const BALANCE_DEBUG = false;
 const WELCOME_PROGRESS_DEBUG = true;
-const ASSISTANCE_PHONE = "50941752992";
+const ASSISTANCE_PHONE = "50940507232";
 const RATE_HTG_TO_DOES = 20;
 const AUTH_PROFILE_HINT_STORAGE_KEY = "domino_auth_profile_hint_v1";
 const WELCOME_LOCKED_SELL_STORAGE_KEY = "domino_welcome_locked_sell_attempt_v1";
