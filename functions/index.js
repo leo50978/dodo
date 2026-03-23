@@ -8058,6 +8058,7 @@ exports.createWithdrawalSecure = publicOnCall("createWithdrawalSecure", async (r
   const destinationValue = sanitizeText(payload.destinationValue || payload.phone || "", 160);
   const customerName = sanitizeText(payload.customerName || "", 120);
   const customerPhone = sanitizePhone(payload.customerPhone || payload.phone || "", 40);
+  const clientRequestId = sanitizeText(payload.requestId || payload.clientRequestId || "", 120);
 
   if (!destinationType || !destinationValue || requestedAmount < MIN_WITHDRAWAL_HTG || requestedAmount > MAX_WITHDRAWAL_HTG) {
     console.warn("[WITHDRAWAL_DEBUG] invalid-argument", JSON.stringify({
@@ -8070,89 +8071,118 @@ exports.createWithdrawalSecure = publicOnCall("createWithdrawalSecure", async (r
     throw new HttpsError("invalid-argument", "Retrait invalide.");
   }
 
-  const [ordersSnap, withdrawalsSnap, clientSnap, xchangesSnap] = await Promise.all([
-    db.collection(CLIENTS_COLLECTION).doc(uid).collection("orders").get(),
-    db.collection(CLIENTS_COLLECTION).doc(uid).collection("withdrawals").get(),
-    db.collection(CLIENTS_COLLECTION).doc(uid).get(),
-    walletHistoryRef(uid).get(),
-  ]);
+  const result = await db.runTransaction(async (tx) => {
+    const clientRef = walletRef(uid);
+    const withdrawalsCollectionRef = clientRef.collection("withdrawals");
+    const newWithdrawalRef = withdrawalsCollectionRef.doc();
+    const [ordersSnap, withdrawalsSnap, clientSnap, xchangesSnap] = await Promise.all([
+      tx.get(clientRef.collection("orders")),
+      tx.get(withdrawalsCollectionRef),
+      tx.get(clientRef),
+      tx.get(walletHistoryRef(uid)),
+    ]);
 
-  const clientData = clientSnap.exists ? (clientSnap.data() || {}) : {};
-  assertWithdrawalAllowed(clientData);
-  const walletSummary = buildWalletFundingSnapshot({
-    orders: ordersSnap.docs.map((item) => item.data() || {}),
-    withdrawals: withdrawalsSnap.docs.map((item) => item.data() || {}),
-    walletData: clientData,
-    exchangeHistory: xchangesSnap.docs.map((item) => item.data() || {}),
-  });
-  const available = walletSummary.withdrawableHtg;
+    const clientData = clientSnap.exists ? (clientSnap.data() || {}) : {};
+    assertWithdrawalAllowed(clientData);
 
-  console.log("[WITHDRAWAL_DEBUG] summary", JSON.stringify({
-    uid,
-    requestedAmount,
-    available,
-    destinationType,
-    ordersCount: ordersSnap.size,
-    withdrawalsCount: withdrawalsSnap.size,
-    exchangedGourdesRaw: clientData.exchangedGourdes,
-    walletSummary,
-  }));
+    const existingWithdrawals = withdrawalsSnap.docs.map((item) => ({
+      id: item.id,
+      data: item.data() || {},
+    }));
 
-  if (requestedAmount > available) {
-    console.warn("[WITHDRAWAL_DEBUG] rejected-insufficient", JSON.stringify({
+    if (clientRequestId) {
+      const duplicate = existingWithdrawals.find((item) => String(item.data?.clientRequestId || "") === clientRequestId);
+      if (duplicate) {
+        return {
+          ok: true,
+          duplicate: true,
+          withdrawalId: duplicate.id,
+          status: String(duplicate.data?.status || "pending"),
+        };
+      }
+    }
+
+    const walletSummary = buildWalletFundingSnapshot({
+      orders: ordersSnap.docs.map((item) => item.data() || {}),
+      withdrawals: existingWithdrawals.map((item) => item.data),
+      walletData: clientData,
+      exchangeHistory: xchangesSnap.docs.map((item) => item.data() || {}),
+    });
+    const available = walletSummary.withdrawableHtg;
+
+    console.log("[WITHDRAWAL_DEBUG] summary", JSON.stringify({
       uid,
       requestedAmount,
       available,
+      destinationType,
+      clientRequestId,
+      ordersCount: ordersSnap.size,
+      withdrawalsCount: withdrawalsSnap.size,
+      exchangedGourdesRaw: clientData.exchangedGourdes,
       walletSummary,
     }));
-    throw new HttpsError("failed-precondition", "Montant supérieur au solde disponible.");
-  }
 
-  const ref = db.collection(CLIENTS_COLLECTION).doc(uid).collection("withdrawals").doc();
-  const nowIso = new Date().toISOString();
-  const withdrawalPayload = {
-    uid,
-    clientId: uid,
-    clientUid: uid,
-    status: "pending",
-    requestedAmount,
-    amount: requestedAmount,
-    methodId: destinationType,
-    methodName: destinationType,
-    destinationType,
-    destinationValue,
-    customerName,
-    customerEmail: sanitizeEmail(email || "", 160),
-    customerPhone,
-    createdAt: nowIso,
-    updatedAt: nowIso,
-  };
-  await ref.set(withdrawalPayload, { merge: true });
+    if (requestedAmount > available) {
+      console.warn("[WITHDRAWAL_DEBUG] rejected-insufficient", JSON.stringify({
+        uid,
+        requestedAmount,
+        available,
+        clientRequestId,
+        walletSummary,
+      }));
+      throw new HttpsError("failed-precondition", "Montant supérieur au solde disponible.");
+    }
 
-  const nextFundingSnapshot = buildWalletFundingSnapshot({
-    orders: ordersSnap.docs.map((item) => item.data() || {}),
-    withdrawals: [
-      ...withdrawalsSnap.docs.map((item) => item.data() || {}),
-      withdrawalPayload,
-    ],
-    walletData: clientData,
-    exchangeHistory: xchangesSnap.docs.map((item) => item.data() || {}),
+    const nowIso = new Date().toISOString();
+    const withdrawalPayload = {
+      uid,
+      clientId: uid,
+      clientUid: uid,
+      status: "pending",
+      requestedAmount,
+      amount: requestedAmount,
+      methodId: destinationType,
+      methodName: destinationType,
+      destinationType,
+      destinationValue,
+      customerName,
+      customerEmail: sanitizeEmail(email || "", 160),
+      customerPhone,
+      clientRequestId: clientRequestId || newWithdrawalRef.id,
+      createdAt: nowIso,
+      updatedAt: nowIso,
+    };
+
+    tx.set(newWithdrawalRef, withdrawalPayload, { merge: true });
+
+    const nextFundingSnapshot = buildWalletFundingSnapshot({
+      orders: ordersSnap.docs.map((item) => item.data() || {}),
+      withdrawals: [
+        ...existingWithdrawals.map((item) => item.data),
+        withdrawalPayload,
+      ],
+      walletData: clientData,
+      exchangeHistory: xchangesSnap.docs.map((item) => item.data() || {}),
+    });
+
+    tx.set(clientRef, {
+      uid,
+      email,
+      name: customerName || sanitizeText(String(email || "").split("@")[0], 80) || "Player",
+      phone: customerPhone,
+      ...buildFundingWalletPatch(nextFundingSnapshot),
+      updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+    }, { merge: true });
+
+    return {
+      ok: true,
+      duplicate: false,
+      withdrawalId: newWithdrawalRef.id,
+      status: "pending",
+    };
   });
 
-  await walletRef(uid).set({
-    uid,
-    email,
-    name: customerName || sanitizeText(String(email || "").split("@")[0], 80) || "Player",
-    phone: customerPhone,
-    ...buildFundingWalletPatch(nextFundingSnapshot),
-    updatedAt: admin.firestore.FieldValue.serverTimestamp(),
-  }, { merge: true });
-
-  return {
-    ok: true,
-    withdrawalId: ref.id,
-    status: "pending",
-  };
+  return result;
 });
 
 exports.orderClientActionSecure = publicOnCall("orderClientActionSecure", async (request) => {

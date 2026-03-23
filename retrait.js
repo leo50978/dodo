@@ -19,6 +19,14 @@ const MIN_WITHDRAWAL_HTG = 50;
 const BALANCE_DEBUG = true;
 const ASSISTANCE_PHONE = "50941752992";
 
+function createClientRequestId(prefix = "wd") {
+  const safePrefix = String(prefix || "req").replace(/[^a-zA-Z0-9_-]/g, "").slice(0, 12) || "req";
+  if (globalThis.crypto && typeof globalThis.crypto.randomUUID === "function") {
+    return `${safePrefix}_${globalThis.crypto.randomUUID()}`;
+  }
+  return `${safePrefix}_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`;
+}
+
 function escapeHtml(input) {
   return String(input || "")
     .replace(/&/g, "&amp;")
@@ -390,11 +398,20 @@ function ensureRetraitModal() {
   let selectedMethod = null;
   let methods = [];
   let availabilityToken = 0;
+  let isSubmitting = false;
+  let activeRequestId = "";
 
   const close = () => {
     overlay.classList.add("hidden");
     overlay.classList.remove("flex");
     if (errorEl) errorEl.textContent = "";
+    isSubmitting = false;
+    activeRequestId = "";
+    if (nextBtn) {
+      nextBtn.disabled = false;
+      nextBtn.textContent = step === 1 ? "Suivant" : "Soumettre";
+      nextBtn.classList.remove("opacity-70", "cursor-not-allowed");
+    }
   };
 
   const setStep = (value) => {
@@ -449,6 +466,15 @@ function ensureRetraitModal() {
     }
   };
 
+  const setSubmitting = (value) => {
+    isSubmitting = value === true;
+    if (!nextBtn) return;
+    nextBtn.disabled = isSubmitting;
+    nextBtn.classList.toggle("opacity-70", isSubmitting);
+    nextBtn.classList.toggle("cursor-not-allowed", isSubmitting);
+    nextBtn.textContent = isSubmitting ? "Traitement..." : (step === 1 ? "Suivant" : "Soumettre");
+  };
+
   const renderMethods = () => {
     if (!methodsEl) return;
     if (!methods.length) {
@@ -501,6 +527,8 @@ function ensureRetraitModal() {
     if (phoneInput) phoneInput.value = "";
     if (methodLabelEl) methodLabelEl.textContent = "";
     if (errorEl) errorEl.textContent = "";
+    activeRequestId = "";
+    setSubmitting(false);
     setStep(1);
     overlay.classList.remove("hidden");
     overlay.classList.add("flex");
@@ -550,10 +578,15 @@ function ensureRetraitModal() {
         if (errorEl) errorEl.textContent = "Nom, prénom et téléphone sont requis.";
         return;
       }
+      if (isSubmitting) {
+        return;
+      }
+      activeRequestId = activeRequestId || createClientRequestId("withdrawal");
+      setSubmitting(true);
 
-      const availability = await refreshAvailability();
-      const available = safeInt(availability?.withdrawableHtg || 0);
       try {
+        const availability = await refreshAvailability();
+        const available = safeInt(availability?.withdrawableHtg || 0);
         const ruleStatus = availability?.ruleStatus || await getWithdrawalRuleStatus(user.uid);
         if (BALANCE_DEBUG) {
           console.log("[BALANCE_DEBUG][RETRAIT] submit attempt", {
@@ -577,6 +610,7 @@ function ensureRetraitModal() {
             lines: ["Contacte l'assistance pour demander un dégel."],
           });
           if (errorEl) errorEl.textContent = "Compte gelé. Contacte l'assistance.";
+          setSubmitting(false);
           return;
         }
 
@@ -591,11 +625,13 @@ function ensureRetraitModal() {
             ],
           });
           if (errorEl) errorEl.textContent = "Compte gelé pour les retraits. Contacte l'assistance.";
+          setSubmitting(false);
           return;
         }
 
         if (amount > available) {
           if (errorEl) errorEl.textContent = "Montant supérieur au solde disponible.";
+          setSubmitting(false);
           return;
         }
 
@@ -613,6 +649,7 @@ function ensureRetraitModal() {
             if (errorEl) {
               errorEl.textContent = "Une partie du solde est encore en examen et reste bloquée pour le retrait.";
             }
+            setSubmitting(false);
             return;
           }
           showRetraitRuleModal({
@@ -628,11 +665,13 @@ function ensureRetraitModal() {
           if (errorEl) {
             errorEl.textContent = "Retrait bloqué: convertis d'abord tout ton dépôt en Does.";
           }
+          setSubmitting(false);
           return;
         }
       } catch (ruleErr) {
         console.error("Erreur validation règles retrait:", ruleErr);
         if (errorEl) errorEl.textContent = "Impossible de vérifier les règles de retrait.";
+        setSubmitting(false);
         return;
       }
 
@@ -644,6 +683,7 @@ function ensureRetraitModal() {
           methodId: selectedMethod?.id || "",
           customerName: `${firstName} ${lastName}`.trim(),
           customerPhone: phone,
+          requestId: activeRequestId,
         });
         const createdAt = new Date().toISOString();
 
@@ -693,6 +733,7 @@ function ensureRetraitModal() {
           });
         }
         if (errorEl) errorEl.textContent = err?.message || "Impossible de soumettre la demande.";
+        setSubmitting(false);
       }
     });
   }
