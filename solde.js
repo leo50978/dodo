@@ -10,7 +10,8 @@ import {
   onAuthStateChanged,
 } from "./firebase-init.js";
 import { getDepositFundingStatusSecure, orderClientActionSecure } from "./secure-functions.js";
-const BALANCE_DEBUG = true;
+const BALANCE_DEBUG = false;
+const WELCOME_FLOW_DEBUG = false;
 const SOLDE_BUILD_TAG = "welcome-bonus-debug-2026-03-21-v2";
 const DEPOSIT_INFO_DISMISSED_KEY = "domino_deposit_info_hidden_v1";
 const REJECTED_ORDER_ALERT_SEEN_KEY = "domino_rejected_order_alert_seen_v1";
@@ -36,11 +37,6 @@ let balanceHydrationSession = {
   promise: null,
   resolve: null,
 };
-
-console.log("[SOLDE_BUILD]", {
-  tag: SOLDE_BUILD_TAG,
-  href: window.location.href,
-});
 
 function ensureBalanceHydrationSession(uid) {
   const safeUid = String(uid || "").trim();
@@ -189,11 +185,13 @@ function openRejectedOrderSupport() {
 async function getWelcomeBonusEntryStatus() {
   try {
     const funding = await getDepositFundingStatusSecure({});
-    console.log("[WELCOME_BONUS_DEBUG][SOLDE] funding status", {
-      uid: auth.currentUser?.uid || "",
-      email: auth.currentUser?.email || "",
-      funding,
-    });
+    if (WELCOME_FLOW_DEBUG) {
+      console.log("[WELCOME_BONUS_DEBUG][SOLDE] funding status", {
+        uid: auth.currentUser?.uid || "",
+        email: auth.currentUser?.email || "",
+        funding,
+      });
+    }
     return {
       eligible: funding?.welcomeBonusEligible === true,
       reason: String(funding?.welcomeBonusEligibilityReason || ""),
@@ -1062,34 +1060,42 @@ function ensureSoldeModal() {
     if (!welcomeBonusWrap || !welcomeBonusBtn) return;
     welcomeBonusWrap.classList.add("hidden");
     welcomeBonusBtn.disabled = true;
-    console.log("[WELCOME_BONUS_DEBUG][SOLDE] refresh:start", {
-      uid: auth.currentUser?.uid || "",
-      email: auth.currentUser?.email || "",
-      hasWrap: Boolean(welcomeBonusWrap),
-      hasButton: Boolean(welcomeBonusBtn),
-    });
+    if (WELCOME_FLOW_DEBUG) {
+      console.log("[WELCOME_BONUS_DEBUG][SOLDE] refresh:start", {
+        uid: auth.currentUser?.uid || "",
+        email: auth.currentUser?.email || "",
+        hasWrap: Boolean(welcomeBonusWrap),
+        hasButton: Boolean(welcomeBonusBtn),
+      });
+    }
 
     const status = await getWelcomeBonusEntryStatus();
-    console.log("[WELCOME_BONUS_DEBUG][SOLDE] refresh:status", status);
+    if (WELCOME_FLOW_DEBUG) console.log("[WELCOME_BONUS_DEBUG][SOLDE] refresh:status", status);
     if (!status?.eligible) {
-      console.log("[WELCOME_BONUS_DEBUG][SOLDE] refresh:hidden", {
-        reason: status?.reason || "unknown",
-      });
+      if (WELCOME_FLOW_DEBUG) {
+        console.log("[WELCOME_BONUS_DEBUG][SOLDE] refresh:hidden", {
+          reason: status?.reason || "unknown",
+        });
+      }
       return;
     }
 
     welcomeBonusWrap.classList.remove("hidden");
     welcomeBonusBtn.disabled = false;
-    console.log("[WELCOME_BONUS_DEBUG][SOLDE] refresh:shown", {
-      reason: status?.reason || "eligible",
-    });
+    if (WELCOME_FLOW_DEBUG) {
+      console.log("[WELCOME_BONUS_DEBUG][SOLDE] refresh:shown", {
+        reason: status?.reason || "eligible",
+      });
+    }
   };
 
   const open = () => {
-    console.log("[WELCOME_BONUS_DEBUG][SOLDE] modal:open", {
-      uid: auth.currentUser?.uid || "",
-      email: auth.currentUser?.email || "",
-    });
+    if (WELCOME_FLOW_DEBUG) {
+      console.log("[WELCOME_BONUS_DEBUG][SOLDE] modal:open", {
+        uid: auth.currentUser?.uid || "",
+        email: auth.currentUser?.email || "",
+      });
+    }
     refreshTotal();
     overlay.classList.remove("hidden");
     overlay.classList.add("flex");
@@ -1139,14 +1145,16 @@ function ensureSoldeModal() {
     welcomeBonusBtn.addEventListener("click", async () => {
       if (errorEl) errorEl.textContent = "";
       welcomeBonusBtn.disabled = true;
-      console.log("[WELCOME_BONUS_DEBUG][SOLDE] button:click", {
-        uid: auth.currentUser?.uid || "",
-        email: auth.currentUser?.email || "",
-      });
+      if (WELCOME_FLOW_DEBUG) {
+        console.log("[WELCOME_BONUS_DEBUG][SOLDE] button:click", {
+          uid: auth.currentUser?.uid || "",
+          email: auth.currentUser?.email || "",
+        });
+      }
 
       try {
         const status = await getWelcomeBonusEntryStatus();
-        console.log("[WELCOME_BONUS_DEBUG][SOLDE] button:status", status);
+        if (WELCOME_FLOW_DEBUG) console.log("[WELCOME_BONUS_DEBUG][SOLDE] button:status", status);
         if (!status?.eligible) {
           if (welcomeBonusWrap) welcomeBonusWrap.classList.add("hidden");
           if (errorEl) errorEl.textContent = "Ce bonus n'est plus disponible pour ce compte.";
@@ -1180,32 +1188,34 @@ export function mountSoldeModal(options = {}) {
 
   if (trigger && overlay.__openSolde) {
     trigger.addEventListener("click", () => {
-      console.log("[WELCOME_BONUS_DEBUG][SOLDE] trigger:click", {
-        uid: auth.currentUser?.uid || "",
-        email: auth.currentUser?.email || "",
-        build: SOLDE_BUILD_TAG,
-      });
+      if (WELCOME_FLOW_DEBUG) {
+        console.log("[WELCOME_BONUS_DEBUG][SOLDE] trigger:click", {
+          uid: auth.currentUser?.uid || "",
+          email: auth.currentUser?.email || "",
+          build: SOLDE_BUILD_TAG,
+        });
+      }
       let hideInfoMessage = false;
       try {
         hideInfoMessage = localStorage.getItem(DEPOSIT_INFO_DISMISSED_KEY) === "1";
       } catch (_) {
       }
       if (hideInfoMessage) {
-        console.log("[WELCOME_BONUS_DEBUG][SOLDE] trigger:open-direct");
+        if (WELCOME_FLOW_DEBUG) console.log("[WELCOME_BONUS_DEBUG][SOLDE] trigger:open-direct");
         overlay.__openSolde();
         return;
       }
       if (typeof infoOverlay.__openDepositInfo === "function") {
-        console.log("[WELCOME_BONUS_DEBUG][SOLDE] trigger:open-info-modal");
+        if (WELCOME_FLOW_DEBUG) console.log("[WELCOME_BONUS_DEBUG][SOLDE] trigger:open-info-modal");
         infoOverlay.__openDepositInfo({
           onContinue: () => {
-            console.log("[WELCOME_BONUS_DEBUG][SOLDE] info-modal:continue");
+            if (WELCOME_FLOW_DEBUG) console.log("[WELCOME_BONUS_DEBUG][SOLDE] info-modal:continue");
             overlay.__openSolde();
           },
         });
         return;
       }
-      console.log("[WELCOME_BONUS_DEBUG][SOLDE] trigger:fallback-open");
+      if (WELCOME_FLOW_DEBUG) console.log("[WELCOME_BONUS_DEBUG][SOLDE] trigger:fallback-open");
       overlay.__openSolde();
     });
   }

@@ -4,7 +4,8 @@ import { mountRetraitModal, getWithdrawalRuleStatus } from "./retrait.js";
 import { mountSoldeModal, waitForBalanceHydration } from "./solde.js";
 import { db, doc, getDoc } from "./firebase-init.js";
 import { getDepositFundingStatusSecure } from "./secure-functions.js";
-const BALANCE_DEBUG = true;
+const BALANCE_DEBUG = false;
+const WELCOME_PROGRESS_DEBUG = true;
 const ASSISTANCE_PHONE = "50941752992";
 const RATE_HTG_TO_DOES = 20;
 const AUTH_PROFILE_HINT_STORAGE_KEY = "domino_auth_profile_hint_v1";
@@ -345,6 +346,17 @@ async function refreshProfileFundingStatus(user) {
         approvedDoesBalance: latestProfileFundingData?.approvedDoesBalance,
         provisionalDoesBalance: latestProfileFundingData?.provisionalDoesBalance,
         doesBalance: latestProfileFundingData?.doesBalance,
+      });
+    }
+    if (WELCOME_PROGRESS_DEBUG) {
+      console.log("[WELCOME_PROGRESS_DEBUG][PROFILE] funding snapshot", {
+        uid,
+        approvedDoesBalance: latestProfileFundingData?.approvedDoesBalance,
+        exchangeableDoesAvailable: latestProfileFundingData?.exchangeableDoesAvailable,
+        pendingPlayFromWelcomeDoes: latestProfileFundingData?.pendingPlayFromWelcomeDoes,
+        welcomeBonusHtgConverted: latestProfileFundingData?.welcomeBonusHtgConverted,
+        welcomeBonusHtgPlayed: latestProfileFundingData?.welcomeBonusHtgPlayed,
+        hasRealApprovedDeposit: latestProfileFundingData?.hasRealApprovedDeposit === true,
       });
     }
   } catch (error) {
@@ -933,6 +945,19 @@ function updateProfileData(user) {
   const displayExchangeableDoes = !hasRealApprovedDeposit && welcomeBonusHtgConverted > 0
     ? welcomeUnlockedByPlayDoes
     : exchangeableDoesAvailable;
+  if (WELCOME_PROGRESS_DEBUG) {
+    console.log("[WELCOME_PROGRESS_DEBUG][PROFILE] computed display", {
+      uid: user?.uid || auth.currentUser?.uid || null,
+      doesApprovedBalance,
+      exchangeableDoesAvailable,
+      pendingPlayFromWelcomeDoes,
+      welcomeBonusHtgConverted,
+      welcomeBonusHtgPlayed,
+      welcomeUnlockedByPlayDoes,
+      displayExchangeableDoes,
+      hasRealApprovedDeposit,
+    });
+  }
   const allowLegacyAvailableFallback = !latestProfileFundingData
     && safeCount(approvedHtgAvailable + provisionalHtgAvailable) <= 0
     && xState?.loaded !== true;

@@ -706,9 +706,13 @@ function buildWalletFundingSnapshot({
   );
   const pendingPlayTotalDoes = pendingPlayFromXchangeDoes + pendingPlayFromReferralDoes + pendingPlayFromWelcomeDoes;
   const exchangeableDoesAvailable = safeInt(
-    typeof walletData.exchangeableDoesAvailable === "number"
-      ? Math.min(walletData.exchangeableDoesAvailable, approvedDoesBalance)
-      : (pendingPlayTotalDoes <= 0 ? approvedDoesBalance : 0)
+    pendingPlayFromWelcomeDoes > 0
+      ? 0
+      : (
+        typeof walletData.exchangeableDoesAvailable === "number"
+          ? Math.min(walletData.exchangeableDoesAvailable, approvedDoesBalance)
+          : (pendingPlayTotalDoes <= 0 ? approvedDoesBalance : 0)
+      )
   );
 
   return {
@@ -3949,7 +3953,9 @@ async function applyWalletMutationTx(tx, options) {
 
   if (type === "xchange_sell") {
     const pendingTotal = afterPendingFromXchange + afterPendingFromReferral + afterPendingFromWelcome;
-    const availableExchangeableDoes = Math.min(beforeApprovedDoes, beforeExchangeableDoes);
+    const availableExchangeableDoes = afterPendingFromWelcome > 0
+      ? 0
+      : Math.min(beforeApprovedDoes, beforeExchangeableDoes);
     if (amountDoes > availableExchangeableDoes) {
       throw buildPlayRequiredError({
         pendingPlayFromXchangeDoes: afterPendingFromXchange,
@@ -3998,7 +4004,9 @@ async function applyWalletMutationTx(tx, options) {
   if (afterDoes < 0) {
     throw new HttpsError("failed-precondition", "Solde Does insuffisant.");
   }
-  if ((afterPendingFromXchange + afterPendingFromReferral + afterPendingFromWelcome) <= 0) {
+  if (afterPendingFromWelcome > 0) {
+    afterExchangeableDoes = 0;
+  } else if ((afterPendingFromXchange + afterPendingFromReferral + afterPendingFromWelcome) <= 0) {
     afterExchangeableDoes = safeInt(afterApprovedDoes);
   } else {
     afterExchangeableDoes = Math.min(safeInt(afterApprovedDoes), safeInt(afterExchangeableDoes));

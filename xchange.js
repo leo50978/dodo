@@ -6,7 +6,8 @@ import { withButtonLoading } from "./loading-ui.js";
 import { getDepositFundingStatusSecure, walletMutateSecure } from "./secure-functions.js";
 
 const RATE_HTG_TO_DOES = 20;
-const BALANCE_DEBUG = true;
+const BALANCE_DEBUG = false;
+const WELCOME_PROGRESS_DEBUG = true;
 const WELCOME_LOCKED_SELL_STORAGE_KEY = "domino_welcome_locked_sell_attempt_v1";
 const WALLET_CACHE = new Map();
 let walletUnsub = null;
@@ -194,6 +195,17 @@ async function syncWalletFundingState(uid = currentUid()) {
         funding,
       });
     }
+    if (WELCOME_PROGRESS_DEBUG) {
+      console.log("[WELCOME_PROGRESS_DEBUG][XCHANGE] funding sync", {
+        uid: safeUid,
+        approvedDoesBalance: funding?.approvedDoesBalance,
+        exchangeableDoesAvailable: funding?.exchangeableDoesAvailable,
+        pendingPlayFromWelcomeDoes: funding?.pendingPlayFromWelcomeDoes,
+        welcomeBonusHtgConverted: funding?.welcomeBonusHtgConverted,
+        welcomeBonusHtgPlayed: funding?.welcomeBonusHtgPlayed,
+        hasRealApprovedDeposit: funding?.hasRealApprovedDeposit === true,
+      });
+    }
     setCachedWallet(safeUid, {
       does: safeInt(funding?.doesBalance),
       doesApprovedBalance: safeInt(funding?.approvedDoesBalance),
@@ -337,6 +349,18 @@ async function applyWalletMutation({ uid, deltaDoes = 0, deltaExchangedGourdes =
         welcomeBonusHtgConverted: nextWelcomeBonusHtgConverted,
         welcomeBonusHtgPlayed: nextWelcomeBonusHtgPlayed,
         totalExchangedHtgEver: nextTotalExchanged,
+      });
+    }
+    if (WELCOME_PROGRESS_DEBUG) {
+      console.log("[WELCOME_PROGRESS_DEBUG][XCHANGE] mutation success", {
+        uid,
+        type,
+        amountDoes,
+        afterApprovedDoes: nextApprovedDoes,
+        exchangeableDoesAvailable: nextExchangeableDoes,
+        pendingPlayFromWelcomeDoes: nextPendingFromWelcome,
+        welcomeBonusHtgConverted: nextWelcomeBonusHtgConverted,
+        welcomeBonusHtgPlayed: nextWelcomeBonusHtgPlayed,
       });
     }
     emitXchangeUpdated(uid);
