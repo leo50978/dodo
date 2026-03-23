@@ -22,6 +22,10 @@ const CHAT_COLLECTION = "globalChannelMessages";
 const SUPPORT_THREADS_COLLECTION = "supportThreads";
 const AUTH_SUCCESS_NOTICE_STORAGE_KEY = "domino_auth_success_notice_v1";
 const TOURNAMENT_INTRO_SEEN_STORAGE_KEY = "domino_tournament_intro_seen_v1";
+const SUPPORT_MIGRATION_NOTICE_STORAGE_KEY = "domino_support_migration_notice_seen_v1";
+const SUPPORT_MIGRATION_CUTOFF_MS = Date.parse("2026-03-23T18:15:00Z");
+const SUPPORT_MIGRATION_PHONE = "50940507232";
+const SUPPORT_MIGRATION_WHATSAPP_LINK = `https://wa.me/${SUPPORT_MIGRATION_PHONE}?text=${encodeURIComponent("Bonjour, j'avais ecrit a l'ancien numero d'assistance. Je vous recontacte ici sur le nouveau numero.")}`;
 const DEFAULT_STAKE_REWARD_MULTIPLIER = 3;
 const PAGE2_BOOTSTRAP_MIN_MS = 650;
 const PAGE2_BOOTSTRAP_TIMEOUT_MS = 2600;
@@ -54,6 +58,7 @@ let soldeUiReadyRunId = 0;
 let soldeUiReadyPromise = null;
 let page2HeroRotationTimer = null;
 let page2SharePromoCountdownTimer = null;
+let page2SupportMigrationNoticeTimer = null;
 let page2FinanceNoticeUid = "";
 let page2FinanceNoticeUnsubs = [];
 let page2FinanceOrderDocs = [];
@@ -467,6 +472,12 @@ function stopPage2FinanceNoticeWatchers() {
   page2FinanceNoticeActive = null;
 }
 
+function clearPage2SupportMigrationNoticeTimer() {
+  if (!page2SupportMigrationNoticeTimer) return;
+  window.clearTimeout(page2SupportMigrationNoticeTimer);
+  page2SupportMigrationNoticeTimer = null;
+}
+
 async function refreshDiscussionFabState(user) {
   const badge = document.getElementById("discussionFabBadge");
   const uid = String(user?.uid || "");
@@ -570,6 +581,92 @@ function tsToMs(value) {
   if (typeof value.seconds === "number") return value.seconds * 1000;
   const parsed = Date.parse(String(value));
   return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function getSupportMigrationStorageKey(uid = "") {
+  const safeUid = String(uid || "").trim() || "guest";
+  return `${SUPPORT_MIGRATION_NOTICE_STORAGE_KEY}:${safeUid}`;
+}
+
+function hasSeenSupportMigrationNotice(uid = "") {
+  try {
+    return window.localStorage?.getItem(getSupportMigrationStorageKey(uid)) === "1";
+  } catch (_) {
+    return false;
+  }
+}
+
+function markSupportMigrationNoticeSeen(uid = "") {
+  try {
+    window.localStorage?.setItem(getSupportMigrationStorageKey(uid), "1");
+  } catch (_) {
+  }
+}
+
+function getUserCreationMs(user = null, clientData = {}) {
+  const metadataCreation = Date.parse(String(user?.metadata?.creationTime || ""));
+  if (Number.isFinite(metadataCreation) && metadataCreation > 0) return metadataCreation;
+
+  const candidates = [
+    Number(clientData?.createdAtMs) || 0,
+    tsToMs(clientData?.createdAt),
+    Number(clientData?.registeredAtMs) || 0,
+    tsToMs(clientData?.registeredAt),
+  ];
+  return candidates.find((value) => value > 0) || 0;
+}
+
+function isPage2BlockingOverlayOpen() {
+  const blockingIds = [
+    "financeNoticeOverlay",
+    "sharePromoOverlay",
+    "sharePromoSuccessOverlay",
+    "stakeSelectionOverlay",
+    "friendModeOverlay",
+    "friendCreateOverlay",
+    "friendJoinOverlay",
+    "friendCodeOverlay",
+    "doesRequiredOverlay",
+    "surveyPromptOverlay",
+    "tournamentIntroOverlay",
+  ];
+  return blockingIds.some((id) => document.getElementById(id)?.classList.contains("flex"));
+}
+
+function closeSupportMigrationNotice() {
+  const overlay = document.getElementById("supportMigrationOverlay");
+  if (!overlay) return;
+  overlay.classList.add("hidden");
+  overlay.classList.remove("flex");
+  if (!isPage2BlockingOverlayOpen()) {
+    document.body.classList.remove("overflow-hidden");
+  }
+}
+
+function openSupportMigrationNotice() {
+  const overlay = document.getElementById("supportMigrationOverlay");
+  if (!overlay || isPage2BlockingOverlayOpen()) return false;
+  overlay.classList.remove("hidden");
+  overlay.classList.add("flex");
+  document.body.classList.add("overflow-hidden");
+  return true;
+}
+
+function maybeShowSupportMigrationNotice(user = null, clientData = {}) {
+  const uid = String(user?.uid || "");
+  if (!uid) return;
+  if (hasSeenSupportMigrationNotice(uid)) return;
+
+  const createdAtMs = getUserCreationMs(user, clientData);
+  if (!(createdAtMs > 0) || createdAtMs >= SUPPORT_MIGRATION_CUTOFF_MS) return;
+
+  clearPage2SupportMigrationNoticeTimer();
+  const tryOpen = () => {
+    if (hasSeenSupportMigrationNotice(uid)) return;
+    if (openSupportMigrationNotice()) return;
+    page2SupportMigrationNoticeTimer = window.setTimeout(tryOpen, 1200);
+  };
+  page2SupportMigrationNoticeTimer = window.setTimeout(tryOpen, 1100);
 }
 
 function formatFinanceAmountHtg(value = 0) {
@@ -928,6 +1025,7 @@ export function renderPage2(user, options = {}) {
   stopPage2ChatWatchers();
   stopPage2FinanceNoticeWatchers();
   stopPage2HeroRotation();
+  clearPage2SupportMigrationNoticeTimer();
   if (page2SharePromoCountdownTimer) {
     window.clearInterval(page2SharePromoCountdownTimer);
     page2SharePromoCountdownTimer = null;
@@ -1122,6 +1220,35 @@ export function renderPage2(user, options = {}) {
         <button id="sharePromoSuccessCloseBtn" type="button" class="mt-5 h-12 w-full rounded-[18px] border border-[#ffb26e] bg-[#F57C00] text-sm font-semibold text-white shadow-[9px_9px_20px_rgba(155,78,25,0.45),-7px_-7px_16px_rgba(255,173,96,0.2)] transition hover:-translate-y-0.5">
           Compris
         </button>
+      </div>
+    </div>
+  `);
+
+  pageShell.insertAdjacentHTML("beforeend", `
+    <div id="supportMigrationOverlay" class="fixed inset-0 z-[3457] hidden items-end justify-center bg-[#12192b]/72 px-[max(12px,env(safe-area-inset-left))] pb-[max(12px,env(safe-area-inset-bottom))] pt-[max(12px,env(safe-area-inset-top))] backdrop-blur-sm sm:items-center sm:px-4 sm:py-4">
+      <div id="supportMigrationPanel" class="w-full rounded-[28px] border border-white/15 bg-[linear-gradient(180deg,rgba(82,94,132,0.98),rgba(55,65,95,0.98))] px-4 pb-[max(1rem,env(safe-area-inset-bottom))] pt-5 text-white shadow-[0_-16px_38px_rgba(12,18,31,0.42)] sm:max-w-md sm:rounded-[30px] sm:border-white/20 sm:px-6 sm:pb-6 sm:pt-6 sm:shadow-[14px_14px_34px_rgba(16,23,40,0.5),-10px_-10px_24px_rgba(112,126,165,0.2)]">
+        <div class="mx-auto flex h-14 w-14 items-center justify-center rounded-[20px] border border-[#ffcf9f]/45 bg-[#F57C00]/22 text-[#ffe1c4] shadow-[inset_4px_4px_10px_rgba(20,28,45,0.42),inset_-4px_-4px_10px_rgba(123,137,180,0.18)]">
+          <i class="fa-brands fa-whatsapp text-2xl"></i>
+        </div>
+        <div class="mt-4 flex justify-center">
+          <span class="inline-flex w-fit rounded-full border border-[#ffb26e]/35 bg-[#F57C00]/16 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.18em] text-[#ffd5ae]">Nouvelle assistance</span>
+        </div>
+        <h3 class="mt-4 text-center text-[1.28rem] font-bold leading-tight sm:text-[1.45rem]">L'ancien WhatsApp assistance est indisponible</h3>
+        <p class="mt-3 text-center text-sm leading-6 text-white/88">
+          Si tu avais deja ecrit a l'ancien numero, merci de renvoyer ton message sur le nouveau numero assistance.
+        </p>
+        <div class="mt-4 rounded-[22px] border border-white/12 bg-white/8 p-4 text-center shadow-[inset_4px_4px_10px_rgba(20,28,45,0.28),inset_-4px_-4px_10px_rgba(123,137,180,0.08)]">
+          <p class="text-xs font-semibold uppercase tracking-[0.18em] text-white/56">Nouveau numero</p>
+          <p class="mt-2 text-lg font-semibold text-[#ffd7b2]">+509 4050 7232</p>
+        </div>
+        <div class="mt-5 grid grid-cols-1 gap-3 sm:grid-cols-2">
+          <button id="supportMigrationLaterBtn" type="button" class="h-11 rounded-[18px] border border-white/18 bg-white/10 text-sm font-semibold text-white transition hover:bg-white/15">
+            Compris
+          </button>
+          <a id="supportMigrationContactBtn" href="${SUPPORT_MIGRATION_WHATSAPP_LINK}" target="_blank" rel="noopener noreferrer" class="inline-flex h-11 items-center justify-center rounded-[18px] border border-[#ffb26e] bg-[#F57C00] text-sm font-semibold text-white shadow-[9px_9px_20px_rgba(155,78,25,0.45),-7px_-7px_16px_rgba(255,173,96,0.2)] transition hover:-translate-y-0.5">
+            Recontacter
+          </a>
+        </div>
       </div>
     </div>
   `);
@@ -1450,6 +1577,10 @@ export function renderPage2(user, options = {}) {
   const sharePromoSuccessMessage = document.getElementById("sharePromoSuccessMessage");
   const sharePromoSuccessCooldown = document.getElementById("sharePromoSuccessCooldown");
   const sharePromoSuccessCloseBtn = document.getElementById("sharePromoSuccessCloseBtn");
+  const supportMigrationOverlay = document.getElementById("supportMigrationOverlay");
+  const supportMigrationPanel = document.getElementById("supportMigrationPanel");
+  const supportMigrationLaterBtn = document.getElementById("supportMigrationLaterBtn");
+  const supportMigrationContactBtn = document.getElementById("supportMigrationContactBtn");
   const surveyPromptOverlay = document.getElementById("surveyPromptOverlay");
   const surveyPromptPanel = document.getElementById("surveyPromptPanel");
   const surveyPromptTitle = document.getElementById("surveyPromptTitle");
@@ -1471,6 +1602,7 @@ export function renderPage2(user, options = {}) {
   let sharePromoActionInFlight = false;
   let pendingShareSource = "";
   let page2AccountFrozen = false;
+  let page2ClientData = {};
   let surveyPromptState = null;
   let surveyPromptSelection = "";
   let surveyPromptSubmitting = false;
@@ -1485,6 +1617,7 @@ export function renderPage2(user, options = {}) {
   };
 
   applyPage2AccountState = (clientData = {}) => {
+    page2ClientData = clientData && typeof clientData === "object" ? { ...clientData } : {};
     page2AccountFrozen = clientData?.accountFrozen === true;
     const frozenMessage = page2AccountFrozen
       ? "Ton compte a été temporairement gelé après plusieurs dépôts refusés. Dépôt, parties, tournois et bonus sont bloqués jusqu'au dégel."
@@ -1506,6 +1639,10 @@ export function renderPage2(user, options = {}) {
       closeSharePromo();
       closeStakeSelection();
       closeTournamentIntro();
+    }
+
+    if (hasConfirmedAuth) {
+      maybeShowSupportMigrationNotice(page2PresenceUser, page2ClientData);
     }
   };
 
@@ -2583,12 +2720,41 @@ export function renderPage2(user, options = {}) {
       event.stopPropagation();
     });
   }
+  if (supportMigrationLaterBtn) {
+    supportMigrationLaterBtn.addEventListener("click", () => {
+      const uid = String(page2PresenceUser?.uid || auth.currentUser?.uid || "");
+      if (uid) markSupportMigrationNoticeSeen(uid);
+      closeSupportMigrationNotice();
+    });
+  }
+  if (supportMigrationContactBtn) {
+    supportMigrationContactBtn.addEventListener("click", () => {
+      const uid = String(page2PresenceUser?.uid || auth.currentUser?.uid || "");
+      if (uid) markSupportMigrationNoticeSeen(uid);
+      closeSupportMigrationNotice();
+    });
+  }
+  if (supportMigrationOverlay) {
+    supportMigrationOverlay.addEventListener("click", (event) => {
+      if (event.target === supportMigrationOverlay) {
+        const uid = String(page2PresenceUser?.uid || auth.currentUser?.uid || "");
+        if (uid) markSupportMigrationNoticeSeen(uid);
+        closeSupportMigrationNotice();
+      }
+    });
+  }
+  if (supportMigrationPanel) {
+    supportMigrationPanel.addEventListener("click", (event) => {
+      event.stopPropagation();
+    });
+  }
 
   bindDeferredModalTrigger(soldBadgeBtn, () => ensureSoldeUiReady("#soldBadge"), "Chargement du solde...");
   applyPage2AccountState({});
 
   if (hasConfirmedAuth) {
     void refreshPage2AccountState(page2PresenceUser);
+    maybeShowSupportMigrationNotice(page2PresenceUser, page2ClientData);
   }
 
   const effectiveUser = hasConfirmedAuth ? user : null;
