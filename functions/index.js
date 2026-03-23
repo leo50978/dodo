@@ -116,6 +116,12 @@ const BOT_PILOT_WINDOW_MS = 24 * 60 * 60 * 1000;
 const BOT_PILOT_SNAPSHOT_LIMIT = 5000;
 const BOT_PILOT_TREND_POINT_LIMIT = 12;
 const BOT_PILOT_EQUITY_POINT_LIMIT = 24;
+const ACQUISITION_DEFAULT_WINDOW_MS = 30 * 24 * 60 * 60 * 1000;
+const ACQUISITION_MAX_WINDOW_MS = 180 * 24 * 60 * 60 * 1000;
+const ACQUISITION_ACTIVE_LOOKBACK_MS = 7 * 24 * 60 * 60 * 1000;
+const ACQUISITION_FIDELITY_MIN_AGE_MS = 3 * 24 * 60 * 60 * 1000;
+const ACQUISITION_PAGE_FETCH_SIZE = 1000;
+const ACQUISITION_DOC_LIMIT = 10000;
 const BOT_DIFFICULTY_LOOKAHEAD = Object.freeze({
   amateur: 0,
   expert: 3,
@@ -2130,6 +2136,305 @@ function getBotPilotTrendLabel(windowKey = "today", ms = 0) {
     return `${String(date.getDate()).padStart(2, "0")}/${String(date.getMonth() + 1).padStart(2, "0")}`;
   }
   return `${String(date.getHours()).padStart(2, "0")}h`;
+}
+
+function normalizeAcquisitionGranularity(value = "", rangeMs = 0) {
+  const normalized = String(value || "").trim().toLowerCase();
+  if (normalized === "hour" && rangeMs > 0 && rangeMs <= (7 * 24 * 60 * 60 * 1000)) {
+    return "hour";
+  }
+  return "day";
+}
+
+function normalizeAcquisitionRange(options = {}, nowMs = Date.now()) {
+  const safeNow = safeSignedInt(nowMs) || Date.now();
+  let endMs = safeSignedInt(options.endMs ?? options.dateToMs ?? options.toMs) || safeNow;
+  if (endMs <= 0 || endMs > safeNow) endMs = safeNow;
+
+  let startMs = safeSignedInt(options.startMs ?? options.dateFromMs ?? options.fromMs)
+    || (endMs - ACQUISITION_DEFAULT_WINDOW_MS);
+  if (startMs <= 0 || startMs >= endMs) {
+    startMs = endMs - ACQUISITION_DEFAULT_WINDOW_MS;
+  }
+
+  if ((endMs - startMs) > ACQUISITION_MAX_WINDOW_MS) {
+    startMs = endMs - ACQUISITION_MAX_WINDOW_MS;
+  }
+
+  const rangeMs = Math.max(1, endMs - startMs);
+  const granularity = normalizeAcquisitionGranularity(
+    options.granularity || options.bucket || options.resolution,
+    rangeMs
+  );
+
+  return {
+    startMs,
+    endMs,
+    rangeMs,
+    granularity,
+  };
+}
+
+function getUtcDayKey(ms = 0) {
+  if (!ms) return "";
+  const date = new Date(ms);
+  return `${date.getUTCFullYear()}-${String(date.getUTCMonth() + 1).padStart(2, "0")}-${String(date.getUTCDate()).padStart(2, "0")}`;
+}
+
+function getUtcHourKey(ms = 0) {
+  if (!ms) return "";
+  const date = new Date(ms);
+  return `${getUtcDayKey(ms)} ${String(date.getUTCHours()).padStart(2, "0")}:00`;
+}
+
+function getAcquisitionBucketSizeMs(granularity = "day") {
+  return granularity === "hour" ? (60 * 60 * 1000) : (24 * 60 * 60 * 1000);
+}
+
+function getAcquisitionBucketStartMs(ms = 0, granularity = "day") {
+  const safeMs = safeSignedInt(ms);
+  if (!safeMs) return 0;
+  const bucketSizeMs = getAcquisitionBucketSizeMs(granularity);
+  return safeMs - (safeMs % bucketSizeMs);
+}
+
+function getAcquisitionBucketKey(ms = 0, granularity = "day") {
+  if (!ms) return "";
+  return granularity === "hour" ? getUtcHourKey(ms) : getUtcDayKey(ms);
+}
+
+function getAcquisitionBucketLabel(ms = 0, granularity = "day") {
+  if (!ms) return "-";
+  const date = new Date(ms);
+  const dd = String(date.getUTCDate()).padStart(2, "0");
+  const mm = String(date.getUTCMonth() + 1).padStart(2, "0");
+  if (granularity === "hour") {
+    const hh = String(date.getUTCHours()).padStart(2, "0");
+    return `${dd}/${mm} ${hh}h`;
+  }
+  return `${dd}/${mm}`;
+}
+
+function buildAcquisitionBucketSeed(startMs = 0, endMs = 0, granularity = "day") {
+  const bucketSizeMs = getAcquisitionBucketSizeMs(granularity);
+  const firstBucketStartMs = getAcquisitionBucketStartMs(startMs, granularity);
+  const lastBucketStartMs = getAcquisitionBucketStartMs(endMs, granularity);
+  const buckets = [];
+
+  for (let cursor = firstBucketStartMs; cursor <= lastBucketStartMs; cursor += bucketSizeMs) {
+    buckets.push({
+      startMs: cursor,
+      key: getAcquisitionBucketKey(cursor, granularity),
+      label: getAcquisitionBucketLabel(cursor, granularity),
+      signups: 0,
+      depositingSignups: 0,
+      activeSignups: 0,
+      fidelizedSignups: 0,
+      welcomeBonusSignups: 0,
+      frozenSignups: 0,
+      cumulativeAccounts: 0,
+    });
+  }
+
+  return buckets;
+}
+
+async function getAggregationCount(query) {
+  const aggregateSnap = await query.count().get();
+  const data = typeof aggregateSnap?.data === "function" ? (aggregateSnap.data() || {}) : {};
+  return safeInt(data.count);
+}
+
+async function fetchClientSignupRowsForRange(startMs = 0, endMs = 0) {
+  const rows = [];
+  let lastDoc = null;
+  let truncated = false;
+
+  while (rows.length < ACQUISITION_DOC_LIMIT) {
+    let query = db.collection(CLIENTS_COLLECTION)
+      .where("createdAtMs", ">=", startMs)
+      .where("createdAtMs", "<=", endMs)
+      .orderBy("createdAtMs", "asc")
+      .select(
+        "createdAtMs",
+        "lastSeenAtMs",
+        "hasApprovedDeposit",
+        "welcomeBonusClaimed",
+        "accountFrozen"
+      )
+      .limit(Math.min(ACQUISITION_PAGE_FETCH_SIZE, ACQUISITION_DOC_LIMIT - rows.length));
+
+    if (lastDoc) {
+      query = query.startAfter(lastDoc);
+    }
+
+    const snap = await query.get();
+    if (snap.empty) break;
+
+    snap.forEach((docSnap) => {
+      rows.push(docSnap.data() || {});
+    });
+
+    lastDoc = snap.docs[snap.docs.length - 1] || null;
+    if (snap.size < ACQUISITION_PAGE_FETCH_SIZE) break;
+  }
+
+  if (lastDoc) {
+    const moreSnap = await db.collection(CLIENTS_COLLECTION)
+      .where("createdAtMs", ">=", startMs)
+      .where("createdAtMs", "<=", endMs)
+      .orderBy("createdAtMs", "asc")
+      .startAfter(lastDoc)
+      .limit(1)
+      .get();
+    truncated = !moreSnap.empty;
+  }
+
+  return { rows, truncated };
+}
+
+async function computeClientAcquisitionSnapshot(options = {}) {
+  const nowMs = safeSignedInt(options.nowMs) || Date.now();
+  const range = normalizeAcquisitionRange(options, nowMs);
+  const activeCutoffMs = Math.max(0, range.endMs - ACQUISITION_ACTIVE_LOOKBACK_MS);
+  const clientsCollection = db.collection(CLIENTS_COLLECTION);
+
+  const [
+    totalAccounts,
+    accountsBeforeWindow,
+    activeAccounts,
+    realClients,
+    frozenAccounts,
+    signupRowsResult,
+  ] = await Promise.all([
+    getAggregationCount(clientsCollection),
+    getAggregationCount(clientsCollection.where("createdAtMs", "<", range.startMs)),
+    getAggregationCount(
+      clientsCollection
+        .where("lastSeenAtMs", ">=", activeCutoffMs)
+        .where("lastSeenAtMs", "<=", range.endMs)
+    ),
+    getAggregationCount(clientsCollection.where("hasApprovedDeposit", "==", true)),
+    getAggregationCount(clientsCollection.where("accountFrozen", "==", true)),
+    fetchClientSignupRowsForRange(range.startMs, range.endMs),
+  ]);
+
+  const bucketSeed = buildAcquisitionBucketSeed(range.startMs, range.endMs, range.granularity);
+  const bucketMap = new Map(bucketSeed.map((item) => [item.key, item]));
+  let signupsCount = 0;
+  let depositingSignupsCount = 0;
+  let activeSignupsCount = 0;
+  let fidelizedSignupsCount = 0;
+  let welcomeBonusSignupsCount = 0;
+  let frozenSignupsCount = 0;
+
+  signupRowsResult.rows.forEach((row) => {
+    const createdAtMs = safeSignedInt(row.createdAtMs) || toMillis(row.createdAt);
+    if (createdAtMs < range.startMs || createdAtMs > range.endMs) return;
+
+    const lastSeenAtMs = safeSignedInt(row.lastSeenAtMs) || toMillis(row.lastSeenAt);
+    const hasApprovedDeposit = row.hasApprovedDeposit === true;
+    const welcomeBonusClaimed = row.welcomeBonusClaimed === true;
+    const accountFrozen = row.accountFrozen === true;
+    const isActive = lastSeenAtMs >= activeCutoffMs;
+    const isFidelized = hasApprovedDeposit && lastSeenAtMs >= (createdAtMs + ACQUISITION_FIDELITY_MIN_AGE_MS);
+    const bucket = bucketMap.get(getAcquisitionBucketKey(createdAtMs, range.granularity));
+    if (!bucket) return;
+
+    signupsCount += 1;
+    bucket.signups += 1;
+
+    if (hasApprovedDeposit) {
+      depositingSignupsCount += 1;
+      bucket.depositingSignups += 1;
+    }
+    if (isActive) {
+      activeSignupsCount += 1;
+      bucket.activeSignups += 1;
+    }
+    if (isFidelized) {
+      fidelizedSignupsCount += 1;
+      bucket.fidelizedSignups += 1;
+    }
+    if (welcomeBonusClaimed) {
+      welcomeBonusSignupsCount += 1;
+      bucket.welcomeBonusSignups += 1;
+    }
+    if (accountFrozen) {
+      frozenSignupsCount += 1;
+      bucket.frozenSignups += 1;
+    }
+  });
+
+  let runningAccounts = accountsBeforeWindow;
+  const buckets = bucketSeed.map((bucket) => {
+    runningAccounts += safeInt(bucket.signups);
+    const signups = safeInt(bucket.signups);
+    const depositingSignups = safeInt(bucket.depositingSignups);
+    const activeSignups = safeInt(bucket.activeSignups);
+    const fidelizedSignups = safeInt(bucket.fidelizedSignups);
+    return {
+      startMs: safeSignedInt(bucket.startMs),
+      key: String(bucket.key || ""),
+      label: String(bucket.label || "-"),
+      signups,
+      depositingSignups,
+      activeSignups,
+      fidelizedSignups,
+      welcomeBonusSignups: safeInt(bucket.welcomeBonusSignups),
+      frozenSignups: safeInt(bucket.frozenSignups),
+      signupToDepositRatePct: signups > 0 ? Number(((depositingSignups / signups) * 100).toFixed(2)) : 0,
+      signupToActiveRatePct: signups > 0 ? Number(((activeSignups / signups) * 100).toFixed(2)) : 0,
+      signupToFidelizedRatePct: signups > 0 ? Number(((fidelizedSignups / signups) * 100).toFixed(2)) : 0,
+      cumulativeAccounts: runningAccounts,
+    };
+  });
+
+  return {
+    generatedAtMs: nowMs,
+    timezone: "UTC",
+    window: {
+      startMs: range.startMs,
+      endMs: range.endMs,
+      rangeMs: range.rangeMs,
+      granularity: range.granularity,
+    },
+    definitions: {
+      activeLookbackDays: Math.round(ACQUISITION_ACTIVE_LOOKBACK_MS / (24 * 60 * 60 * 1000)),
+      fidelizedMinAgeDays: Math.round(ACQUISITION_FIDELITY_MIN_AGE_MS / (24 * 60 * 60 * 1000)),
+      fidelizedRule: "Compte avec vrai depot approuve et retour constate au moins 3 jours apres l'inscription.",
+      cohortScope: "Les taux de conversion et de fidelisation portent sur les comptes inscrits dans la periode choisie.",
+    },
+    summary: {
+      totalAccounts,
+      accountsBeforeWindow,
+      signupsCount,
+      activeAccounts,
+      realClients,
+      frozenAccounts,
+      depositingSignupsCount,
+      activeSignupsCount,
+      fidelizedSignupsCount,
+      welcomeBonusSignupsCount,
+      frozenSignupsCount,
+      activeRatePct: totalAccounts > 0 ? Number(((activeAccounts / totalAccounts) * 100).toFixed(2)) : 0,
+      realClientRatePct: totalAccounts > 0 ? Number(((realClients / totalAccounts) * 100).toFixed(2)) : 0,
+      signupToDepositRatePct: signupsCount > 0 ? Number(((depositingSignupsCount / signupsCount) * 100).toFixed(2)) : 0,
+      signupToActiveRatePct: signupsCount > 0 ? Number(((activeSignupsCount / signupsCount) * 100).toFixed(2)) : 0,
+      signupToFidelizedRatePct: signupsCount > 0 ? Number(((fidelizedSignupsCount / signupsCount) * 100).toFixed(2)) : 0,
+    },
+    series: {
+      signups: buckets.map((item) => ({ startMs: item.startMs, label: item.label, value: item.signups })),
+      cumulativeAccounts: buckets.map((item) => ({ startMs: item.startMs, label: item.label, value: item.cumulativeAccounts })),
+      depositingSignups: buckets.map((item) => ({ startMs: item.startMs, label: item.label, value: item.depositingSignups })),
+      activeSignups: buckets.map((item) => ({ startMs: item.startMs, label: item.label, value: item.activeSignups })),
+      fidelizedSignups: buckets.map((item) => ({ startMs: item.startMs, label: item.label, value: item.fidelizedSignups })),
+    },
+    buckets,
+    truncated: signupRowsResult.truncated === true,
+    scannedSignupDocs: safeInt(signupRowsResult.rows.length),
+    scanLimit: ACQUISITION_DOC_LIMIT,
+  };
 }
 
 function chooseAutoBotDifficulty(snapshot = {}) {
@@ -7577,6 +7882,17 @@ exports.getGlobalAnalyticsSnapshot = publicOnCall("getGlobalAnalyticsSnapshot", 
       hourOfDay: presenceHourSnap.docs.map(snapshotRecordForCallable),
       weekday: presenceWeekdaySnap.docs.map(snapshotRecordForCallable),
     },
+  };
+});
+
+exports.getClientAcquisitionSnapshot = publicOnCall("getClientAcquisitionSnapshot", async (request) => {
+  assertFinanceAdmin(request);
+  const payload = request.data && typeof request.data === "object" ? request.data : {};
+  const snapshot = await computeClientAcquisitionSnapshot(payload);
+
+  return {
+    ok: true,
+    snapshot,
   };
 });
 

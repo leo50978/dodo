@@ -144,6 +144,10 @@ export async function getGlobalAnalyticsSnapshotSecure(payload = {}) {
   return invokeCallable("getGlobalAnalyticsSnapshot", payload, "Impossible de charger les analytics globaux.");
 }
 
+export async function getClientAcquisitionSnapshotSecure(payload = {}) {
+  return invokeCallable("getClientAcquisitionSnapshot", payload, "Impossible de charger les analytics d'acquisition.");
+}
+
 export async function markChatSeenSecure(payload = {}) {
   return invokeCallable("markChatSeenSecure", payload, "Impossible de marquer la discussion comme lue.");
 }
