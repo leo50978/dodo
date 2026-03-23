@@ -896,7 +896,7 @@ function updateProfileData(user) {
     : Math.min(
       requestedLockedWelcomeDoes,
       pendingPlayFromWelcomeDoes,
-      safeCount(doesApprovedBalance || resolvedDoesBalance)
+      safeCount(doesApprovedBalance)
     );
   const allowLegacyAvailableFallback = !latestProfileFundingData
     && safeCount(approvedHtgAvailable + provisionalHtgAvailable) <= 0
