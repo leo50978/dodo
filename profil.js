@@ -6,6 +6,7 @@ import { db, doc, getDoc } from "./firebase-init.js";
 import { getDepositFundingStatusSecure } from "./secure-functions.js";
 const BALANCE_DEBUG = true;
 const ASSISTANCE_PHONE = "50941752992";
+const RATE_HTG_TO_DOES = 20;
 const AUTH_PROFILE_HINT_STORAGE_KEY = "domino_auth_profile_hint_v1";
 const WELCOME_LOCKED_SELL_STORAGE_KEY = "domino_welcome_locked_sell_attempt_v1";
 const PUBLIC_HOME_URL = "https://dominoeslakay.com/inedex.html";
@@ -816,6 +817,8 @@ function updateProfileData(user) {
   const verifiedAvailableHintEl = document.getElementById("profileVerifiedAvailableHint");
   const withdrawAvailableEl = document.getElementById("profileWithdrawAvailable");
   const exchangeableDoesEl = document.getElementById("profileExchangeableDoesAvailable");
+  const exchangeableDoesLabelEl = document.getElementById("profileExchangeableDoesLabel");
+  const exchangeableDoesHintEl = document.getElementById("profileExchangeableDoesHint");
   const lockedWelcomeDoesCardEl = document.getElementById("profileLockedWelcomeDoesCard");
   const lockedWelcomeDoesEl = document.getElementById("profileLockedWelcomeDoes");
   const pendingHintEl = document.getElementById("profilePendingBalanceHint");
@@ -855,6 +858,32 @@ function updateProfileData(user) {
         fundingData.welcomeBonusHtgAvailable,
         xState?.welcomeBonusHtgAvailable,
         clientData.welcomeBonusHtgAvailable
+      )
+  );
+  const welcomeBonusHtgConverted = safeCount(
+    xState?.loaded === true
+      ? pickFirstFiniteNumber(
+        xState?.welcomeBonusHtgConverted,
+        fundingData.welcomeBonusHtgConverted,
+        clientData.welcomeBonusHtgConverted
+      )
+      : pickFirstFiniteNumber(
+        fundingData.welcomeBonusHtgConverted,
+        xState?.welcomeBonusHtgConverted,
+        clientData.welcomeBonusHtgConverted
+      )
+  );
+  const welcomeBonusHtgPlayed = safeCount(
+    xState?.loaded === true
+      ? pickFirstFiniteNumber(
+        xState?.welcomeBonusHtgPlayed,
+        fundingData.welcomeBonusHtgPlayed,
+        clientData.welcomeBonusHtgPlayed
+      )
+      : pickFirstFiniteNumber(
+        fundingData.welcomeBonusHtgPlayed,
+        xState?.welcomeBonusHtgPlayed,
+        clientData.welcomeBonusHtgPlayed
       )
   );
   const doesApprovedBalance = safeCount(
@@ -898,6 +927,12 @@ function updateProfileData(user) {
       pendingPlayFromWelcomeDoes,
       safeCount(doesApprovedBalance)
     );
+  const welcomeUnlockedByPlayDoes = hasRealApprovedDeposit
+    ? 0
+    : safeCount(Math.min(welcomeBonusHtgConverted, welcomeBonusHtgPlayed) * RATE_HTG_TO_DOES);
+  const displayExchangeableDoes = !hasRealApprovedDeposit && welcomeBonusHtgConverted > 0
+    ? welcomeUnlockedByPlayDoes
+    : exchangeableDoesAvailable;
   const allowLegacyAvailableFallback = !latestProfileFundingData
     && safeCount(approvedHtgAvailable + provisionalHtgAvailable) <= 0
     && xState?.loaded !== true;
@@ -1000,11 +1035,15 @@ function updateProfileData(user) {
       approvedHtgAvailable,
       provisionalHtgAvailable,
       welcomeBonusHtgAvailable,
+      welcomeBonusHtgConverted,
+      welcomeBonusHtgPlayed,
+      welcomeUnlockedByPlayDoes,
       exchanged: resolvedXState.exchangedGourdes,
       does: resolvedDoesBalance,
       doesApprovedBalance,
       doesProvisionalBalance,
       exchangeableDoesAvailable,
+      displayExchangeableDoes,
       accountFrozen,
       withdrawalHold,
       withdrawalLocked,
@@ -1042,7 +1081,17 @@ function updateProfileData(user) {
   if (approvedDoesEl) approvedDoesEl.textContent = formatDoesAmount(doesApprovedBalance);
   if (provisionalDoesEl) provisionalDoesEl.textContent = formatDoesAmount(doesProvisionalBalance);
   if (withdrawAvailableEl) withdrawAvailableEl.textContent = formatAmount(resolvedXState.withdrawableHtg);
-  if (exchangeableDoesEl) exchangeableDoesEl.textContent = formatDoesAmount(exchangeableDoesAvailable);
+  if (exchangeableDoesEl) exchangeableDoesEl.textContent = formatDoesAmount(displayExchangeableDoes);
+  if (exchangeableDoesLabelEl) {
+    exchangeableDoesLabelEl.textContent = !hasRealApprovedDeposit && welcomeBonusHtgConverted > 0
+      ? "Does débloqués par jeu"
+      : "Does dispo échange";
+  }
+  if (exchangeableDoesHintEl) {
+    exchangeableDoesHintEl.textContent = !hasRealApprovedDeposit && welcomeBonusHtgConverted > 0
+      ? "Part du bonus bienvenue déjà débloquée par tes parties. Elle reste gelée jusqu'au premier dépôt réel approuvé."
+      : "Does approuvés que tu peux reconvertir.";
+  }
   if (lockedWelcomeDoesEl) lockedWelcomeDoesEl.textContent = formatDoesAmount(lockedWelcomeDoes);
   if (lockedWelcomeDoesCardEl) lockedWelcomeDoesCardEl.classList.toggle("hidden", lockedWelcomeDoes <= 0);
   if (approvedDepositsSummaryEl) approvedDepositsSummaryEl.textContent = `Dépôts approuvés: ${formatAmount(approvedDepositsTotal)}`;
@@ -1062,8 +1111,8 @@ function updateProfileData(user) {
   }
   if (doesBreakdownEl) {
     doesBreakdownEl.textContent = lockedWelcomeDoes > 0
-      ? `Total Does: ${formatDoesAmount(resolvedDoesBalance)} | Approuvés: ${formatDoesAmount(doesApprovedBalance)} | En examen: ${formatDoesAmount(doesProvisionalBalance)} | Dispo échange: ${formatDoesAmount(exchangeableDoesAvailable)} | Gelés: ${formatDoesAmount(lockedWelcomeDoes)}`
-      : `Total Does: ${formatDoesAmount(resolvedDoesBalance)} | Approuvés: ${formatDoesAmount(doesApprovedBalance)} | En examen: ${formatDoesAmount(doesProvisionalBalance)} | Dispo échange: ${formatDoesAmount(exchangeableDoesAvailable)}`;
+      ? `Total Does: ${formatDoesAmount(resolvedDoesBalance)} | Approuvés: ${formatDoesAmount(doesApprovedBalance)} | En examen: ${formatDoesAmount(doesProvisionalBalance)} | Dispo échange: ${formatDoesAmount(displayExchangeableDoes)} | Gelés: ${formatDoesAmount(lockedWelcomeDoes)}`
+      : `Total Does: ${formatDoesAmount(resolvedDoesBalance)} | Approuvés: ${formatDoesAmount(doesApprovedBalance)} | En examen: ${formatDoesAmount(doesProvisionalBalance)} | Dispo échange: ${formatDoesAmount(displayExchangeableDoes)}`;
   }
   if (frozenBannerEl) frozenBannerEl.classList.toggle("hidden", withdrawalLocked !== true);
   if (frozenMessageEl) {

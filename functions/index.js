@@ -696,7 +696,14 @@ function buildWalletFundingSnapshot({
   const pendingPlayFromWelcomeDoes = safeInt(walletData.pendingPlayFromWelcomeDoes);
   const welcomeBonusHtgAvailable = safeInt(walletData.welcomeBonusHtgAvailable);
   const welcomeBonusHtgConverted = safeInt(walletData.welcomeBonusHtgConverted);
-  const welcomeBonusHtgPlayed = safeInt(walletData.welcomeBonusHtgPlayed);
+  const welcomePlayedDoesFromHistory = (Array.isArray(exchangeHistory) ? exchangeHistory : []).reduce((sum, item) => {
+    if (String(item?.type || "").trim() !== "game_entry") return sum;
+    return sum + safeInt(item?.gameEntryFunding?.welcomeDoes);
+  }, 0);
+  const welcomeBonusHtgPlayed = Math.max(
+    safeInt(walletData.welcomeBonusHtgPlayed),
+    Math.floor(welcomePlayedDoesFromHistory / RATE_HTG_TO_DOES)
+  );
   const pendingPlayTotalDoes = pendingPlayFromXchangeDoes + pendingPlayFromReferralDoes + pendingPlayFromWelcomeDoes;
   const exchangeableDoesAvailable = safeInt(
     typeof walletData.exchangeableDoesAvailable === "number"
