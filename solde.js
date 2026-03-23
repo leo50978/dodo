@@ -107,6 +107,15 @@ function computeOrderAmount(order) {
   }, 0)));
 }
 
+function isWelcomeBonusOrder(order) {
+  const orderType = String(order?.orderType || order?.kind || "").trim().toLowerCase();
+  return order?.isWelcomeBonus === true || orderType === "welcome_bonus";
+}
+
+function computeRealDepositAmount(order) {
+  return isWelcomeBonusOrder(order) ? 0 : computeOrderAmount(order);
+}
+
 function computeReservedWithdrawalAmount(withdrawal) {
   return Math.max(0, Math.floor(Number(withdrawal?.requestedAmount ?? withdrawal?.amount) || 0));
 }
@@ -936,7 +945,7 @@ function ensureSoldeAuthWatcher() {
 function refreshBalanceFromCaches() {
   const approvedDeposits = cachedOrders
     .filter((o) => o.status === "approved")
-    .reduce((sum, o) => sum + computeOrderAmount(o), 0);
+    .reduce((sum, o) => sum + computeRealDepositAmount(o), 0);
   const reservedWithdrawals = cachedWithdrawals
     .filter((o) => o.status !== "rejected")
     .reduce((sum, o) => sum + computeReservedWithdrawalAmount(o), 0);

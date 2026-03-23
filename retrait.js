@@ -140,6 +140,15 @@ function computeOrderAmount(order) {
   }, 0));
 }
 
+function isWelcomeBonusOrder(order) {
+  const orderType = String(order?.orderType || order?.kind || "").trim().toLowerCase();
+  return order?.isWelcomeBonus === true || orderType === "welcome_bonus";
+}
+
+function computeRealDepositAmount(order) {
+  return isWelcomeBonusOrder(order) ? 0 : computeOrderAmount(order);
+}
+
 export async function getWithdrawalRuleStatus(uid) {
   const approvedOrdersQuery = query(
     collection(db, "clients", uid, "orders"),
@@ -154,7 +163,7 @@ export async function getWithdrawalRuleStatus(uid) {
 
   const approvedDepositsHtgFallback = ordersSnap.docs.reduce((sum, item) => {
     const data = item.data() || {};
-    return sum + computeOrderAmount(data);
+    return sum + computeRealDepositAmount(data);
   }, 0);
 
   const clientData = clientSnap.exists() ? (clientSnap.data() || {}) : {};

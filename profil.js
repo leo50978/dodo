@@ -817,11 +817,17 @@ function updateProfileData(user) {
     )
   );
   const welcomeBonusHtgAvailable = safeCount(
-    pickFirstFiniteNumber(
-      fundingData.welcomeBonusHtgAvailable,
-      xState?.welcomeBonusHtgAvailable,
-      clientData.welcomeBonusHtgAvailable
-    )
+    xState?.loaded === true
+      ? pickFirstFiniteNumber(
+        xState?.welcomeBonusHtgAvailable,
+        fundingData.welcomeBonusHtgAvailable,
+        clientData.welcomeBonusHtgAvailable
+      )
+      : pickFirstFiniteNumber(
+        fundingData.welcomeBonusHtgAvailable,
+        xState?.welcomeBonusHtgAvailable,
+        clientData.welcomeBonusHtgAvailable
+      )
   );
   const doesApprovedBalance = safeCount(
     pickFirstFiniteNumber(
@@ -848,15 +854,23 @@ function updateProfileData(user) {
     && safeCount(approvedHtgAvailable + provisionalHtgAvailable) <= 0
     && xState?.loaded !== true;
   const resolvedAvailableHtg = safeCount(
-    allowLegacyAvailableFallback
+    xState?.loaded === true
       ? pickFirstFiniteNumber(
-        fundingData.playableHtg,
-        approvedHtgAvailable + provisionalHtgAvailable,
-        xState.availableGourdes
-      )
-      : pickFirstFiniteNumber(
+        xState.availableGourdes,
         fundingData.playableHtg,
         approvedHtgAvailable + provisionalHtgAvailable
+      )
+      : (
+        allowLegacyAvailableFallback
+          ? pickFirstFiniteNumber(
+            fundingData.playableHtg,
+            approvedHtgAvailable + provisionalHtgAvailable,
+            xState.availableGourdes
+          )
+          : pickFirstFiniteNumber(
+            fundingData.playableHtg,
+            approvedHtgAvailable + provisionalHtgAvailable
+          )
       )
   );
   const resolvedDoesBalance = safeCount(
