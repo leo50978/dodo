@@ -8311,16 +8311,20 @@ exports.getClientAcquisitionSnapshot = publicOnCall("getClientAcquisitionSnapsho
   };
 });
 
-exports.getDepositMethodAnalyticsSnapshot = publicOnCall("getDepositMethodAnalyticsSnapshot", async (request) => {
-  assertFinanceAdmin(request);
-  const payload = request.data && typeof request.data === "object" ? request.data : {};
-  const snapshot = await computeDepositAnalyticsSnapshot(payload);
+exports.getDepositMethodAnalyticsSnapshot = publicOnCall(
+  "getDepositMethodAnalyticsSnapshot",
+  async (request) => {
+    assertFinanceAdmin(request);
+    const payload = request.data && typeof request.data === "object" ? request.data : {};
+    const snapshot = await computeDepositAnalyticsSnapshot(payload);
 
-  return {
-    ok: true,
-    snapshot,
-  };
-});
+    return {
+      ok: true,
+      snapshot,
+    };
+  },
+  { invoker: "public" }
+);
 
 exports.updateClientProfileSecure = publicOnCall("updateClientProfileSecure", async (request) => {
   const { uid, email } = assertAuth(request);
