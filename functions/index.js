@@ -2596,59 +2596,35 @@ function normalizeDepositAnalyticsMethod(order = {}) {
 }
 
 async function fetchDepositAnalyticsRowsForRange(startMs = 0, endMs = 0) {
-  const rows = [];
-  let lastDoc = null;
-  let truncated = false;
+  const querySnap = await db.collectionGroup("orders")
+    .where("createdAtMs", ">=", startMs)
+    .where("createdAtMs", "<=", endMs)
+    .select(
+      "amount",
+      "items",
+      "status",
+      "resolutionStatus",
+      "approvedAmountHtg",
+      "fundingVersion",
+      "creditMode",
+      "createdAtMs",
+      "createdAt",
+      "methodId",
+      "methodName",
+      "orderType",
+      "kind"
+    )
+    .limit(DEPOSIT_ANALYTICS_DOC_LIMIT + 1)
+    .get();
 
-  while (rows.length < DEPOSIT_ANALYTICS_DOC_LIMIT) {
-    let query = db.collectionGroup("orders")
-      .where("createdAtMs", ">=", startMs)
-      .where("createdAtMs", "<=", endMs)
-      .orderBy("createdAtMs", "asc")
-      .select(
-        "amount",
-        "items",
-        "status",
-        "resolutionStatus",
-        "approvedAmountHtg",
-        "fundingVersion",
-        "creditMode",
-        "createdAtMs",
-        "createdAt",
-        "methodId",
-        "methodName",
-        "orderType",
-        "kind"
-      )
-      .limit(Math.min(DEPOSIT_ANALYTICS_PAGE_FETCH_SIZE, DEPOSIT_ANALYTICS_DOC_LIMIT - rows.length));
+  const rows = querySnap.docs
+    .slice(0, DEPOSIT_ANALYTICS_DOC_LIMIT)
+    .map((docSnap) => docSnap.data() || {});
 
-    if (lastDoc) {
-      query = query.startAfter(lastDoc);
-    }
-
-    const snap = await query.get();
-    if (snap.empty) break;
-
-    snap.forEach((docSnap) => {
-      rows.push(docSnap.data() || {});
-    });
-
-    lastDoc = snap.docs[snap.docs.length - 1] || null;
-    if (snap.size < DEPOSIT_ANALYTICS_PAGE_FETCH_SIZE) break;
-  }
-
-  if (lastDoc) {
-    const moreSnap = await db.collectionGroup("orders")
-      .where("createdAtMs", ">=", startMs)
-      .where("createdAtMs", "<=", endMs)
-      .orderBy("createdAtMs", "asc")
-      .startAfter(lastDoc)
-      .limit(1)
-      .get();
-    truncated = !moreSnap.empty;
-  }
-
-  return { rows, truncated };
+  return {
+    rows,
+    truncated: querySnap.size > DEPOSIT_ANALYTICS_DOC_LIMIT,
+  };
 }
 
 async function computeDepositAnalyticsSnapshot(options = {}) {
