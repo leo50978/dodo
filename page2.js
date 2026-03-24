@@ -2005,6 +2005,18 @@ export function renderPage2(user, options = {}) {
   };
 
   const completeWelcomeBonusCoach = async () => {
+    const completedAtMs = Date.now();
+    page2ClientData = {
+      ...page2ClientData,
+      welcomeBonusClaimed: true,
+      welcomeBonusTutorialCompletedAtMs: completedAtMs,
+    };
+    page2WelcomeBonusFundingCache = {
+      ...(page2WelcomeBonusFundingCache || {}),
+      welcomeBonusClaimed: true,
+      welcomeBonusEligible: false,
+      welcomeBonusTutorialCompletedAtMs: completedAtMs,
+    };
     try {
       const result = await updateClientProfileSecure({
         welcomeBonusTutorialCompleted: true,
@@ -2013,10 +2025,13 @@ export function renderPage2(user, options = {}) {
       page2ClientData = {
         ...page2ClientData,
         ...profile,
-        welcomeBonusTutorialCompletedAtMs: Number(profile?.welcomeBonusTutorialCompletedAtMs || Date.now()) || Date.now(),
+        welcomeBonusClaimed: true,
+        welcomeBonusTutorialCompletedAtMs: Number(profile?.welcomeBonusTutorialCompletedAtMs || completedAtMs) || completedAtMs,
       };
       page2WelcomeBonusFundingCache = {
         ...(page2WelcomeBonusFundingCache || {}),
+        welcomeBonusClaimed: true,
+        welcomeBonusEligible: false,
         welcomeBonusTutorialCompletedAtMs: page2ClientData.welcomeBonusTutorialCompletedAtMs,
       };
     } catch (error) {
@@ -3277,6 +3292,25 @@ export function renderPage2(user, options = {}) {
       event.stopPropagation();
     });
   }
+  window.addEventListener("welcomeBonusClaimed", () => {
+    const claimedAtMs = Date.now();
+    page2ClientData = {
+      ...page2ClientData,
+      welcomeBonusClaimed: true,
+      welcomeBonusTutorialCompletedAtMs: Number(page2ClientData?.welcomeBonusTutorialCompletedAtMs) > 0
+        ? Number(page2ClientData.welcomeBonusTutorialCompletedAtMs)
+        : claimedAtMs,
+    };
+    page2WelcomeBonusFundingCache = {
+      ...(page2WelcomeBonusFundingCache || {}),
+      welcomeBonusClaimed: true,
+      welcomeBonusEligible: false,
+      welcomeBonusTutorialCompletedAtMs: Number(page2WelcomeBonusFundingCache?.welcomeBonusTutorialCompletedAtMs) > 0
+        ? Number(page2WelcomeBonusFundingCache.welcomeBonusTutorialCompletedAtMs)
+        : claimedAtMs,
+    };
+    closeWelcomeBonusPrompt();
+  });
 
   bindDeferredModalTrigger(soldBadgeBtn, () => ensureSoldeUiReady("#soldBadge"), "Chargement du solde...");
   applyPage2AccountState({});
