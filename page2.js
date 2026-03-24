@@ -1312,12 +1312,12 @@ export function renderPage2(user, options = {}) {
   `);
 
   pageShell.insertAdjacentHTML("beforeend", `
-    <div id="welcomeBonusCoachOverlay" class="fixed inset-0 z-[3460] hidden">
+    <div id="welcomeBonusCoachOverlay" class="pointer-events-none fixed inset-0 z-[3460] hidden">
       <div id="welcomeBonusCoachBackdrop" class="absolute inset-0 bg-[#12192b]/38"></div>
       <div id="welcomeBonusCoachArrow" class="pointer-events-none absolute text-[40px] text-[#ffd7b2] drop-shadow-[0_8px_18px_rgba(18,25,42,0.45)]">
         <i class="fa-solid fa-arrow-down-long"></i>
       </div>
-      <div id="welcomeBonusCoachBubble" class="absolute max-w-[min(86vw,320px)] rounded-[22px] border border-white/15 bg-[linear-gradient(180deg,rgba(82,94,132,0.98),rgba(55,65,95,0.98))] px-4 py-4 text-white shadow-[14px_14px_34px_rgba(16,23,40,0.42),-10px_-10px_24px_rgba(112,126,165,0.18)]">
+      <div id="welcomeBonusCoachBubble" class="pointer-events-auto absolute max-w-[min(86vw,320px)] rounded-[22px] border border-white/15 bg-[linear-gradient(180deg,rgba(82,94,132,0.98),rgba(55,65,95,0.98))] px-4 py-4 text-white shadow-[14px_14px_34px_rgba(16,23,40,0.42),-10px_-10px_24px_rgba(112,126,165,0.18)]">
         <p class="text-xs font-semibold uppercase tracking-[0.18em] text-[#ffd4ab]/80">Guide bonus</p>
         <h4 id="welcomeBonusCoachTitle" class="mt-2 text-[1.05rem] font-bold leading-tight">Suis les étapes</h4>
         <p id="welcomeBonusCoachText" class="mt-2 text-sm leading-6 text-white/86"></p>
