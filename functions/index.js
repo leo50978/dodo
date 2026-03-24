@@ -123,6 +123,10 @@ const ACQUISITION_ACTIVE_LOOKBACK_MS = 7 * 24 * 60 * 60 * 1000;
 const ACQUISITION_FIDELITY_MIN_AGE_MS = 3 * 24 * 60 * 60 * 1000;
 const ACQUISITION_PAGE_FETCH_SIZE = 1000;
 const ACQUISITION_DOC_LIMIT = 10000;
+const DEPOSIT_ANALYTICS_DEFAULT_WINDOW_MS = 30 * 24 * 60 * 60 * 1000;
+const DEPOSIT_ANALYTICS_MAX_WINDOW_MS = 180 * 24 * 60 * 60 * 1000;
+const DEPOSIT_ANALYTICS_PAGE_FETCH_SIZE = 1000;
+const DEPOSIT_ANALYTICS_DOC_LIMIT = 12000;
 const BOT_DIFFICULTY_LOOKAHEAD = Object.freeze({
   amateur: 0,
   expert: 3,
@@ -2453,6 +2457,398 @@ async function computeClientAcquisitionSnapshot(options = {}) {
     truncated: signupRowsResult.truncated === true,
     scannedSignupDocs: safeInt(signupRowsResult.rows.length),
     scanLimit: ACQUISITION_DOC_LIMIT,
+  };
+}
+
+function normalizeDepositAnalyticsGranularity(rawValue = "", rangeMs = DEPOSIT_ANALYTICS_DEFAULT_WINDOW_MS) {
+  const raw = String(rawValue || "").trim().toLowerCase();
+  if (raw === "hour" || raw === "day" || raw === "week") return raw;
+  if (rangeMs <= (3 * 24 * 60 * 60 * 1000)) return "hour";
+  if (rangeMs <= (75 * 24 * 60 * 60 * 1000)) return "day";
+  return "week";
+}
+
+function normalizeDepositAnalyticsRange(options = {}, nowMs = Date.now()) {
+  const safeNow = safeSignedInt(nowMs) || Date.now();
+  let endMs = safeSignedInt(options.endMs ?? options.dateToMs ?? options.toMs) || safeNow;
+  if (endMs <= 0 || endMs > safeNow) endMs = safeNow;
+
+  let startMs = safeSignedInt(options.startMs ?? options.dateFromMs ?? options.fromMs)
+    || (endMs - DEPOSIT_ANALYTICS_DEFAULT_WINDOW_MS);
+  if (startMs <= 0 || startMs >= endMs) {
+    startMs = endMs - DEPOSIT_ANALYTICS_DEFAULT_WINDOW_MS;
+  }
+
+  if ((endMs - startMs) > DEPOSIT_ANALYTICS_MAX_WINDOW_MS) {
+    startMs = endMs - DEPOSIT_ANALYTICS_MAX_WINDOW_MS;
+  }
+
+  const rangeMs = Math.max(1, endMs - startMs);
+  return {
+    startMs,
+    endMs,
+    rangeMs,
+    granularity: normalizeDepositAnalyticsGranularity(
+      options.granularity || options.bucket || options.resolution,
+      rangeMs
+    ),
+  };
+}
+
+function getUtcWeekStartMs(ms = 0) {
+  const safeMs = safeSignedInt(ms);
+  if (!safeMs) return 0;
+  const date = new Date(safeMs);
+  const weekday = date.getUTCDay();
+  const mondayOffset = weekday === 0 ? -6 : (1 - weekday);
+  return Date.UTC(
+    date.getUTCFullYear(),
+    date.getUTCMonth(),
+    date.getUTCDate() + mondayOffset,
+    0, 0, 0, 0
+  );
+}
+
+function getDepositAnalyticsBucketStartMs(ms = 0, granularity = "day") {
+  const safeMs = safeSignedInt(ms);
+  if (!safeMs) return 0;
+  if (granularity === "hour") return getAcquisitionBucketStartMs(safeMs, "hour");
+  if (granularity === "week") return getUtcWeekStartMs(safeMs);
+  return getAcquisitionBucketStartMs(safeMs, "day");
+}
+
+function getDepositAnalyticsBucketKey(ms = 0, granularity = "day") {
+  if (!ms) return "";
+  if (granularity === "hour") return getUtcHourKey(ms);
+  if (granularity === "week") {
+    const startMs = getUtcWeekStartMs(ms);
+    return `W:${getUtcDayKey(startMs)}`;
+  }
+  return getUtcDayKey(ms);
+}
+
+function getDepositAnalyticsBucketLabel(ms = 0, granularity = "day") {
+  if (!ms) return "-";
+  const date = new Date(ms);
+  const dd = String(date.getUTCDate()).padStart(2, "0");
+  const mm = String(date.getUTCMonth() + 1).padStart(2, "0");
+  if (granularity === "hour") {
+    const hh = String(date.getUTCHours()).padStart(2, "0");
+    return `${dd}/${mm} ${hh}h`;
+  }
+  if (granularity === "week") {
+    const end = new Date(ms + ((7 * 24 * 60 * 60 * 1000) - 1));
+    const endDd = String(end.getUTCDate()).padStart(2, "0");
+    const endMm = String(end.getUTCMonth() + 1).padStart(2, "0");
+    return `${dd}/${mm} - ${endDd}/${endMm}`;
+  }
+  return `${dd}/${mm}`;
+}
+
+function buildDepositAnalyticsBucketSeed(startMs = 0, endMs = 0, granularity = "day") {
+  const firstBucketStartMs = getDepositAnalyticsBucketStartMs(startMs, granularity);
+  const lastBucketStartMs = getDepositAnalyticsBucketStartMs(endMs, granularity);
+  const buckets = [];
+  let cursor = firstBucketStartMs;
+
+  while (cursor <= lastBucketStartMs) {
+    buckets.push({
+      startMs: cursor,
+      key: getDepositAnalyticsBucketKey(cursor, granularity),
+      label: getDepositAnalyticsBucketLabel(cursor, granularity),
+      requestedCount: 0,
+      approvedCount: 0,
+      rejectedCount: 0,
+      pendingCount: 0,
+      requestedHtg: 0,
+      approvedHtg: 0,
+      rejectedHtg: 0,
+      pendingHtg: 0,
+      moncashRequestedHtg: 0,
+      natcashRequestedHtg: 0,
+      otherRequestedHtg: 0,
+      moncashApprovedHtg: 0,
+      natcashApprovedHtg: 0,
+      otherApprovedHtg: 0,
+      moncashRejectedHtg: 0,
+      natcashRejectedHtg: 0,
+      otherRejectedHtg: 0,
+      cumulativeApprovedHtg: 0,
+    });
+
+    cursor += granularity === "hour"
+      ? (60 * 60 * 1000)
+      : granularity === "week"
+        ? (7 * 24 * 60 * 60 * 1000)
+        : (24 * 60 * 60 * 1000);
+  }
+
+  return buckets;
+}
+
+function normalizeDepositAnalyticsMethod(order = {}) {
+  if (isWelcomeBonusOrder(order)) return "welcome_bonus";
+  const raw = `${String(order?.methodId || "")} ${String(order?.methodName || "")}`.trim().toLowerCase();
+  if (!raw) return "other";
+  if (/mon\s*cash/.test(raw) || raw.includes("moncash")) return "moncash";
+  if (/nat\s*cash/.test(raw) || raw.includes("natcash")) return "natcash";
+  return "other";
+}
+
+async function fetchDepositAnalyticsRowsForRange(startMs = 0, endMs = 0) {
+  const rows = [];
+  let lastDoc = null;
+  let truncated = false;
+
+  while (rows.length < DEPOSIT_ANALYTICS_DOC_LIMIT) {
+    let query = db.collectionGroup("orders")
+      .where("createdAtMs", ">=", startMs)
+      .where("createdAtMs", "<=", endMs)
+      .orderBy("createdAtMs", "asc")
+      .select(
+        "amount",
+        "items",
+        "status",
+        "resolutionStatus",
+        "approvedAmountHtg",
+        "fundingVersion",
+        "creditMode",
+        "createdAtMs",
+        "createdAt",
+        "methodId",
+        "methodName",
+        "orderType",
+        "kind"
+      )
+      .limit(Math.min(DEPOSIT_ANALYTICS_PAGE_FETCH_SIZE, DEPOSIT_ANALYTICS_DOC_LIMIT - rows.length));
+
+    if (lastDoc) {
+      query = query.startAfter(lastDoc);
+    }
+
+    const snap = await query.get();
+    if (snap.empty) break;
+
+    snap.forEach((docSnap) => {
+      rows.push(docSnap.data() || {});
+    });
+
+    lastDoc = snap.docs[snap.docs.length - 1] || null;
+    if (snap.size < DEPOSIT_ANALYTICS_PAGE_FETCH_SIZE) break;
+  }
+
+  if (lastDoc) {
+    const moreSnap = await db.collectionGroup("orders")
+      .where("createdAtMs", ">=", startMs)
+      .where("createdAtMs", "<=", endMs)
+      .orderBy("createdAtMs", "asc")
+      .startAfter(lastDoc)
+      .limit(1)
+      .get();
+    truncated = !moreSnap.empty;
+  }
+
+  return { rows, truncated };
+}
+
+async function computeDepositAnalyticsSnapshot(options = {}) {
+  const nowMs = safeSignedInt(options.nowMs) || Date.now();
+  const range = normalizeDepositAnalyticsRange(options, nowMs);
+  const rowsResult = await fetchDepositAnalyticsRowsForRange(range.startMs, range.endMs);
+  const bucketSeed = buildDepositAnalyticsBucketSeed(range.startMs, range.endMs, range.granularity);
+  const bucketMap = new Map(bucketSeed.map((item) => [item.key, item]));
+
+  const summary = {
+    requestedCount: 0,
+    approvedCount: 0,
+    rejectedCount: 0,
+    pendingCount: 0,
+    requestedHtg: 0,
+    approvedHtg: 0,
+    rejectedHtg: 0,
+    pendingHtg: 0,
+    moncashRequestedHtg: 0,
+    moncashApprovedHtg: 0,
+    moncashRejectedHtg: 0,
+    moncashRequestedCount: 0,
+    moncashApprovedCount: 0,
+    moncashRejectedCount: 0,
+    natcashRequestedHtg: 0,
+    natcashApprovedHtg: 0,
+    natcashRejectedHtg: 0,
+    natcashRequestedCount: 0,
+    natcashApprovedCount: 0,
+    natcashRejectedCount: 0,
+    otherRequestedHtg: 0,
+    otherApprovedHtg: 0,
+    otherRejectedHtg: 0,
+    otherRequestedCount: 0,
+    otherApprovedCount: 0,
+    otherRejectedCount: 0,
+  };
+
+  rowsResult.rows.forEach((row) => {
+    if (isWelcomeBonusOrder(row)) return;
+    const createdAtMs = safeSignedInt(row.createdAtMs) || toMillis(row.createdAt);
+    if (createdAtMs < range.startMs || createdAtMs > range.endMs) return;
+
+    const bucket = bucketMap.get(getDepositAnalyticsBucketKey(createdAtMs, range.granularity));
+    if (!bucket) return;
+
+    const method = normalizeDepositAnalyticsMethod(row);
+    const requestedHtg = Math.max(0, computeOrderAmount(row));
+    const approvedHtg = Math.max(0, getOrderApprovedRealAmountHtg(row));
+    const resolution = getOrderResolutionStatus(row);
+    const rejectedHtg = resolution === "rejected" ? requestedHtg : 0;
+    const pendingHtg = resolution === "pending" ? requestedHtg : 0;
+
+    summary.requestedCount += 1;
+    summary.requestedHtg += requestedHtg;
+    bucket.requestedCount += 1;
+    bucket.requestedHtg += requestedHtg;
+
+    if (resolution === "approved") {
+      summary.approvedCount += 1;
+      summary.approvedHtg += approvedHtg;
+      bucket.approvedCount += 1;
+      bucket.approvedHtg += approvedHtg;
+    } else if (resolution === "rejected") {
+      summary.rejectedCount += 1;
+      summary.rejectedHtg += rejectedHtg;
+      bucket.rejectedCount += 1;
+      bucket.rejectedHtg += rejectedHtg;
+    } else {
+      summary.pendingCount += 1;
+      summary.pendingHtg += pendingHtg;
+      bucket.pendingCount += 1;
+      bucket.pendingHtg += pendingHtg;
+    }
+
+    if (method === "moncash") {
+      summary.moncashRequestedCount += 1;
+      summary.moncashRequestedHtg += requestedHtg;
+      bucket.moncashRequestedHtg += requestedHtg;
+      if (resolution === "approved") {
+        summary.moncashApprovedCount += 1;
+        summary.moncashApprovedHtg += approvedHtg;
+        bucket.moncashApprovedHtg += approvedHtg;
+      } else if (resolution === "rejected") {
+        summary.moncashRejectedCount += 1;
+        summary.moncashRejectedHtg += rejectedHtg;
+        bucket.moncashRejectedHtg += rejectedHtg;
+      }
+    } else if (method === "natcash") {
+      summary.natcashRequestedCount += 1;
+      summary.natcashRequestedHtg += requestedHtg;
+      bucket.natcashRequestedHtg += requestedHtg;
+      if (resolution === "approved") {
+        summary.natcashApprovedCount += 1;
+        summary.natcashApprovedHtg += approvedHtg;
+        bucket.natcashApprovedHtg += approvedHtg;
+      } else if (resolution === "rejected") {
+        summary.natcashRejectedCount += 1;
+        summary.natcashRejectedHtg += rejectedHtg;
+        bucket.natcashRejectedHtg += rejectedHtg;
+      }
+    } else {
+      summary.otherRequestedCount += 1;
+      summary.otherRequestedHtg += requestedHtg;
+      bucket.otherRequestedHtg += requestedHtg;
+      if (resolution === "approved") {
+        summary.otherApprovedCount += 1;
+        summary.otherApprovedHtg += approvedHtg;
+        bucket.otherApprovedHtg += approvedHtg;
+      } else if (resolution === "rejected") {
+        summary.otherRejectedCount += 1;
+        summary.otherRejectedHtg += rejectedHtg;
+        bucket.otherRejectedHtg += rejectedHtg;
+      }
+    }
+  });
+
+  let cumulativeApprovedHtg = 0;
+  const buckets = bucketSeed.map((bucket) => {
+    cumulativeApprovedHtg += safeInt(bucket.approvedHtg);
+    return {
+      startMs: safeSignedInt(bucket.startMs),
+      key: String(bucket.key || ""),
+      label: String(bucket.label || "-"),
+      requestedCount: safeInt(bucket.requestedCount),
+      approvedCount: safeInt(bucket.approvedCount),
+      rejectedCount: safeInt(bucket.rejectedCount),
+      pendingCount: safeInt(bucket.pendingCount),
+      requestedHtg: safeInt(bucket.requestedHtg),
+      approvedHtg: safeInt(bucket.approvedHtg),
+      rejectedHtg: safeInt(bucket.rejectedHtg),
+      pendingHtg: safeInt(bucket.pendingHtg),
+      moncashRequestedHtg: safeInt(bucket.moncashRequestedHtg),
+      natcashRequestedHtg: safeInt(bucket.natcashRequestedHtg),
+      otherRequestedHtg: safeInt(bucket.otherRequestedHtg),
+      moncashApprovedHtg: safeInt(bucket.moncashApprovedHtg),
+      natcashApprovedHtg: safeInt(bucket.natcashApprovedHtg),
+      otherApprovedHtg: safeInt(bucket.otherApprovedHtg),
+      moncashRejectedHtg: safeInt(bucket.moncashRejectedHtg),
+      natcashRejectedHtg: safeInt(bucket.natcashRejectedHtg),
+      otherRejectedHtg: safeInt(bucket.otherRejectedHtg),
+      approvalRatePct: safeInt(bucket.requestedHtg) > 0
+        ? Number(((safeInt(bucket.approvedHtg) / safeInt(bucket.requestedHtg)) * 100).toFixed(2))
+        : 0,
+      cumulativeApprovedHtg,
+    };
+  });
+
+  const approvedRatePct = summary.requestedHtg > 0
+    ? Number(((summary.approvedHtg / summary.requestedHtg) * 100).toFixed(2))
+    : 0;
+  const rejectedRatePct = summary.requestedHtg > 0
+    ? Number(((summary.rejectedHtg / summary.requestedHtg) * 100).toFixed(2))
+    : 0;
+  const moncashApprovedSharePct = summary.approvedHtg > 0
+    ? Number(((summary.moncashApprovedHtg / summary.approvedHtg) * 100).toFixed(2))
+    : 0;
+  const natcashApprovedSharePct = summary.approvedHtg > 0
+    ? Number(((summary.natcashApprovedHtg / summary.approvedHtg) * 100).toFixed(2))
+    : 0;
+
+  return {
+    generatedAtMs: nowMs,
+    timezone: "UTC",
+    window: {
+      startMs: range.startMs,
+      endMs: range.endMs,
+      rangeMs: range.rangeMs,
+      granularity: range.granularity,
+    },
+    definitions: {
+      inflowRule: "Les entrees HTG de l'entreprise correspondent aux montants de depots reels approuves.",
+      rejectionRule: "Les bonus bienvenue sont exclus. Les montants rejetes reprennent le montant demande sur la commande.",
+      source: "Source: collectionGroup(orders), excluant welcome_bonus.",
+    },
+    summary: {
+      ...summary,
+      approvedRatePct,
+      rejectedRatePct,
+      moncashApprovedSharePct,
+      natcashApprovedSharePct,
+    },
+    series: {
+      requestedHtg: buckets.map((item) => ({ startMs: item.startMs, label: item.label, value: item.requestedHtg })),
+      approvedHtg: buckets.map((item) => ({ startMs: item.startMs, label: item.label, value: item.approvedHtg })),
+      rejectedHtg: buckets.map((item) => ({ startMs: item.startMs, label: item.label, value: item.rejectedHtg })),
+      cumulativeApprovedHtg: buckets.map((item) => ({ startMs: item.startMs, label: item.label, value: item.cumulativeApprovedHtg })),
+      moncashApprovedHtg: buckets.map((item) => ({ startMs: item.startMs, label: item.label, value: item.moncashApprovedHtg })),
+      natcashApprovedHtg: buckets.map((item) => ({ startMs: item.startMs, label: item.label, value: item.natcashApprovedHtg })),
+      approvalsVsRejects: buckets.map((item) => ({
+        startMs: item.startMs,
+        label: item.label,
+        approvedHtg: item.approvedHtg,
+        rejectedHtg: item.rejectedHtg,
+      })),
+    },
+    buckets,
+    scannedOrderDocs: safeInt(rowsResult.rows.length),
+    truncated: rowsResult.truncated === true,
+    scanLimit: DEPOSIT_ANALYTICS_DOC_LIMIT,
   };
 }
 
@@ -7908,6 +8304,17 @@ exports.getClientAcquisitionSnapshot = publicOnCall("getClientAcquisitionSnapsho
   assertFinanceAdmin(request);
   const payload = request.data && typeof request.data === "object" ? request.data : {};
   const snapshot = await computeClientAcquisitionSnapshot(payload);
+
+  return {
+    ok: true,
+    snapshot,
+  };
+});
+
+exports.getDepositMethodAnalyticsSnapshot = publicOnCall("getDepositMethodAnalyticsSnapshot", async (request) => {
+  assertFinanceAdmin(request);
+  const payload = request.data && typeof request.data === "object" ? request.data : {};
+  const snapshot = await computeDepositAnalyticsSnapshot(payload);
 
   return {
     ok: true,
