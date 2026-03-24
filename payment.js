@@ -155,6 +155,7 @@ class PaymentModal {
     this.fundingStatus = null;
     this.proofMode = this.options.flowType === 'welcome_bonus' ? 'welcome_bonus' : 'deposit';
     this.completedFlowType = this.options.flowType === 'welcome_bonus' ? 'welcome_bonus' : 'deposit';
+    this.welcomeBonusCaptureReady = this.options.flowType === 'welcome_bonus' ? false : true;
     
     this.init();
   }
@@ -321,7 +322,27 @@ class PaymentModal {
       isLegacyAccount: funding.isLegacyAccount === true,
       eligibilityReason,
       grantedHtg: WELCOME_BONUS_HTG,
+      proofCode: String(funding.welcomeBonusProofCode || '').trim(),
+      endAtMs: Number(funding.welcomeBonusEndAtMs) || 0,
     };
+  }
+
+  buildWelcomeBonusCaptureStep() {
+    return {
+      type: 'custom',
+      variant: 'welcome_bonus_capture',
+      title: 'Capture la preuve du bonus',
+      buttonText: 'Suivant',
+    };
+  }
+
+  getWelcomeBonusProofCode() {
+    const fundingCode = String(this.fundingStatus?.welcomeBonusProofCode || '').trim().toUpperCase();
+    if (fundingCode) return fundingCode;
+    const profileCode = String(this.clientData?.welcomeBonusProofCode || this.options?.client?.welcomeBonusProofCode || '').trim().toUpperCase();
+    if (profileCode) return profileCode;
+    const uid = String(this.options?.client?.uid || this.options?.client?.id || '').replace(/[^a-zA-Z0-9]/g, '').toUpperCase();
+    return uid ? `CLIENT-${uid.slice(0, 6)}-LOCAL` : 'CLIENT-BONUS';
   }
 
   isWelcomeBonusSelected() {
@@ -650,6 +671,10 @@ class PaymentModal {
   }
   
   renderStep0() {
+    if (this.options.flowType === 'welcome_bonus' && this.getWelcomeBonusStatus().eligible && !this.welcomeBonusCaptureReady) {
+      return this.renderCustomStep(this.buildWelcomeBonusCaptureStep());
+    }
+
     if (this.methods.length === 0) {
       return `
         <div style="text-align: center; padding: 2rem;">
@@ -680,7 +705,7 @@ class PaymentModal {
     const safeImagePath = escapeAttr(this.getImagePath(method?.image));
     
     return `
-      <div class="method-card" data-method-id="${safeMethodId}" style="
+      <div class="method-card" data-method-id="${safeMethodId}" data-welcome-coach="payment-method" style="
         display: flex;
         align-items: center;
         gap: 1rem;
@@ -735,7 +760,7 @@ class PaymentModal {
           ${step.fields?.map(field => this.renderFormField(field)).join('') || ''}
         </form>
         
-        <button class="next-step-btn" id="nextStepBtn">
+        <button class="next-step-btn" id="nextStepBtn" data-welcome-coach="payment-step-next">
           ${safeButtonText}
         </button>
       </div>
@@ -975,7 +1000,7 @@ class PaymentModal {
 
           <div class="form-group">
             <label>Numero qui a effectue le depot *</label>
-            <input type="tel" id="proofDepositorPhone" required inputmode="tel" autocomplete="tel" placeholder="Ex: 50940507232" value="${safeDepositorPhoneAttr}">
+            <input type="tel" id="proofDepositorPhone" data-welcome-coach="proof-phone" required inputmode="tel" autocomplete="tel" placeholder="Ex: 50940507232" value="${safeDepositorPhoneAttr}">
             <p style="font-size: 0.8rem; color: #8B7E6B; margin-top: 0.25rem;">
               Cette information doit etre exacte. Une erreur peut entrainer le rejet de la demande.
             </p>
@@ -983,7 +1008,7 @@ class PaymentModal {
           
           <div class="form-group">
             <label id="proofImageLabel">${selectedProofMode === 'welcome_bonus' ? "Image demandee pour le bonus *" : "Capture d'écran de la transaction *"}</label>
-            <input type="file" id="proofImage" accept="image/*" required>
+            <input type="file" id="proofImage" data-welcome-coach="proof-upload" accept="image/*" required>
             <p
               id="proofImageHelp"
               data-proof-mode-target="image-help"
@@ -998,7 +1023,7 @@ class PaymentModal {
           </div>
         </form>
         
-        <button class="next-step-btn" id="nextStepBtn">
+        <button class="next-step-btn" id="nextStepBtn" data-welcome-coach="proof-submit">
           ${safeButtonText}
         </button>
       </div>
@@ -1183,6 +1208,54 @@ class PaymentModal {
   }
   
   renderCustomStep(step) {
+    if (step?.variant === 'welcome_bonus_capture') {
+      const proofCode = escapeHtml(this.getWelcomeBonusProofCode());
+      return `
+        <div>
+          <h3 style="font-size: 1.3rem; margin-bottom: 1rem;">Capture la preuve du bonus</h3>
+          <p style="color: #8B7E6B; margin-bottom: 1rem;">Fais une capture d'écran de cette carte. Elle sera utilisée comme preuve dans la dernière étape.</p>
+
+          <div data-welcome-coach="proof-card" style="
+            border: 1px solid rgba(251,191,36,0.24);
+            border-radius: 1.25rem;
+            padding: 1.25rem;
+            background: linear-gradient(180deg, rgba(50,57,84,0.96), rgba(34,40,61,0.98));
+            color: #F8FAFC;
+            box-shadow: 0 18px 36px rgba(15,23,42,0.25), inset 0 1px 0 rgba(255,255,255,0.06);
+          ">
+            <p style="margin: 0; font-size: 0.74rem; letter-spacing: 0.16em; text-transform: uppercase; color: #FBBF24; font-weight: 800;">Bonus bienvenue</p>
+            <h4 style="margin: 0.7rem 0 0; font-size: 1.18rem; color: #FFFFFF;">Obtenir mon bonus de 25 Gdes</h4>
+            <div style="
+              margin-top: 1rem;
+              border-radius: 1rem;
+              border: 1px solid rgba(255,255,255,0.08);
+              background: rgba(255,255,255,0.07);
+              padding: 1rem;
+            ">
+              <p style="margin: 0; font-size: 0.74rem; text-transform: uppercase; letter-spacing: 0.12em; color: #CBD5E1;">Client ID</p>
+              <p style="margin: 0.45rem 0 0; font-size: 1.1rem; font-weight: 900; color: #FFFFFF; letter-spacing: 0.08em;">${proofCode}</p>
+            </div>
+          </div>
+
+          <div style="
+            margin-top: 1rem;
+            border-radius: 1rem;
+            background: rgba(245,124,0,0.10);
+            border: 1px solid rgba(255,178,110,0.18);
+            padding: 1rem;
+            color: #F8FAFC;
+            line-height: 1.65;
+          ">
+            Cette image doit apparaître dans ta capture. Garde-la bien, puis clique sur suivant pour continuer le processus.
+          </div>
+
+          <button class="next-step-btn" id="nextStepBtn" data-welcome-coach="proof-card-next">
+            ${escapeHtml(step?.buttonText || 'Suivant')}
+          </button>
+        </div>
+      `;
+    }
+
     const safeTitle = escapeHtml(step?.title || 'Étape personnalisée');
     const safeContent = escapeHtml(step?.content || '');
     const safeButtonText = escapeHtml(step?.buttonText || 'Continuer');
@@ -1282,6 +1355,15 @@ class PaymentModal {
   }
   
   attachStep0Events() {
+    const introNextBtn = this.modal.querySelector('#nextStepBtn');
+    if (introNextBtn && this.options.flowType === 'welcome_bonus' && this.getWelcomeBonusStatus().eligible && !this.welcomeBonusCaptureReady) {
+      introNextBtn.addEventListener('click', () => {
+        this.welcomeBonusCaptureReady = true;
+        this.updateStepDisplay();
+      });
+      return;
+    }
+
     const methodsList = this.modal.querySelector('#methodsList');
     
     if (methodsList) {

@@ -49,6 +49,7 @@ const DEFAULT_STAKE_REWARD_MULTIPLIER = 3;
 const DEPOSIT_BONUS_MIN_HTG = 100;
 const DEPOSIT_BONUS_PERCENT = 10;
 const WELCOME_BONUS_LAUNCH_AT_MS = 1774142207000;
+const WELCOME_BONUS_END_AT_MS = Date.parse("2026-04-02T03:59:59.999Z");
 const PUBLIC_HOME_URL = "https://dominoeslakay.com/inedex.html";
 const USER_REFERRAL_DEPOSIT_REWARD = 100;
 const FINANCE_ADMIN_EMAIL = "leovitch2004@gmail.com";
@@ -540,6 +541,19 @@ function hasWelcomeBonusOrder(orders = []) {
   return (Array.isArray(orders) ? orders : []).some((item) => isWelcomeBonusOrder(item));
 }
 
+function normalizeWelcomeBonusPromptStatus(value = "") {
+  const normalized = sanitizeText(value || "", 32).toLowerCase();
+  if (normalized === "accepted" || normalized === "declined" || normalized === "pending") return normalized;
+  return "";
+}
+
+function generateWelcomeBonusProofCode(uid = "") {
+  const safeUid = sanitizeText(uid || "", 80).toUpperCase().replace(/[^A-Z0-9]/g, "");
+  const head = safeUid.slice(0, 6) || crypto.randomBytes(3).toString("hex").toUpperCase();
+  const tail = crypto.randomBytes(2).toString("hex").toUpperCase();
+  return `CLIENT-${head}-${tail}`;
+}
+
 function resolveWelcomeBonusEligibility({
   walletData = {},
   orders = [],
@@ -555,6 +569,7 @@ function resolveWelcomeBonusEligibility({
     || hasWelcomeBonusOrder(orders);
   const accountFrozen = walletData.accountFrozen === true;
   const launchedAccount = createdAtMs > 0 && createdAtMs >= WELCOME_BONUS_LAUNCH_AT_MS;
+  const offerEnded = Date.now() > WELCOME_BONUS_END_AT_MS;
 
   let reason = "eligible";
   if (accountFrozen) {
@@ -565,6 +580,8 @@ function resolveWelcomeBonusEligibility({
     reason = "existing-real-deposit";
   } else if (!launchedAccount) {
     reason = "legacy-account";
+  } else if (offerEnded) {
+    reason = "offer-ended";
   }
 
   return {
@@ -572,10 +589,12 @@ function resolveWelcomeBonusEligibility({
     reason,
     createdAtMs,
     launchAtMs: WELCOME_BONUS_LAUNCH_AT_MS,
+    endAtMs: WELCOME_BONUS_END_AT_MS,
     hasRealApprovedDeposit,
     alreadyClaimed,
     accountFrozen,
     isLegacyAccount: !launchedAccount,
+    offerEnded,
   };
 }
 
@@ -7907,15 +7926,40 @@ exports.updateClientProfileSecure = publicOnCall("updateClientProfileSecure", as
   const oneClickIdInput = sanitizeText(payload.oneClickId || "", 64).toUpperCase();
   const promoCode = normalizeCode(payload.promoCode || "");
   const referralSource = String(payload.referralSource || "").toLowerCase() === "link" ? "link" : "promo";
+  const welcomeBonusPromptStatusInput = normalizeWelcomeBonusPromptStatus(payload.welcomeBonusPromptStatus || "");
+  const completeWelcomeBonusTutorial = payload.welcomeBonusTutorialCompleted === true;
   const context = sanitizeAnalyticsContext(payload, request);
   const ref = walletRef(uid);
   const snap = await ref.get();
   const current = snap.exists ? (snap.data() || {}) : {};
   const isNewProfile = !snap.exists;
   let referralCode = normalizeCode(current.referralCode || "");
+  const currentWelcomeBonusPromptStatus = normalizeWelcomeBonusPromptStatus(current.welcomeBonusPromptStatus || "");
+  const currentWelcomeBonusPromptAnsweredAtMs = safeInt(current.welcomeBonusPromptAnsweredAtMs);
 
   if (!referralCode) {
     referralCode = await generateUniqueClientReferralCode(uid);
+  }
+
+  let nextWelcomeBonusPromptStatus = currentWelcomeBonusPromptStatus || (isNewProfile ? "pending" : "");
+  let nextWelcomeBonusPromptAnsweredAtMs = currentWelcomeBonusPromptAnsweredAtMs;
+  let nextWelcomeBonusProofCode = sanitizeText(current.welcomeBonusProofCode || "", 80).toUpperCase();
+  let nextWelcomeBonusTutorialCompletedAtMs = safeInt(current.welcomeBonusTutorialCompletedAtMs);
+  if (
+    (welcomeBonusPromptStatusInput === "accepted" || welcomeBonusPromptStatusInput === "declined")
+    && nextWelcomeBonusPromptStatus !== "accepted"
+    && nextWelcomeBonusPromptStatus !== "declined"
+  ) {
+    nextWelcomeBonusPromptStatus = welcomeBonusPromptStatusInput;
+    nextWelcomeBonusPromptAnsweredAtMs = Date.now();
+    if (welcomeBonusPromptStatusInput === "accepted" && !nextWelcomeBonusProofCode) {
+      nextWelcomeBonusProofCode = generateWelcomeBonusProofCode(uid);
+    }
+  } else if (welcomeBonusPromptStatusInput === "pending" && !nextWelcomeBonusPromptStatus) {
+    nextWelcomeBonusPromptStatus = "pending";
+  }
+  if (completeWelcomeBonusTutorial && nextWelcomeBonusTutorialCompletedAtMs <= 0) {
+    nextWelcomeBonusTutorialCompletedAtMs = Date.now();
   }
 
   const profile = {
@@ -7937,6 +7981,10 @@ exports.updateClientProfileSecure = publicOnCall("updateClientProfileSecure", as
     landingPage: String(current.landingPage || "") || context.landingPage || "",
     creativeId: String(current.creativeId || "") || context.creativeId || "",
     lastLandingPage: context.landingPage || String(current.lastLandingPage || current.landingPage || ""),
+    welcomeBonusPromptStatus: nextWelcomeBonusPromptStatus,
+    welcomeBonusPromptAnsweredAtMs: nextWelcomeBonusPromptAnsweredAtMs,
+    welcomeBonusProofCode: nextWelcomeBonusProofCode,
+    welcomeBonusTutorialCompletedAtMs: nextWelcomeBonusTutorialCompletedAtMs,
     lastSeenAt: admin.firestore.FieldValue.serverTimestamp(),
     lastSeenAtMs: Date.now(),
     lastAuthAt: admin.firestore.FieldValue.serverTimestamp(),
@@ -8005,6 +8053,10 @@ exports.updateClientProfileSecure = publicOnCall("updateClientProfileSecure", as
       referralDepositsTotal: safeInt(finalProfile.referralDepositsTotal),
       referredByType: sanitizeText(finalProfile.referredByType || "", 20),
       referredByCode: normalizeCode(finalProfile.referredByCode || ""),
+      welcomeBonusPromptStatus: normalizeWelcomeBonusPromptStatus(finalProfile.welcomeBonusPromptStatus || profile.welcomeBonusPromptStatus || ""),
+      welcomeBonusPromptAnsweredAtMs: safeInt(finalProfile.welcomeBonusPromptAnsweredAtMs || profile.welcomeBonusPromptAnsweredAtMs),
+      welcomeBonusProofCode: sanitizeText(finalProfile.welcomeBonusProofCode || profile.welcomeBonusProofCode || "", 80).toUpperCase(),
+      welcomeBonusTutorialCompletedAtMs: safeInt(finalProfile.welcomeBonusTutorialCompletedAtMs || profile.welcomeBonusTutorialCompletedAtMs),
       updatedAt: new Date().toISOString(),
     },
     referralApplied: referralBootstrap.applied === true,
@@ -8592,9 +8644,15 @@ exports.getDepositFundingStatusSecure = publicOnCall("getDepositFundingStatusSec
     welcomeBonusClaimed: walletData.welcomeBonusClaimed === true,
     welcomeBonusOrderId: String(walletData.welcomeBonusOrderId || ""),
     welcomeBonusReceivedAtMs: safeInt(walletData.welcomeBonusReceivedAtMs),
+    welcomeBonusPromptStatus: normalizeWelcomeBonusPromptStatus(walletData.welcomeBonusPromptStatus || ""),
+    welcomeBonusPromptAnsweredAtMs: safeInt(walletData.welcomeBonusPromptAnsweredAtMs),
+    welcomeBonusProofCode: sanitizeText(walletData.welcomeBonusProofCode || "", 80).toUpperCase(),
+    welcomeBonusTutorialCompletedAtMs: safeInt(walletData.welcomeBonusTutorialCompletedAtMs),
     welcomeBonusEligible: welcomeBonusEligibility.eligible === true,
     welcomeBonusEligibilityReason: String(welcomeBonusEligibility.reason || ""),
     welcomeBonusLaunchAtMs: safeSignedInt(welcomeBonusEligibility.launchAtMs),
+    welcomeBonusEndAtMs: safeSignedInt(welcomeBonusEligibility.endAtMs),
+    welcomeBonusOfferEnded: welcomeBonusEligibility.offerEnded === true,
     isLegacyAccount: welcomeBonusEligibility.isLegacyAccount === true,
     accountFrozen: walletData.accountFrozen === true,
     freezeReason: String(walletData.freezeReason || ""),

@@ -531,7 +531,7 @@
     <script type="module" src="./home.js"></script>
     <script>
       (() => {
-        const storageKey = "dl_welcome_deposit_flow_v2";
+        const storageKey = "dl_welcome_deposit_flow_v3";
         const modal = document.getElementById("welcomeDepositModal");
         if (!modal) return;
         const closeButtons = modal.querySelectorAll("[data-close]");
@@ -544,15 +544,11 @@
         const steps = [
           {
             badge: "Bienvenue",
-            title: "Reçois 25 Gdes de bonus de bienvenue",
+            title: "Inscrivez-vous et recevez 25 HTG de bonus de bienvenue",
             paragraphs: [
-              "Pour obtenir ton bonus, suis simplement les étapes de dépôt. C’est rapide et guidé.",
-              "Écris à l’assistance sur WhatsApp au +509 4050 7232 pour commencer. Tu recevras une image d’identification et des instructions claires pour recevoir ton argent.",
+              "Inscris-toi pour profiter du tournoi, du jeu et activer ton bonus de bienvenue de 25 HTG.",
+              "Cette offre de bienvenue se termine le 1 avril 2026 à 23:59:59. Une fois ton compte créé, le site te proposera directement les étapes pour recevoir ton bonus.",
             ],
-            primary: {
-              label: "Écrire sur WhatsApp",
-              href: "https://wa.me/50940507232",
-            },
             secondaryLabel: "Suivant",
           },
           {

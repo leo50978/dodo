@@ -8,6 +8,7 @@ import {
 import {
   getPublicGameStakeOptionsSecure,
   updateClientProfileSecure,
+  getDepositFundingStatusSecure,
   getShareSitePromoStatusSecure,
   recordShareSitePromoSecure,
   createFriendRoomSecure,
@@ -21,11 +22,14 @@ import { auth, db, collection, query, orderBy, limit, doc, getDoc, getDocs, setD
 const CHAT_COLLECTION = "globalChannelMessages";
 const SUPPORT_THREADS_COLLECTION = "supportThreads";
 const AUTH_SUCCESS_NOTICE_STORAGE_KEY = "domino_auth_success_notice_v1";
+const DEPOSIT_INFO_DISMISSED_KEY = "domino_deposit_info_hidden_v1";
 const TOURNAMENT_INTRO_SEEN_STORAGE_KEY = "domino_tournament_intro_seen_v1";
 const SUPPORT_MIGRATION_NOTICE_STORAGE_KEY = "domino_support_migration_notice_seen_v1";
 const SUPPORT_MIGRATION_CUTOFF_MS = Date.parse("2026-03-23T18:15:00Z");
 const SUPPORT_MIGRATION_PHONE = "50940507232";
 const SUPPORT_MIGRATION_WHATSAPP_LINK = `https://wa.me/${SUPPORT_MIGRATION_PHONE}?text=${encodeURIComponent("Bonjour, j'avais ecrit a l'ancien numero d'assistance. Je vous recontacte ici sur le nouveau numero.")}`;
+const WELCOME_BONUS_PROMPT_OFFER_LABEL = "Cette offre se termine le 1 avril 2026 à 23:59:59.";
+const WELCOME_BONUS_PROMPT_RETRY_MS = 1200;
 const DEFAULT_STAKE_REWARD_MULTIPLIER = 3;
 const PAGE2_BOOTSTRAP_MIN_MS = 650;
 const PAGE2_BOOTSTRAP_TIMEOUT_MS = 2600;
@@ -59,6 +63,10 @@ let soldeUiReadyPromise = null;
 let page2HeroRotationTimer = null;
 let page2SharePromoCountdownTimer = null;
 let page2SupportMigrationNoticeTimer = null;
+let page2WelcomeBonusPromptTimer = null;
+let page2WelcomeBonusPromptUid = "";
+let page2WelcomeBonusFundingCache = null;
+let page2WelcomeBonusFundingPromise = null;
 let page2FinanceNoticeUid = "";
 let page2FinanceNoticeUnsubs = [];
 let page2FinanceOrderDocs = [];
@@ -583,6 +591,12 @@ function tsToMs(value) {
   return Number.isFinite(parsed) ? parsed : 0;
 }
 
+function normalizeWelcomeBonusPromptStatus(value = "") {
+  const normalized = String(value || "").trim().toLowerCase();
+  if (normalized === "accepted" || normalized === "declined" || normalized === "pending") return normalized;
+  return "";
+}
+
 function getSupportMigrationStorageKey(uid = "") {
   const safeUid = String(uid || "").trim() || "guest";
   return `${SUPPORT_MIGRATION_NOTICE_STORAGE_KEY}:${safeUid}`;
@@ -618,6 +632,8 @@ function getUserCreationMs(user = null, clientData = {}) {
 
 function isPage2BlockingOverlayOpen() {
   const blockingIds = [
+    "welcomeBonusPromptOverlay",
+    "welcomeBonusCoachOverlay",
     "financeNoticeOverlay",
     "sharePromoOverlay",
     "sharePromoSuccessOverlay",
@@ -631,6 +647,13 @@ function isPage2BlockingOverlayOpen() {
     "tournamentIntroOverlay",
   ];
   return blockingIds.some((id) => document.getElementById(id)?.classList.contains("flex"));
+}
+
+function clearPage2WelcomeBonusPromptTimer() {
+  if (page2WelcomeBonusPromptTimer) {
+    window.clearTimeout(page2WelcomeBonusPromptTimer);
+    page2WelcomeBonusPromptTimer = null;
+  }
 }
 
 function closeSupportMigrationNotice() {
@@ -1026,6 +1049,7 @@ export function renderPage2(user, options = {}) {
   stopPage2FinanceNoticeWatchers();
   stopPage2HeroRotation();
   clearPage2SupportMigrationNoticeTimer();
+  clearPage2WelcomeBonusPromptTimer();
   if (page2SharePromoCountdownTimer) {
     window.clearInterval(page2SharePromoCountdownTimer);
     page2SharePromoCountdownTimer = null;
@@ -1038,6 +1062,11 @@ export function renderPage2(user, options = {}) {
   const hasConfirmedAuth = Boolean(incomingUid && currentAuthUid && incomingUid === currentAuthUid);
   const isOptimisticAuth = options?.optimisticAuth === true && !hasConfirmedAuth && Boolean(incomingUid);
   const isAuthenticated = Boolean(incomingUid);
+  if (page2WelcomeBonusPromptUid !== incomingUid) {
+    page2WelcomeBonusPromptUid = incomingUid;
+    page2WelcomeBonusFundingCache = null;
+    page2WelcomeBonusFundingPromise = null;
+  }
 
   if (hasConfirmedAuth) {
     startPage2PresenceHeartbeat(page2PresenceUser);
@@ -1047,7 +1076,7 @@ export function renderPage2(user, options = {}) {
 
   const headerActions = isAuthenticated
     ? `
-                <button id="soldBadge" type="button" class="inline-flex items-center gap-2 rounded-xl border border-white/20 bg-white/10 px-3 py-2 text-xs font-semibold text-white/90 shadow-[inset_4px_4px_10px_rgba(20,28,45,0.42),inset_-4px_-4px_10px_rgba(123,137,180,0.2)] backdrop-blur-md transition hover:bg-white/15">
+                <button id="soldBadge" data-welcome-coach="open-deposit" type="button" class="inline-flex items-center gap-2 rounded-xl border border-white/20 bg-white/10 px-3 py-2 text-xs font-semibold text-white/90 shadow-[inset_4px_4px_10px_rgba(20,28,45,0.42),inset_-4px_-4px_10px_rgba(123,137,180,0.2)] backdrop-blur-md transition hover:bg-white/15">
                   <span class="inline-flex h-5 w-5 items-center justify-center rounded-lg bg-white/20 text-[11px]">+</span>
                   <span class="hidden sm:inline">Faire un dépôt</span>
                   <span class="sm:hidden">Dépôt</span>
@@ -1248,6 +1277,57 @@ export function renderPage2(user, options = {}) {
           <a id="supportMigrationContactBtn" href="${SUPPORT_MIGRATION_WHATSAPP_LINK}" target="_blank" rel="noopener noreferrer" class="inline-flex h-11 items-center justify-center rounded-[18px] border border-[#ffb26e] bg-[#F57C00] text-sm font-semibold text-white shadow-[9px_9px_20px_rgba(155,78,25,0.45),-7px_-7px_16px_rgba(255,173,96,0.2)] transition hover:-translate-y-0.5">
             Recontacter
           </a>
+        </div>
+      </div>
+    </div>
+  `);
+
+  pageShell.insertAdjacentHTML("beforeend", `
+    <div id="welcomeBonusPromptOverlay" class="fixed inset-0 z-[3458] hidden items-end justify-center bg-[#12192b]/72 px-[max(12px,env(safe-area-inset-left))] pb-[max(12px,env(safe-area-inset-bottom))] pt-[max(12px,env(safe-area-inset-top))] backdrop-blur-sm sm:items-center sm:px-4 sm:py-4">
+      <div id="welcomeBonusPromptPanel" class="w-full rounded-[28px] border border-white/15 bg-[linear-gradient(180deg,rgba(82,94,132,0.98),rgba(55,65,95,0.98))] px-4 pb-[max(1rem,env(safe-area-inset-bottom))] pt-5 text-white shadow-[0_-16px_38px_rgba(12,18,31,0.42)] sm:max-w-md sm:rounded-[30px] sm:border-white/20 sm:px-6 sm:pb-6 sm:pt-6 sm:shadow-[14px_14px_34px_rgba(16,23,40,0.5),-10px_-10px_24px_rgba(112,126,165,0.2)]">
+        <div class="mx-auto flex h-14 w-14 items-center justify-center rounded-[20px] border border-[#ffcf9f]/45 bg-[#F57C00]/22 text-[#ffe1c4] shadow-[inset_4px_4px_10px_rgba(20,28,45,0.42),inset_-4px_-4px_10px_rgba(123,137,180,0.18)]">
+          <i class="fa-solid fa-gift text-xl"></i>
+        </div>
+        <div class="mt-4 flex justify-center">
+          <span class="inline-flex w-fit rounded-full border border-[#ffb26e]/35 bg-[#F57C00]/16 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.18em] text-[#ffd5ae]">Bonus de bienvenue</span>
+        </div>
+        <h3 class="mt-4 text-center text-[1.28rem] font-bold leading-tight sm:text-[1.45rem]">Voulez-vous recevoir votre bonus de 25 HTG ?</h3>
+        <p class="mt-3 text-center text-sm leading-6 text-white/88">
+          Active ton bonus pour profiter du tournoi et du jeu avec un premier coup de pouce.
+        </p>
+        <div class="mt-4 rounded-[22px] border border-white/12 bg-white/8 p-4 text-center shadow-[inset_4px_4px_10px_rgba(20,28,45,0.28),inset_-4px_-4px_10px_rgba(123,137,180,0.08)]">
+          <p class="text-xs font-semibold uppercase tracking-[0.18em] text-white/56">Offre limitée</p>
+          <p id="welcomeBonusPromptOfferText" class="mt-2 text-sm font-semibold text-[#ffd7b2]">${WELCOME_BONUS_PROMPT_OFFER_LABEL}</p>
+        </div>
+        <div class="mt-5 grid grid-cols-1 gap-3 sm:grid-cols-2">
+          <button id="welcomeBonusPromptDeclineBtn" type="button" class="h-11 rounded-[18px] border border-white/18 bg-white/10 text-sm font-semibold text-white transition hover:bg-white/15">
+            Non merci
+          </button>
+          <button id="welcomeBonusPromptAcceptBtn" type="button" class="h-11 rounded-[18px] border border-[#ffb26e] bg-[#F57C00] text-sm font-semibold text-white shadow-[9px_9px_20px_rgba(155,78,25,0.45),-7px_-7px_16px_rgba(255,173,96,0.2)] transition hover:-translate-y-0.5">
+            Oui, je veux mon bonus
+          </button>
+        </div>
+      </div>
+    </div>
+  `);
+
+  pageShell.insertAdjacentHTML("beforeend", `
+    <div id="welcomeBonusCoachOverlay" class="fixed inset-0 z-[3460] hidden">
+      <div id="welcomeBonusCoachBackdrop" class="absolute inset-0 bg-[#12192b]/38"></div>
+      <div id="welcomeBonusCoachArrow" class="pointer-events-none absolute text-[40px] text-[#ffd7b2] drop-shadow-[0_8px_18px_rgba(18,25,42,0.45)]">
+        <i class="fa-solid fa-arrow-down-long"></i>
+      </div>
+      <div id="welcomeBonusCoachBubble" class="absolute max-w-[min(86vw,320px)] rounded-[22px] border border-white/15 bg-[linear-gradient(180deg,rgba(82,94,132,0.98),rgba(55,65,95,0.98))] px-4 py-4 text-white shadow-[14px_14px_34px_rgba(16,23,40,0.42),-10px_-10px_24px_rgba(112,126,165,0.18)]">
+        <p class="text-xs font-semibold uppercase tracking-[0.18em] text-[#ffd4ab]/80">Guide bonus</p>
+        <h4 id="welcomeBonusCoachTitle" class="mt-2 text-[1.05rem] font-bold leading-tight">Suis les étapes</h4>
+        <p id="welcomeBonusCoachText" class="mt-2 text-sm leading-6 text-white/86"></p>
+        <div class="mt-4 flex gap-3">
+          <button id="welcomeBonusCoachCloseBtn" type="button" class="h-10 flex-1 rounded-[16px] border border-white/18 bg-white/10 text-sm font-semibold text-white transition hover:bg-white/15">
+            Fermer
+          </button>
+          <button id="welcomeBonusCoachNextBtn" type="button" class="h-10 flex-1 rounded-[16px] border border-[#ffb26e] bg-[#F57C00] text-sm font-semibold text-white shadow-[8px_8px_18px_rgba(155,78,25,0.35),-6px_-6px_14px_rgba(255,173,96,0.16)] transition hover:-translate-y-0.5">
+            Suivant
+          </button>
         </div>
       </div>
     </div>
@@ -1581,6 +1661,17 @@ export function renderPage2(user, options = {}) {
   const supportMigrationPanel = document.getElementById("supportMigrationPanel");
   const supportMigrationLaterBtn = document.getElementById("supportMigrationLaterBtn");
   const supportMigrationContactBtn = document.getElementById("supportMigrationContactBtn");
+  const welcomeBonusPromptOverlay = document.getElementById("welcomeBonusPromptOverlay");
+  const welcomeBonusPromptPanel = document.getElementById("welcomeBonusPromptPanel");
+  const welcomeBonusPromptAcceptBtn = document.getElementById("welcomeBonusPromptAcceptBtn");
+  const welcomeBonusPromptDeclineBtn = document.getElementById("welcomeBonusPromptDeclineBtn");
+  const welcomeBonusCoachOverlay = document.getElementById("welcomeBonusCoachOverlay");
+  const welcomeBonusCoachArrow = document.getElementById("welcomeBonusCoachArrow");
+  const welcomeBonusCoachBubble = document.getElementById("welcomeBonusCoachBubble");
+  const welcomeBonusCoachTitle = document.getElementById("welcomeBonusCoachTitle");
+  const welcomeBonusCoachText = document.getElementById("welcomeBonusCoachText");
+  const welcomeBonusCoachNextBtn = document.getElementById("welcomeBonusCoachNextBtn");
+  const welcomeBonusCoachCloseBtn = document.getElementById("welcomeBonusCoachCloseBtn");
   const surveyPromptOverlay = document.getElementById("surveyPromptOverlay");
   const surveyPromptPanel = document.getElementById("surveyPromptPanel");
   const surveyPromptTitle = document.getElementById("surveyPromptTitle");
@@ -1606,6 +1697,13 @@ export function renderPage2(user, options = {}) {
   let surveyPromptState = null;
   let surveyPromptSelection = "";
   let surveyPromptSubmitting = false;
+  let welcomeBonusPromptSubmitting = false;
+  let welcomeBonusCoachIndex = -1;
+  let welcomeBonusCoachTarget = null;
+  let welcomeBonusCoachTargetClickHandler = null;
+  let welcomeBonusCoachSuccessHandler = null;
+  let welcomeBonusCoachRetryTimer = null;
+  let welcomeBonusCoachDismissedInSession = false;
 
   const setFrozenActionState = (btn, frozen) => {
     if (!btn) return;
@@ -1614,6 +1712,398 @@ export function renderPage2(user, options = {}) {
     btn.classList.toggle("cursor-not-allowed", frozen === true);
     btn.classList.toggle("pointer-events-none", frozen === true);
     btn.setAttribute("aria-disabled", frozen === true ? "true" : "false");
+  };
+
+  const getCurrentWelcomeBonusPromptStatus = (clientData = page2ClientData, fundingData = page2WelcomeBonusFundingCache) => {
+    return normalizeWelcomeBonusPromptStatus(
+      fundingData?.welcomeBonusPromptStatus
+      || clientData?.welcomeBonusPromptStatus
+      || "pending"
+    );
+  };
+
+  const closeWelcomeBonusPrompt = () => {
+    if (!welcomeBonusPromptOverlay) return;
+    welcomeBonusPromptOverlay.classList.add("hidden");
+    welcomeBonusPromptOverlay.classList.remove("flex");
+    if (!isPage2BlockingOverlayOpen()) {
+      document.body.classList.remove("overflow-hidden");
+    }
+  };
+
+  const openWelcomeBonusPrompt = () => {
+    if (!welcomeBonusPromptOverlay || isPage2BlockingOverlayOpen()) return false;
+    welcomeBonusPromptOverlay.classList.remove("hidden");
+    welcomeBonusPromptOverlay.classList.add("flex");
+    document.body.classList.add("overflow-hidden");
+    return true;
+  };
+
+  const fetchWelcomeBonusPromptFunding = async (user = page2PresenceUser, force = false) => {
+    const uid = String(user?.uid || "");
+    if (!uid) return null;
+    if (page2WelcomeBonusPromptUid !== uid) {
+      page2WelcomeBonusPromptUid = uid;
+      page2WelcomeBonusFundingCache = null;
+      page2WelcomeBonusFundingPromise = null;
+    }
+    if (!force && page2WelcomeBonusFundingCache) return page2WelcomeBonusFundingCache;
+    if (!force && page2WelcomeBonusFundingPromise) return page2WelcomeBonusFundingPromise;
+
+    page2WelcomeBonusFundingPromise = getDepositFundingStatusSecure({})
+      .then((response) => {
+        page2WelcomeBonusFundingCache = response && typeof response === "object" ? { ...response } : null;
+        return page2WelcomeBonusFundingCache;
+      })
+      .catch((error) => {
+        console.warn("[PAGE2] impossible de charger l'état du bonus bienvenue", error);
+        return null;
+      })
+      .finally(() => {
+        page2WelcomeBonusFundingPromise = null;
+      });
+
+    return page2WelcomeBonusFundingPromise;
+  };
+
+  const maybeShowWelcomeBonusPrompt = (user = page2PresenceUser, clientData = page2ClientData) => {
+    const uid = String(user?.uid || "");
+    if (!uid) return;
+    if (page2AccountFrozen) return;
+    const currentPromptStatus = getCurrentWelcomeBonusPromptStatus(clientData, page2WelcomeBonusFundingCache);
+    if (currentPromptStatus === "accepted" || currentPromptStatus === "declined") return;
+    if (welcomeBonusPromptOverlay?.classList.contains("flex")) return;
+
+    clearPage2WelcomeBonusPromptTimer();
+    const tryOpen = async () => {
+      if (uid !== String(auth.currentUser?.uid || "")) return;
+      if (page2AccountFrozen) return;
+      if (getCurrentWelcomeBonusPromptStatus(page2ClientData, page2WelcomeBonusFundingCache) === "accepted") return;
+      if (getCurrentWelcomeBonusPromptStatus(page2ClientData, page2WelcomeBonusFundingCache) === "declined") return;
+      if (isPage2BlockingOverlayOpen()) {
+        page2WelcomeBonusPromptTimer = window.setTimeout(() => {
+          maybeShowWelcomeBonusPrompt(user, page2ClientData);
+        }, WELCOME_BONUS_PROMPT_RETRY_MS);
+        return;
+      }
+
+      const funding = await fetchWelcomeBonusPromptFunding(user);
+      if (!funding) return;
+      const fundingPromptStatus = getCurrentWelcomeBonusPromptStatus(page2ClientData, funding);
+      if (fundingPromptStatus === "accepted" || fundingPromptStatus === "declined") return;
+      if (funding.welcomeBonusEligible !== true || funding.welcomeBonusOfferEnded === true || funding.welcomeBonusClaimed === true) {
+        return;
+      }
+
+      openWelcomeBonusPrompt();
+    };
+
+    page2WelcomeBonusPromptTimer = window.setTimeout(() => {
+      void tryOpen();
+    }, 900);
+  };
+
+  const persistWelcomeBonusPromptChoice = async (status) => {
+    const normalized = normalizeWelcomeBonusPromptStatus(status);
+    if (normalized !== "accepted" && normalized !== "declined") {
+      throw new Error("Choix bonus invalide.");
+    }
+    return updateClientProfileSecure({
+      welcomeBonusPromptStatus: normalized,
+    });
+  };
+
+  const handleWelcomeBonusPromptChoice = async (status) => {
+    if (welcomeBonusPromptSubmitting) return;
+    const normalized = normalizeWelcomeBonusPromptStatus(status);
+    const targetBtn = normalized === "accepted" ? welcomeBonusPromptAcceptBtn : welcomeBonusPromptDeclineBtn;
+    if (!targetBtn) return;
+
+    welcomeBonusPromptSubmitting = true;
+    try {
+      await withButtonLoading(targetBtn, async () => {
+        const result = await persistWelcomeBonusPromptChoice(normalized);
+        const profile = result?.profile && typeof result.profile === "object" ? result.profile : {};
+        page2ClientData = {
+          ...page2ClientData,
+          ...profile,
+          welcomeBonusPromptStatus: normalized,
+          welcomeBonusPromptAnsweredAtMs: Number(profile?.welcomeBonusPromptAnsweredAtMs || Date.now()) || Date.now(),
+        };
+        page2WelcomeBonusFundingCache = {
+          ...(page2WelcomeBonusFundingCache || {}),
+          welcomeBonusPromptStatus: normalized,
+          welcomeBonusPromptAnsweredAtMs: page2ClientData.welcomeBonusPromptAnsweredAtMs,
+        };
+        closeWelcomeBonusPrompt();
+
+        if (normalized === "accepted") {
+          try {
+            window.localStorage?.setItem(DEPOSIT_INFO_DISMISSED_KEY, "1");
+          } catch (_) {
+          }
+          welcomeBonusCoachDismissedInSession = false;
+          startWelcomeBonusCoach();
+        }
+      }, {
+        loadingLabel: normalized === "accepted" ? "Préparation..." : "Enregistrement...",
+      });
+    } catch (error) {
+      console.error("Erreur choix bonus bienvenue:", error);
+    } finally {
+      welcomeBonusPromptSubmitting = false;
+    }
+  };
+
+  const WELCOME_BONUS_COACH_STEPS = [
+    {
+      target: '[data-welcome-coach="open-deposit"]',
+      title: "Étape 1",
+      text: "Clique sur Faire un dépôt pour commencer le parcours de ton bonus.",
+      advance: "click",
+    },
+    {
+      target: '[data-welcome-coach="claim-bonus"]',
+      title: "Étape 2",
+      text: "Clique maintenant sur Recevoir mon bonus 25 HTG.",
+      advance: "click",
+    },
+    {
+      target: '[data-welcome-coach="proof-card"]',
+      title: "Étape 3",
+      text: "Fais une capture d'écran de cette carte. Elle servira de preuve dans la dernière étape.",
+      advance: "manual",
+      buttonLabel: "J'ai compris",
+    },
+    {
+      target: '[data-welcome-coach="proof-card-next"]',
+      title: "Étape 4",
+      text: "Clique sur Suivant pour passer au choix de la méthode.",
+      advance: "click",
+    },
+    {
+      target: '[data-welcome-coach="payment-method"]',
+      title: "Étape 5",
+      text: "Choisis l'une des méthodes proposées pour continuer.",
+      advance: "click",
+    },
+    {
+      target: '[data-welcome-coach="payment-step-next"]',
+      title: "Étape 6",
+      text: "Après avoir pris connaissance des infos, clique sur Suivant.",
+      advance: "click",
+    },
+    {
+      target: '[data-welcome-coach="proof-phone"]',
+      title: "Étape 7",
+      text: "Entre maintenant le numéro exact utilisé pour la démarche.",
+      advance: "manual",
+      buttonLabel: "Numéro saisi",
+    },
+    {
+      target: '[data-welcome-coach="proof-upload"]',
+      title: "Étape 8",
+      text: "Charge la capture d'écran que tu viens de faire comme preuve.",
+      advance: "manual",
+      buttonLabel: "Image prête",
+    },
+    {
+      target: '[data-welcome-coach="proof-submit"]',
+      title: "Étape 9",
+      text: "Clique enfin sur le bouton pour soumettre et recevoir ton bonus.",
+      advance: "success",
+      buttonLabel: "En attente...",
+    },
+  ];
+
+  const clearWelcomeBonusCoachRetryTimer = () => {
+    if (welcomeBonusCoachRetryTimer) {
+      window.clearTimeout(welcomeBonusCoachRetryTimer);
+      welcomeBonusCoachRetryTimer = null;
+    }
+  };
+
+  const clearWelcomeBonusCoachTarget = () => {
+    if (welcomeBonusCoachTarget) {
+      welcomeBonusCoachTarget.style.outline = welcomeBonusCoachTarget.dataset.coachPrevOutline || "";
+      welcomeBonusCoachTarget.style.boxShadow = welcomeBonusCoachTarget.dataset.coachPrevBoxShadow || "";
+      welcomeBonusCoachTarget.style.borderRadius = welcomeBonusCoachTarget.dataset.coachPrevBorderRadius || "";
+      welcomeBonusCoachTarget.style.zIndex = welcomeBonusCoachTarget.dataset.coachPrevZIndex || "";
+      welcomeBonusCoachTarget.style.position = welcomeBonusCoachTarget.dataset.coachPrevPosition || "";
+      delete welcomeBonusCoachTarget.dataset.coachPrevOutline;
+      delete welcomeBonusCoachTarget.dataset.coachPrevBoxShadow;
+      delete welcomeBonusCoachTarget.dataset.coachPrevBorderRadius;
+      delete welcomeBonusCoachTarget.dataset.coachPrevZIndex;
+      delete welcomeBonusCoachTarget.dataset.coachPrevPosition;
+      if (welcomeBonusCoachTargetClickHandler) {
+        welcomeBonusCoachTarget.removeEventListener("click", welcomeBonusCoachTargetClickHandler, true);
+      }
+    }
+    if (welcomeBonusCoachSuccessHandler) {
+      window.removeEventListener("welcomeBonusClaimed", welcomeBonusCoachSuccessHandler);
+    }
+    welcomeBonusCoachTarget = null;
+    welcomeBonusCoachTargetClickHandler = null;
+    welcomeBonusCoachSuccessHandler = null;
+  };
+
+  const setWelcomeBonusCoachOpen = (isOpen) => {
+    if (!welcomeBonusCoachOverlay) return;
+    welcomeBonusCoachOverlay.classList.toggle("hidden", !isOpen);
+    welcomeBonusCoachOverlay.classList.toggle("flex", isOpen);
+    if (!isOpen) {
+      if (!isPage2BlockingOverlayOpen()) {
+        document.body.classList.remove("overflow-hidden");
+      }
+      return;
+    }
+    document.body.classList.add("overflow-hidden");
+  };
+
+  const positionWelcomeBonusCoach = (target) => {
+    if (!target || !welcomeBonusCoachBubble || !welcomeBonusCoachArrow) return;
+    const rect = target.getBoundingClientRect();
+    const viewportWidth = window.innerWidth || document.documentElement.clientWidth || 0;
+    const viewportHeight = window.innerHeight || document.documentElement.clientHeight || 0;
+    const bubbleWidth = Math.min(320, Math.max(260, viewportWidth - 28));
+    const placeBelow = rect.top < viewportHeight * 0.45;
+    const bubbleTop = placeBelow
+      ? Math.min(viewportHeight - 180, rect.bottom + 18)
+      : Math.max(14, rect.top - 154);
+    const bubbleLeft = Math.min(
+      viewportWidth - bubbleWidth - 14,
+      Math.max(14, rect.left + (rect.width / 2) - (bubbleWidth / 2))
+    );
+
+    welcomeBonusCoachBubble.style.width = `${bubbleWidth}px`;
+    welcomeBonusCoachBubble.style.left = `${bubbleLeft}px`;
+    welcomeBonusCoachBubble.style.top = `${bubbleTop}px`;
+
+    const arrowLeft = Math.min(
+      viewportWidth - 46,
+      Math.max(14, rect.left + (rect.width / 2) - 20)
+    );
+    const arrowTop = placeBelow
+      ? Math.max(8, rect.top - 44)
+      : Math.min(viewportHeight - 56, rect.bottom + 4);
+    welcomeBonusCoachArrow.style.left = `${arrowLeft}px`;
+    welcomeBonusCoachArrow.style.top = `${arrowTop}px`;
+    welcomeBonusCoachArrow.innerHTML = placeBelow
+      ? '<i class="fa-solid fa-arrow-down-long"></i>'
+      : '<i class="fa-solid fa-arrow-up-long"></i>';
+    if (!welcomeBonusCoachArrow.dataset.animated) {
+      welcomeBonusCoachArrow.dataset.animated = "1";
+      welcomeBonusCoachArrow.animate(
+        [
+          { transform: "translateY(0px)" },
+          { transform: "translateY(10px)" },
+          { transform: "translateY(0px)" },
+        ],
+        { duration: 1100, iterations: Number.POSITIVE_INFINITY, easing: "ease-in-out" }
+      );
+    }
+  };
+
+  const completeWelcomeBonusCoach = async () => {
+    try {
+      const result = await updateClientProfileSecure({
+        welcomeBonusTutorialCompleted: true,
+      });
+      const profile = result?.profile && typeof result.profile === "object" ? result.profile : {};
+      page2ClientData = {
+        ...page2ClientData,
+        ...profile,
+        welcomeBonusTutorialCompletedAtMs: Number(profile?.welcomeBonusTutorialCompletedAtMs || Date.now()) || Date.now(),
+      };
+      page2WelcomeBonusFundingCache = {
+        ...(page2WelcomeBonusFundingCache || {}),
+        welcomeBonusTutorialCompletedAtMs: page2ClientData.welcomeBonusTutorialCompletedAtMs,
+      };
+    } catch (error) {
+      console.warn("[PAGE2] impossible de finaliser le guide bonus", error);
+    }
+  };
+
+  const closeWelcomeBonusCoach = ({ completed = false } = {}) => {
+    clearWelcomeBonusCoachRetryTimer();
+    clearWelcomeBonusCoachTarget();
+    welcomeBonusCoachIndex = -1;
+    setWelcomeBonusCoachOpen(false);
+    if (completed) {
+      void completeWelcomeBonusCoach();
+    }
+  };
+
+  const showWelcomeBonusCoachStep = (stepIndex) => {
+    clearWelcomeBonusCoachRetryTimer();
+    clearWelcomeBonusCoachTarget();
+    welcomeBonusCoachIndex = stepIndex;
+    const step = WELCOME_BONUS_COACH_STEPS[stepIndex];
+    if (!step) {
+      closeWelcomeBonusCoach({ completed: true });
+      return;
+    }
+
+    const target = document.querySelector(step.target);
+    if (!target) {
+      welcomeBonusCoachRetryTimer = window.setTimeout(() => {
+        showWelcomeBonusCoachStep(stepIndex);
+      }, 350);
+      return;
+    }
+
+    welcomeBonusCoachTarget = target;
+    target.dataset.coachPrevPosition = target.style.position || "";
+    target.dataset.coachPrevZIndex = target.style.zIndex || "";
+    target.dataset.coachPrevOutline = target.style.outline || "";
+    target.dataset.coachPrevBoxShadow = target.style.boxShadow || "";
+    target.dataset.coachPrevBorderRadius = target.style.borderRadius || "";
+    if (!/^(fixed|absolute|relative|sticky)$/.test(window.getComputedStyle(target).position)) {
+      target.style.position = "relative";
+    }
+    target.style.zIndex = "3462";
+    target.style.outline = "3px solid rgba(245,124,0,0.95)";
+    target.style.boxShadow = "0 0 0 8px rgba(245,124,0,0.18)";
+    target.style.borderRadius = target.style.borderRadius || "18px";
+    target.scrollIntoView({ behavior: "smooth", block: "center", inline: "center" });
+
+    if (welcomeBonusCoachTitle) welcomeBonusCoachTitle.textContent = step.title || "Guide bonus";
+    if (welcomeBonusCoachText) welcomeBonusCoachText.textContent = step.text || "";
+    if (welcomeBonusCoachNextBtn) {
+      welcomeBonusCoachNextBtn.textContent = step.buttonLabel || "Suivant";
+      welcomeBonusCoachNextBtn.classList.toggle("hidden", step.advance === "click" || step.advance === "success");
+    }
+
+    positionWelcomeBonusCoach(target);
+    setWelcomeBonusCoachOpen(true);
+
+    if (step.advance === "click") {
+      welcomeBonusCoachTargetClickHandler = () => {
+        clearWelcomeBonusCoachTarget();
+        window.setTimeout(() => {
+          showWelcomeBonusCoachStep(stepIndex + 1);
+        }, 320);
+      };
+      target.addEventListener("click", welcomeBonusCoachTargetClickHandler, true);
+    } else if (step.advance === "success") {
+      welcomeBonusCoachSuccessHandler = () => {
+        clearWelcomeBonusCoachTarget();
+        window.setTimeout(() => {
+          showWelcomeBonusCoachStep(stepIndex + 1);
+        }, 320);
+      };
+      window.addEventListener("welcomeBonusClaimed", welcomeBonusCoachSuccessHandler, { once: true });
+    }
+  };
+
+  const startWelcomeBonusCoach = () => {
+    if (welcomeBonusCoachDismissedInSession) return;
+    if (Number(page2ClientData?.welcomeBonusTutorialCompletedAtMs) > 0) return;
+    try {
+      window.localStorage?.setItem(DEPOSIT_INFO_DISMISSED_KEY, "1");
+    } catch (_) {
+    }
+    showWelcomeBonusCoachStep(0);
   };
 
   applyPage2AccountState = (clientData = {}) => {
@@ -1643,6 +2133,13 @@ export function renderPage2(user, options = {}) {
 
     if (hasConfirmedAuth) {
       maybeShowSupportMigrationNotice(page2PresenceUser, page2ClientData);
+      maybeShowWelcomeBonusPrompt(page2PresenceUser, page2ClientData);
+      if (
+        getCurrentWelcomeBonusPromptStatus(page2ClientData, page2WelcomeBonusFundingCache) === "accepted"
+        && Number(page2ClientData?.welcomeBonusTutorialCompletedAtMs) <= 0
+      ) {
+        startWelcomeBonusCoach();
+      }
     }
   };
 
@@ -2745,6 +3242,38 @@ export function renderPage2(user, options = {}) {
   }
   if (supportMigrationPanel) {
     supportMigrationPanel.addEventListener("click", (event) => {
+      event.stopPropagation();
+    });
+  }
+  if (welcomeBonusPromptAcceptBtn) {
+    welcomeBonusPromptAcceptBtn.addEventListener("click", () => {
+      void handleWelcomeBonusPromptChoice("accepted");
+    });
+  }
+  if (welcomeBonusPromptDeclineBtn) {
+    welcomeBonusPromptDeclineBtn.addEventListener("click", () => {
+      void handleWelcomeBonusPromptChoice("declined");
+    });
+  }
+  if (welcomeBonusPromptPanel) {
+    welcomeBonusPromptPanel.addEventListener("click", (event) => {
+      event.stopPropagation();
+    });
+  }
+  if (welcomeBonusCoachCloseBtn) {
+    welcomeBonusCoachCloseBtn.addEventListener("click", () => {
+      welcomeBonusCoachDismissedInSession = true;
+      closeWelcomeBonusCoach({ completed: false });
+    });
+  }
+  if (welcomeBonusCoachNextBtn) {
+    welcomeBonusCoachNextBtn.addEventListener("click", () => {
+      if (welcomeBonusCoachIndex < 0) return;
+      showWelcomeBonusCoachStep(welcomeBonusCoachIndex + 1);
+    });
+  }
+  if (welcomeBonusCoachBubble) {
+    welcomeBonusCoachBubble.addEventListener("click", (event) => {
       event.stopPropagation();
     });
   }
