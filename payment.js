@@ -11,6 +11,7 @@ const DEPOSIT_BONUS_MIN_HTG = 100;
 const DEPOSIT_BONUS_PERCENT = 10;
 const DEPOSIT_BONUS_RATE_HTG_TO_DOES = 20;
 const WELCOME_BONUS_HTG = 25;
+const DEPOSIT_PROOF_TIMER_STORAGE_PREFIX = 'deposit_proof_started_at';
 let tesseractRuntimePromise = null;
 
 async function loadTesseractRuntime() {
@@ -156,8 +157,71 @@ class PaymentModal {
     this.proofMode = this.options.flowType === 'welcome_bonus' ? 'welcome_bonus' : 'deposit';
     this.completedFlowType = this.options.flowType === 'welcome_bonus' ? 'welcome_bonus' : 'deposit';
     this.welcomeBonusCaptureReady = this.options.flowType === 'welcome_bonus' ? false : true;
+    this.proofStepStartedAtMs = 0;
+    this.proofSubmitAttemptDurationMs = 0;
     
     this.init();
+  }
+
+  getClientUid() {
+    return String(this.options.client?.uid || this.options.client?.id || '').trim();
+  }
+
+  getProofTimerStorageKey() {
+    const uid = this.getClientUid();
+    return uid ? `${DEPOSIT_PROOF_TIMER_STORAGE_PREFIX}_${uid}` : '';
+  }
+
+  ensureProofStepStartedAtMs() {
+    if (this.isWelcomeBonusSelected()) {
+      this.clearProofStepStartedAtMs();
+      return 0;
+    }
+    if (this.proofStepStartedAtMs > 0) {
+      return this.proofStepStartedAtMs;
+    }
+    const storageKey = this.getProofTimerStorageKey();
+    let startedAtMs = 0;
+    if (storageKey) {
+      try {
+        startedAtMs = Number(window.localStorage.getItem(storageKey)) || 0;
+      } catch (_) {
+        startedAtMs = 0;
+      }
+    }
+    if (startedAtMs <= 0) {
+      startedAtMs = Date.now();
+      if (storageKey) {
+        try {
+          window.localStorage.setItem(storageKey, String(startedAtMs));
+        } catch (_) {
+          // ignore storage failure
+        }
+      }
+    }
+    this.proofStepStartedAtMs = startedAtMs;
+    return startedAtMs;
+  }
+
+  clearProofStepStartedAtMs() {
+    this.proofStepStartedAtMs = 0;
+    this.proofSubmitAttemptDurationMs = 0;
+    const storageKey = this.getProofTimerStorageKey();
+    if (!storageKey) return;
+    try {
+      window.localStorage.removeItem(storageKey);
+    } catch (_) {
+      // ignore storage failure
+    }
+  }
+
+  getProofStepDurationMs() {
+    if (this.proofSubmitAttemptDurationMs > 0) {
+      return this.proofSubmitAttemptDurationMs;
+    }
+    const startedAtMs = this.ensureProofStepStartedAtMs();
+    if (startedAtMs <= 0) return 0;
+    return Math.max(0, Date.now() - startedAtMs);
   }
 
   getDefaultSteps() {
@@ -1433,6 +1497,11 @@ class PaymentModal {
     if (!this.modal) return;
     const selectedMode = this.isWelcomeBonusSelected() ? 'welcome_bonus' : 'deposit';
     this.proofMode = selectedMode;
+    if (selectedMode === 'welcome_bonus') {
+      this.clearProofStepStartedAtMs();
+    } else {
+      this.ensureProofStepStartedAtMs();
+    }
 
     this.modal.querySelectorAll('[data-proof-mode-card]').forEach((card) => {
       const mode = card.getAttribute('data-proof-mode-card');
@@ -1515,6 +1584,7 @@ class PaymentModal {
       }
       
       if (step.type === 'proof') {
+        this.clearProofStepStartedAtMs();
         this.isSubmitted = true;
         this.isCompleted = true;
         
@@ -1588,6 +1658,14 @@ class PaymentModal {
   }
   
   async validateProofStep() {
+    this.proofSubmitAttemptDurationMs = this.getProofStepDurationMs();
+    console.info('[DEPOSIT_GUARD_DEBUG][PAYMENT] proof-submit', {
+      uid: this.getClientUid(),
+      durationMs: this.proofSubmitAttemptDurationMs,
+      proofMode: this.proofMode,
+      welcomeSelected: this.isWelcomeBonusSelected(),
+    });
+
     const proofName = this.modal.querySelector('#proofName')?.value.trim();
     const proofDepositorPhoneInput = this.modal.querySelector('#proofDepositorPhone');
     const proofDepositorPhone = sanitizePhoneInput(proofDepositorPhoneInput?.value || '');
@@ -1758,6 +1836,14 @@ class PaymentModal {
         proofRef: proofName,
         extractedText: this.extractedText,
         extractedTextStatus: this.extractedTextStatus,
+        proofStepDurationMs: this.getProofStepDurationMs(),
+      });
+      console.info('[DEPOSIT_GUARD_DEBUG][PAYMENT] create-order:response', {
+        uid: this.getClientUid(),
+        orderId: String(response?.orderId || ''),
+        status: String(response?.status || ''),
+        creditedProvisionally: response?.creditedProvisionally === true,
+        message: String(response?.message || ''),
       });
       this.completedFlowType = 'deposit';
       this.confirmationMessage = String(response?.message || "").trim();
@@ -1911,6 +1997,7 @@ class PaymentModal {
   
   async close() {
     this.stopCountdown();
+    this.clearProofStepStartedAtMs();
     
     await this.animateOut();
     this.modal.remove();

@@ -127,6 +127,9 @@ const DEPOSIT_ANALYTICS_DEFAULT_WINDOW_MS = 30 * 24 * 60 * 60 * 1000;
 const DEPOSIT_ANALYTICS_MAX_WINDOW_MS = 180 * 24 * 60 * 60 * 1000;
 const DEPOSIT_ANALYTICS_PAGE_FETCH_SIZE = 1000;
 const DEPOSIT_ANALYTICS_DOC_LIMIT = 12000;
+const DEPOSIT_PROOF_MIN_DELAY_MS = 45 * 1000;
+const DEPOSIT_SHADOW_GUARD_WINDOW_MS = 24 * 60 * 60 * 1000;
+const DEPOSIT_SHADOW_GUARD_RAPID_THRESHOLD = 2;
 const BOT_DIFFICULTY_LOOKAHEAD = Object.freeze({
   amateur: 0,
   expert: 3,
@@ -556,6 +559,16 @@ function generateWelcomeBonusProofCode(uid = "") {
   const head = safeUid.slice(0, 6) || crypto.randomBytes(3).toString("hex").toUpperCase();
   const tail = crypto.randomBytes(2).toString("hex").toUpperCase();
   return `CLIENT-${head}-${tail}`;
+}
+
+function normalizeDepositShadowGuard(value = {}) {
+  const data = value && typeof value === "object" ? value : {};
+  return {
+    windowStartedAtMs: safeSignedInt(data.windowStartedAtMs),
+    lastAttemptAtMs: safeSignedInt(data.lastAttemptAtMs),
+    rapidAttemptCount: safeInt(data.rapidAttemptCount),
+    lastProofStepDurationMs: safeInt(data.lastProofStepDurationMs),
+  };
 }
 
 function resolveWelcomeBonusEligibility({
@@ -2596,6 +2609,53 @@ function normalizeDepositAnalyticsMethod(order = {}) {
 }
 
 async function fetchDepositAnalyticsRowsForRange(startMs = 0, endMs = 0) {
+  console.info("[DEPOSIT_ANALYTICS_DEBUG] fetch:start", {
+    startMs: safeSignedInt(startMs),
+    endMs: safeSignedInt(endMs),
+    limit: DEPOSIT_ANALYTICS_DOC_LIMIT + 1,
+  });
+
+  const probes = [
+    {
+      name: "collection-group-base",
+      run: () => db.collectionGroup("orders").limit(1).get(),
+    },
+    {
+      name: "createdAtMs-gte",
+      run: () => db.collectionGroup("orders")
+        .where("createdAtMs", ">=", startMs)
+        .limit(1)
+        .get(),
+    },
+    {
+      name: "createdAtMs-range",
+      run: () => db.collectionGroup("orders")
+        .where("createdAtMs", ">=", startMs)
+        .where("createdAtMs", "<=", endMs)
+        .limit(1)
+        .get(),
+    },
+  ];
+
+  for (const probe of probes) {
+    try {
+      const probeSnap = await probe.run();
+      console.info("[DEPOSIT_ANALYTICS_DEBUG] probe:ok", {
+        name: probe.name,
+        size: safeInt(probeSnap?.size),
+      });
+    } catch (error) {
+      console.error("[DEPOSIT_ANALYTICS_DEBUG] probe:error", {
+        name: probe.name,
+        message: String(error?.message || error),
+        code: String(error?.code || ""),
+        details: error?.details || "",
+        stack: String(error?.stack || ""),
+      });
+      throw error;
+    }
+  }
+
   const querySnap = await db.collectionGroup("orders")
     .where("createdAtMs", ">=", startMs)
     .where("createdAtMs", "<=", endMs)
@@ -2617,6 +2677,11 @@ async function fetchDepositAnalyticsRowsForRange(startMs = 0, endMs = 0) {
     .limit(DEPOSIT_ANALYTICS_DOC_LIMIT + 1)
     .get();
 
+  console.info("[DEPOSIT_ANALYTICS_DEBUG] fetch:done", {
+    size: safeInt(querySnap.size),
+    truncated: querySnap.size > DEPOSIT_ANALYTICS_DOC_LIMIT,
+  });
+
   const rows = querySnap.docs
     .slice(0, DEPOSIT_ANALYTICS_DOC_LIMIT)
     .map((docSnap) => docSnap.data() || {});
@@ -2630,6 +2695,13 @@ async function fetchDepositAnalyticsRowsForRange(startMs = 0, endMs = 0) {
 async function computeDepositAnalyticsSnapshot(options = {}) {
   const nowMs = safeSignedInt(options.nowMs) || Date.now();
   const range = normalizeDepositAnalyticsRange(options, nowMs);
+  console.info("[DEPOSIT_ANALYTICS_DEBUG] snapshot:start", {
+    nowMs,
+    startMs: range.startMs,
+    endMs: range.endMs,
+    rangeMs: range.rangeMs,
+    granularity: range.granularity,
+  });
   const rowsResult = await fetchDepositAnalyticsRowsForRange(range.startMs, range.endMs);
   const bucketSeed = buildDepositAnalyticsBucketSeed(range.startMs, range.endMs, range.granularity);
   const bucketMap = new Map(bucketSeed.map((item) => [item.key, item]));
@@ -2785,6 +2857,15 @@ async function computeDepositAnalyticsSnapshot(options = {}) {
   const natcashApprovedSharePct = summary.approvedHtg > 0
     ? Number(((summary.natcashApprovedHtg / summary.approvedHtg) * 100).toFixed(2))
     : 0;
+
+  console.info("[DEPOSIT_ANALYTICS_DEBUG] snapshot:done", {
+    scannedOrderDocs: safeInt(rowsResult.rows.length),
+    truncated: rowsResult.truncated === true,
+    requestedCount: safeInt(summary.requestedCount),
+    approvedCount: safeInt(summary.approvedCount),
+    rejectedCount: safeInt(summary.rejectedCount),
+    pendingCount: safeInt(summary.pendingCount),
+  });
 
   return {
     generatedAtMs: nowMs,
@@ -8191,90 +8272,96 @@ exports.getDpaymentBootstrapConfig = publicOnCall("getDpaymentBootstrapConfig", 
   };
 });
 
-exports.getGlobalAnalyticsSnapshot = publicOnCall("getGlobalAnalyticsSnapshot", async (request) => {
-  assertFinanceAdmin(request);
-  const botDifficulty = await getConfiguredBotDifficulty();
-  const nowMs = Date.now();
-  const presenceSnapshotsCutoffMs = nowMs - (PRESENCE_ANALYTICS_RECENT_SNAPSHOT_DAYS * 24 * 60 * 60 * 1000);
-  const [
-    clientsSnap,
-    ambassadorsSnap,
-    roomsSnap,
-    ordersSnap,
-    withdrawalsSnap,
-    xchangesSnap,
-    referralRewardsSnap,
-    referralsSnap,
-    channelSnap,
-    threadsSnap,
-    supportMessagesSnap,
-    livePresence,
-    presenceSnapshotsSnap,
-    presenceDailySnap,
-    presenceMonthlySnap,
-    presenceHourSnap,
-    presenceWeekdaySnap,
-  ] = await Promise.all([
-    db.collection(CLIENTS_COLLECTION).get(),
-    db.collection(AMBASSADORS_COLLECTION).get(),
-    db.collection(ROOMS_COLLECTION).get(),
-    db.collectionGroup("orders").get(),
-    db.collectionGroup("withdrawals").get(),
-    db.collectionGroup("xchanges").get(),
-    db.collectionGroup("referralRewards").get(),
-    db.collectionGroup("referrals").get(),
-    db.collection(CHAT_COLLECTION).get(),
-    db.collection(SUPPORT_THREADS_COLLECTION).get(),
-    db.collectionGroup(SUPPORT_MESSAGES_SUBCOLLECTION).get(),
-    collectPresenceAnalyticsNow(nowMs),
-    presenceSnapshotsCollection()
-      .where("bucketMs", ">=", presenceSnapshotsCutoffMs)
-      .orderBy("bucketMs", "asc")
-      .get(),
-    presenceDailyCollection()
-      .orderBy("dayKey", "desc")
-      .limit(PRESENCE_ANALYTICS_RECENT_DAYS_LIMIT)
-      .get(),
-    presenceMonthlyCollection()
-      .orderBy("monthKey", "desc")
-      .limit(PRESENCE_ANALYTICS_RECENT_MONTHS_LIMIT)
-      .get(),
-    presenceHourCollection()
-      .orderBy("hourKey", "asc")
-      .get(),
-    presenceWeekdayCollection()
-      .orderBy("weekdayKey", "asc")
-      .get(),
-  ]);
+exports.getGlobalAnalyticsSnapshot = publicOnCall(
+  "getGlobalAnalyticsSnapshot",
+  async (request) => {
+    assertFinanceAdmin(request);
+    const botDifficulty = await getConfiguredBotDifficulty();
+    const nowMs = Date.now();
+    const presenceSnapshotsCutoffMs = nowMs - (PRESENCE_ANALYTICS_RECENT_SNAPSHOT_DAYS * 24 * 60 * 60 * 1000);
+    const [
+      clientsSnap,
+      ambassadorsSnap,
+      roomsSnap,
+      ordersSnap,
+      withdrawalsSnap,
+      xchangesSnap,
+      referralRewardsSnap,
+      referralsSnap,
+      channelSnap,
+      threadsSnap,
+      supportMessagesSnap,
+      livePresence,
+      presenceSnapshotsSnap,
+      presenceDailySnap,
+      presenceMonthlySnap,
+      presenceHourSnap,
+      presenceWeekdaySnap,
+    ] = await Promise.all([
+      db.collection(CLIENTS_COLLECTION).get(),
+      db.collection(AMBASSADORS_COLLECTION).get(),
+      db.collection(ROOMS_COLLECTION).get(),
+      db.collectionGroup("orders").get(),
+      db.collectionGroup("withdrawals").get(),
+      db.collectionGroup("xchanges").get(),
+      db.collectionGroup("referralRewards").get(),
+      db.collectionGroup("referrals").get(),
+      db.collection(CHAT_COLLECTION).get(),
+      db.collection(SUPPORT_THREADS_COLLECTION).get(),
+      db.collectionGroup(SUPPORT_MESSAGES_SUBCOLLECTION).get(),
+      collectPresenceAnalyticsNow(nowMs),
+      presenceSnapshotsCollection()
+        .where("bucketMs", ">=", presenceSnapshotsCutoffMs)
+        .orderBy("bucketMs", "asc")
+        .get(),
+      presenceDailyCollection()
+        .orderBy("dayKey", "desc")
+        .limit(PRESENCE_ANALYTICS_RECENT_DAYS_LIMIT)
+        .get(),
+      presenceMonthlyCollection()
+        .orderBy("monthKey", "desc")
+        .limit(PRESENCE_ANALYTICS_RECENT_MONTHS_LIMIT)
+        .get(),
+      presenceHourCollection()
+        .orderBy("hourKey", "asc")
+        .get(),
+      presenceWeekdayCollection()
+        .orderBy("weekdayKey", "asc")
+        .get(),
+    ]);
 
-  const referrals = referralsSnap.docs.map(referralRecordForCallable);
+    const referrals = referralsSnap.docs.map(referralRecordForCallable);
 
-  return {
-    generatedAtMs: Date.now(),
-    botDifficulty,
-    clients: clientsSnap.docs.map(snapshotRecordForCallable),
-    ambassadors: ambassadorsSnap.docs.map(snapshotRecordForCallable),
-    rooms: roomsSnap.docs.map(snapshotRecordForCallable),
-    orders: ordersSnap.docs.map(subcollectionRecordForCallable),
-    withdrawals: withdrawalsSnap.docs.map(subcollectionRecordForCallable),
-    xchanges: xchangesSnap.docs.map(subcollectionRecordForCallable),
-    referralRewards: referralRewardsSnap.docs.map(subcollectionRecordForCallable),
-    clientReferrals: referrals.filter((item) => item.ownerCollection === CLIENTS_COLLECTION),
-    ambassadorReferrals: referrals.filter((item) => item.ownerCollection === AMBASSADORS_COLLECTION),
-    channelMessages: channelSnap.docs.map(snapshotRecordForCallable),
-    supportThreads: threadsSnap.docs.map(snapshotRecordForCallable),
-    supportMessages: supportMessagesSnap.docs.map(supportMessageRecordForCallable),
-    presenceAnalytics: {
-      timezone: PRESENCE_ANALYTICS_TIMEZONE,
-      live: livePresence,
-      snapshots: presenceSnapshotsSnap.docs.map(snapshotRecordForCallable),
-      daily: presenceDailySnap.docs.map(snapshotRecordForCallable).reverse(),
-      monthly: presenceMonthlySnap.docs.map(snapshotRecordForCallable).reverse(),
-      hourOfDay: presenceHourSnap.docs.map(snapshotRecordForCallable),
-      weekday: presenceWeekdaySnap.docs.map(snapshotRecordForCallable),
-    },
-  };
-});
+    return {
+      generatedAtMs: Date.now(),
+      botDifficulty,
+      clients: clientsSnap.docs.map(snapshotRecordForCallable),
+      ambassadors: ambassadorsSnap.docs.map(snapshotRecordForCallable),
+      rooms: roomsSnap.docs.map(snapshotRecordForCallable),
+      orders: ordersSnap.docs.map(subcollectionRecordForCallable),
+      withdrawals: withdrawalsSnap.docs.map(subcollectionRecordForCallable),
+      xchanges: xchangesSnap.docs.map(subcollectionRecordForCallable),
+      referralRewards: referralRewardsSnap.docs.map(subcollectionRecordForCallable),
+      clientReferrals: referrals.filter((item) => item.ownerCollection === CLIENTS_COLLECTION),
+      ambassadorReferrals: referrals.filter((item) => item.ownerCollection === AMBASSADORS_COLLECTION),
+      channelMessages: channelSnap.docs.map(snapshotRecordForCallable),
+      supportThreads: threadsSnap.docs.map(snapshotRecordForCallable),
+      supportMessages: supportMessagesSnap.docs.map(supportMessageRecordForCallable),
+      presenceAnalytics: {
+        timezone: PRESENCE_ANALYTICS_TIMEZONE,
+        live: livePresence,
+        snapshots: presenceSnapshotsSnap.docs.map(snapshotRecordForCallable),
+        daily: presenceDailySnap.docs.map(snapshotRecordForCallable).reverse(),
+        monthly: presenceMonthlySnap.docs.map(snapshotRecordForCallable).reverse(),
+        hourOfDay: presenceHourSnap.docs.map(snapshotRecordForCallable),
+        weekday: presenceWeekdaySnap.docs.map(snapshotRecordForCallable),
+      },
+    };
+  },
+  {
+    memory: "1GiB",
+  }
+);
 
 exports.getClientAcquisitionSnapshot = publicOnCall("getClientAcquisitionSnapshot", async (request) => {
   assertFinanceAdmin(request);
@@ -8292,12 +8379,28 @@ exports.getDepositMethodAnalyticsSnapshot = publicOnCall(
   async (request) => {
     assertFinanceAdmin(request);
     const payload = request.data && typeof request.data === "object" ? request.data : {};
-    const snapshot = await computeDepositAnalyticsSnapshot(payload);
+    try {
+      console.info("[DEPOSIT_ANALYTICS_DEBUG] callable:start", {
+        uid: String(request?.auth?.uid || ""),
+        email: String(request?.auth?.token?.email || ""),
+        payload,
+      });
+      const snapshot = await computeDepositAnalyticsSnapshot(payload);
 
-    return {
-      ok: true,
-      snapshot,
-    };
+      return {
+        ok: true,
+        snapshot,
+      };
+    } catch (error) {
+      console.error("[DEPOSIT_ANALYTICS_DEBUG] callable:error", {
+        message: String(error?.message || error),
+        code: String(error?.code || ""),
+        details: error?.details || "",
+        stack: String(error?.stack || ""),
+        payload,
+      });
+      throw error;
+    }
   },
   { invoker: "public" }
 );
@@ -8461,6 +8564,7 @@ exports.createOrderSecure = publicOnCall("createOrderSecure", async (request) =>
   const customerPhone = sanitizePhone(payload.customerPhone || "", 40);
   const depositorPhone = sanitizePhone(payload.depositorPhone || "", 40);
   const proofRef = sanitizeText(payload.proofRef || "", 180);
+  const proofStepDurationMs = safeInt(payload.proofStepDurationMs);
 
   if (!methodId || amountHtg < MIN_ORDER_HTG || !customerName || !proofRef) {
     throw new HttpsError("invalid-argument", "Commande invalide.");
@@ -8481,14 +8585,44 @@ exports.createOrderSecure = publicOnCall("createOrderSecure", async (request) =>
   const nowIso = new Date().toISOString();
   const nowMs = Date.now();
   const clientRef = walletRef(uid);
-  await db.runTransaction(async (tx) => {
-    const [clientSnap, ordersSnap, withdrawalsSnap] = await Promise.all([
+  return db.runTransaction(async (tx) => {
+    const [clientSnap, ordersSnap, withdrawalsSnap, gameHistorySnap] = await Promise.all([
       tx.get(clientRef),
       tx.get(db.collection(CLIENTS_COLLECTION).doc(uid).collection("orders")),
       tx.get(db.collection(CLIENTS_COLLECTION).doc(uid).collection("withdrawals")),
+      tx.get(walletHistoryRef(uid).where("type", "==", "game_entry").limit(1)),
     ]);
     const clientData = clientSnap.exists ? (clientSnap.data() || {}) : {};
     assertWalletNotFrozen(clientData);
+    const existingOrders = ordersSnap.docs.map((item) => item.data() || {});
+    const hasRealApprovedDeposit = hasRealApprovedDepositFromOrders(existingOrders);
+    const hasPlayedGame = !gameHistorySnap.empty;
+    const priorShadowGuard = normalizeDepositShadowGuard(clientData.depositShadowGuard);
+    const withinShadowWindow = priorShadowGuard.windowStartedAtMs > 0
+      && (nowMs - priorShadowGuard.windowStartedAtMs) <= DEPOSIT_SHADOW_GUARD_WINDOW_MS;
+    const rapidAttempt = proofStepDurationMs > 0 && proofStepDurationMs < DEPOSIT_PROOF_MIN_DELAY_MS;
+    const nextRapidAttemptCount = rapidAttempt
+      ? ((withinShadowWindow ? priorShadowGuard.rapidAttemptCount : 0) + 1)
+      : 0;
+    const shouldShadowDrop = rapidAttempt
+      && !hasRealApprovedDeposit
+      && nextRapidAttemptCount >= DEPOSIT_SHADOW_GUARD_RAPID_THRESHOLD;
+
+    console.info("[DEPOSIT_GUARD_DEBUG][FUNCTIONS] createOrderSecure:decision", {
+      uid,
+      proofStepDurationMs,
+      rapidAttempt,
+      nextRapidAttemptCount,
+      windowStartedAtMs: priorShadowGuard.windowStartedAtMs,
+      withinShadowWindow,
+      hasRealApprovedDeposit,
+      hasPlayedGame,
+      shouldShadowDrop,
+      ordersCount: ordersSnap.size,
+      withdrawalsCount: withdrawalsSnap.size,
+      methodId,
+      amountHtg,
+    });
 
     const orderData = {
       uid,
@@ -8552,16 +8686,38 @@ exports.createOrderSecure = publicOnCall("createOrderSecure", async (request) =>
       email,
       name: customerName || sanitizeText(clientData.name || "", 80) || sanitizeText(String(email || "").split("@")[0], 80) || "Player",
       phone: customerPhone || sanitizePhone(clientData.phone || ""),
+      depositShadowGuard: {
+        windowStartedAtMs: rapidAttempt ? (withinShadowWindow ? priorShadowGuard.windowStartedAtMs : nowMs) : 0,
+        lastAttemptAtMs: nowMs,
+        rapidAttemptCount: nextRapidAttemptCount,
+        lastProofStepDurationMs: proofStepDurationMs,
+      },
       lastSeenAt: admin.firestore.FieldValue.serverTimestamp(),
       lastSeenAtMs: nowMs,
       updatedAt: admin.firestore.FieldValue.serverTimestamp(),
       ...(clientSnap.exists ? {} : { createdAt: admin.firestore.FieldValue.serverTimestamp() }),
     };
 
+    if (shouldShadowDrop) {
+      console.info("[DEPOSIT_GUARD_DEBUG][FUNCTIONS] createOrderSecure:shadow_drop", {
+        uid,
+        proofStepDurationMs,
+        nextRapidAttemptCount,
+      });
+      tx.set(clientRef, nextWallet, { merge: true });
+      return {
+        ok: true,
+        orderId: "",
+        status: "pending",
+        creditedProvisionally: false,
+        message: "Votre demande est en cours de vérification.",
+      };
+    }
+
     if (provisionalDepositsEnabled) {
       const fundingSnapshot = buildWalletFundingSnapshot({
         orders: [
-          ...ordersSnap.docs.map((item) => item.data() || {}),
+          ...existingOrders,
           orderData,
         ],
         withdrawals: withdrawalsSnap.docs.map((item) => item.data() || {}),
@@ -8572,17 +8728,24 @@ exports.createOrderSecure = publicOnCall("createOrderSecure", async (request) =>
 
     tx.set(clientRef, nextWallet, { merge: true });
     tx.set(orderRef, orderData, { merge: true });
+    console.info("[DEPOSIT_GUARD_DEBUG][FUNCTIONS] createOrderSecure:order_created", {
+      uid,
+      orderId: orderRef.id,
+      proofStepDurationMs,
+      rapidAttempt,
+      nextRapidAttemptCount,
+      provisionalDepositsEnabled,
+    });
+    return {
+      ok: true,
+      orderId: orderRef.id,
+      status: "pending",
+      creditedProvisionally: provisionalDepositsEnabled,
+      message: provisionalDepositsEnabled
+        ? "Ton dépôt est en cours d'examen. Tu peux jouer avec ce solde, mais tu ne peux pas le retirer tant qu'il n'est pas validé."
+        : "Votre demande est en cours de vérification.",
+    };
   });
-
-  return {
-    ok: true,
-    orderId: orderRef.id,
-    status: "pending",
-    creditedProvisionally: provisionalDepositsEnabled,
-    message: provisionalDepositsEnabled
-      ? "Ton dépôt est en cours d'examen. Tu peux jouer avec ce solde, mais tu ne peux pas le retirer tant qu'il n'est pas validé."
-      : "Votre demande est en cours de vérification.",
-  };
 });
 
 exports.claimWelcomeBonusSecure = publicOnCall("claimWelcomeBonusSecure", async (request) => {
