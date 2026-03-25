@@ -470,6 +470,16 @@ function computeReservedWithdrawalAmount(withdrawal) {
   return safeInt(withdrawal?.requestedAmount ?? withdrawal?.amount);
 }
 
+function isWithdrawalReservedStatus(status = "") {
+  const normalized = String(status || "").trim().toLowerCase();
+  return normalized !== "rejected" && normalized !== "cancelled" && normalized !== "canceled";
+}
+
+function isWithdrawalClientCancellableStatus(status = "") {
+  const normalized = String(status || "").trim().toLowerCase();
+  return normalized === "pending" || normalized === "review";
+}
+
 function computeWalletAvailableGourdes({
   orders = [],
   withdrawals = [],
@@ -480,7 +490,7 @@ function computeWalletAvailableGourdes({
     0
   );
   const reservedWithdrawalsHtg = (Array.isArray(withdrawals) ? withdrawals : []).reduce((sum, item) => {
-    if (item?.status === "rejected") return sum;
+    if (!isWithdrawalReservedStatus(item?.status)) return sum;
     return sum + computeReservedWithdrawalAmount(item);
   }, 0);
   // Keep the raw base so gains already reconverted from Does do not recreate
@@ -716,7 +726,7 @@ function buildWalletFundingSnapshot({
     0
   );
   const reservedWithdrawalsHtg = (Array.isArray(withdrawals) ? withdrawals : []).reduce((sum, item) => {
-    if (String(item?.status || "").trim().toLowerCase() === "rejected") return sum;
+    if (!isWithdrawalReservedStatus(item?.status)) return sum;
     return sum + computeReservedWithdrawalAmount(item);
   }, 0);
   const approvedBaseHtg = approvedDepositsHtg - reservedWithdrawalsHtg;
@@ -9219,6 +9229,99 @@ exports.createWithdrawalSecure = publicOnCall("createWithdrawalSecure", async (r
       duplicate: false,
       withdrawalId: newWithdrawalRef.id,
       status: "pending",
+    };
+  });
+
+  return result;
+});
+
+exports.cancelWithdrawalSecure = publicOnCall("cancelWithdrawalSecure", async (request) => {
+  const { uid, email } = assertAuth(request);
+  const payload = request.data && typeof request.data === "object" ? request.data : {};
+  const withdrawalId = sanitizeText(payload.withdrawalId || payload.id || "", 160);
+
+  if (!withdrawalId) {
+    throw new HttpsError("invalid-argument", "Retrait introuvable.");
+  }
+
+  const clientRef = walletRef(uid);
+  const withdrawalRef = clientRef.collection("withdrawals").doc(withdrawalId);
+
+  const result = await db.runTransaction(async (tx) => {
+    const [withdrawalSnap, clientSnap, ordersSnap, withdrawalsSnap, xchangesSnap] = await Promise.all([
+      tx.get(withdrawalRef),
+      tx.get(clientRef),
+      tx.get(clientRef.collection("orders")),
+      tx.get(clientRef.collection("withdrawals")),
+      tx.get(walletHistoryRef(uid)),
+    ]);
+
+    if (!withdrawalSnap.exists) {
+      throw new HttpsError("not-found", "Demande de retrait introuvable.");
+    }
+
+    const clientData = clientSnap.exists ? (clientSnap.data() || {}) : {};
+    const withdrawalData = withdrawalSnap.data() || {};
+    const currentStatus = String(withdrawalData.status || "").trim().toLowerCase();
+
+    if (currentStatus === "cancelled" || currentStatus === "canceled") {
+      return {
+        ok: true,
+        alreadyCancelled: true,
+        withdrawalId,
+        status: "cancelled",
+      };
+    }
+
+    if (!isWithdrawalClientCancellableStatus(currentStatus)) {
+      throw new HttpsError("failed-precondition", "Ce retrait ne peut plus être annulé.");
+    }
+
+    const nowMs = Date.now();
+    const nowIso = new Date(nowMs).toISOString();
+    const nextWithdrawals = withdrawalsSnap.docs.map((item) => {
+      if (item.id !== withdrawalId) return item.data() || {};
+      return {
+        ...(item.data() || {}),
+        status: "cancelled",
+        resolutionStatus: "cancelled",
+        cancelledBy: "client",
+        cancelledAtMs: nowMs,
+        cancelledAt: nowIso,
+        updatedAt: nowIso,
+      };
+    });
+
+    const nextFundingSnapshot = buildWalletFundingSnapshot({
+      orders: ordersSnap.docs.map((item) => item.data() || {}),
+      withdrawals: nextWithdrawals,
+      walletData: clientData,
+      exchangeHistory: xchangesSnap.docs.map((item) => item.data() || {}),
+    });
+
+    tx.set(withdrawalRef, {
+      status: "cancelled",
+      resolutionStatus: "cancelled",
+      cancelledBy: "client",
+      cancelledAtMs: nowMs,
+      cancelledAt: nowIso,
+      updatedAt: nowIso,
+      customerEmail: sanitizeEmail(email || "", 160),
+    }, { merge: true });
+
+    tx.set(clientRef, {
+      uid,
+      email,
+      ...buildFundingWalletPatch(nextFundingSnapshot),
+      updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+    }, { merge: true });
+
+    return {
+      ok: true,
+      alreadyCancelled: false,
+      withdrawalId,
+      status: "cancelled",
+      ...nextFundingSnapshot,
     };
   });
 

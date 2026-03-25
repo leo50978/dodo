@@ -9,7 +9,7 @@ import {
   getDocs,
   onAuthStateChanged,
 } from "./firebase-init.js";
-import { getDepositFundingStatusSecure, orderClientActionSecure } from "./secure-functions.js";
+import { cancelWithdrawalSecure, getDepositFundingStatusSecure, orderClientActionSecure } from "./secure-functions.js";
 const BALANCE_DEBUG = false;
 const WELCOME_FLOW_DEBUG = false;
 const SOLDE_BUILD_TAG = "welcome-bonus-debug-2026-03-21-v2";
@@ -114,6 +114,16 @@ function computeRealDepositAmount(order) {
 
 function computeReservedWithdrawalAmount(withdrawal) {
   return Math.max(0, Math.floor(Number(withdrawal?.requestedAmount ?? withdrawal?.amount) || 0));
+}
+
+function isWithdrawalReservedStatus(status = "") {
+  const normalized = String(status || "").trim().toLowerCase();
+  return normalized !== "rejected" && normalized !== "cancelled" && normalized !== "canceled";
+}
+
+function isWithdrawalClientCancellableStatus(status = "") {
+  const normalized = String(status || "").trim().toLowerCase();
+  return normalized === "pending" || normalized === "review";
 }
 
 function escapeHtml(input) {
@@ -611,6 +621,7 @@ function getOrderUiStatus(order) {
   if (!order) return "pending";
   if (order.status === "approved") return "approved";
   if (order.status === "rejected") return "rejected";
+  if (order.status === "cancelled" || order.status === "canceled") return "cancelled";
   if (order.status === "review") return "review";
   return "pending";
 }
@@ -653,6 +664,11 @@ function renderOrderCard(order) {
     badgeClass = "bg-[#7a2b2b]/40 text-[#ffbdbd]";
     badgeLabel = "Rejetée";
   }
+  if (status === "cancelled") {
+    badgeClass = "bg-[#475569]/45 text-[#dbe4f3]";
+    badgeLabel = "Annulée";
+  }
+  const showCancelWithdrawal = kind === "withdrawal" && isWithdrawalClientCancellableStatus(status);
 
   return `
     <div class="rounded-2xl border border-white/20 bg-white/10 p-4 shadow-[8px_8px_18px_rgba(18,25,42,0.35),-6px_-6px_14px_rgba(121,135,173,0.2)]">
@@ -670,6 +686,14 @@ function renderOrderCard(order) {
       </div>
 
       ${extraHint}
+
+      ${showCancelWithdrawal ? `
+        <div class="mt-3">
+          <button data-action="cancel-withdrawal" data-kind="${kind}" data-order-id="${escapeHtml(order.id)}" class="w-full rounded-xl border border-amber-200/25 bg-amber-500/15 py-2.5 text-xs font-semibold text-amber-100">
+            Annuler retrait
+          </button>
+        </div>
+      ` : ""}
 
       ${status === "rejected" ? `
         <div class="mt-3 rounded-xl bg-[#7a2b2b]/25 p-3 text-xs text-[#ffd1d1]">
@@ -690,7 +714,7 @@ function getPendingOperationsSnapshot(orders = cachedOrders, withdrawals = cache
     ...(withdrawals || []).map((w) => ({ ...w, type: "withdrawal" })),
   ];
   return ops
-    .filter((o) => o && !o.userHiddenByClient && o.status !== "approved")
+    .filter((o) => o && !o.userHiddenByClient && o.status !== "approved" && o.status !== "cancelled" && o.status !== "canceled")
     .sort((a, b) => new Date(b.createdAt || 0) - new Date(a.createdAt || 0));
 }
 
@@ -725,6 +749,12 @@ export function renderPendingOperationsList(target, options = {}) {
   return visible;
 }
 
+async function cancelWithdrawalOperation(orderId) {
+  const user = auth.currentUser;
+  if (!user || !orderId) return null;
+  return cancelWithdrawalSecure({ withdrawalId: orderId });
+}
+
 export function bindPendingOperationsActions(target) {
   const listEl = typeof target === "string" ? document.querySelector(target) : target;
   if (!listEl) return;
@@ -746,6 +776,17 @@ export function bindPendingOperationsActions(target) {
         }
         if (action === "review") {
           await requestOperationReview(orderId, kind);
+        }
+        if (action === "cancel-withdrawal" && kind === "withdrawal") {
+          const confirmed = window.confirm("Annuler ce retrait et remettre le montant dans ton solde disponible ?");
+          if (!confirmed) return;
+          await cancelWithdrawalOperation(orderId);
+          window.dispatchEvent(new CustomEvent("withdrawalCancelled", {
+            detail: {
+              id: orderId,
+              status: "cancelled",
+            },
+          }));
         }
       } catch (err) {
         console.error("Erreur action commande:", err);
@@ -883,7 +924,7 @@ async function attachWithdrawalsListener() {
     if (BALANCE_DEBUG) {
       console.log("[BALANCE_DEBUG][SOLDE] withdrawals snapshot", {
         count: withdrawals.length,
-        pendingLikeCount: withdrawals.filter((w) => w.status !== "rejected").length,
+        pendingLikeCount: withdrawals.filter((w) => isWithdrawalReservedStatus(w.status)).length,
         preview: withdrawals.slice(0, 3).map((w) => ({
           id: w.id,
           status: w.status,
@@ -988,7 +1029,7 @@ function refreshBalanceFromCaches() {
     .filter((o) => o.status === "approved")
     .reduce((sum, o) => sum + computeRealDepositAmount(o), 0);
   const reservedWithdrawals = cachedWithdrawals
-    .filter((o) => o.status !== "rejected")
+    .filter((o) => isWithdrawalReservedStatus(o.status))
     .reduce((sum, o) => sum + computeReservedWithdrawalAmount(o), 0);
   const rawBaseBalance = approvedDeposits - reservedWithdrawals;
   if (BALANCE_DEBUG) {
@@ -1306,6 +1347,28 @@ export function mountSoldeModal(options = {}) {
         bindOrdersActions();
       }
     }
+    void attachWithdrawalsListener();
+  });
+  window.addEventListener("withdrawalCancelled", (ev) => {
+    const detail = ev?.detail || {};
+    const targetId = String(detail?.id || "").trim();
+    if (!targetId) return;
+    const exists = cachedWithdrawals.some((w) => w && w.id === targetId);
+    if (!exists) return;
+    cachedWithdrawals = cachedWithdrawals.map((item) => (
+      item && item.id === targetId
+        ? {
+            ...item,
+            status: "cancelled",
+            resolutionStatus: "cancelled",
+            cancelledBy: "client",
+            cancelledAt: new Date().toISOString(),
+          }
+        : item
+    ));
+    refreshBalanceFromCaches();
+    renderOrdersSection(cachedOrders, cachedWithdrawals);
+    bindOrdersActions();
     void attachWithdrawalsListener();
   });
 

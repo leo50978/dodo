@@ -104,6 +104,10 @@ export async function createWithdrawalSecure(payload = {}) {
   return invokeCallable("createWithdrawalSecure", payload, "Impossible de créer le retrait.");
 }
 
+export async function cancelWithdrawalSecure(payload = {}) {
+  return invokeCallable("cancelWithdrawalSecure", payload, "Impossible d'annuler le retrait.");
+}
+
 export async function orderClientActionSecure(payload = {}) {
   return invokeCallable("orderClientActionSecure", payload, "Impossible de mettre à jour la demande.");
 }
