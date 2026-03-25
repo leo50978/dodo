@@ -33,6 +33,7 @@ let profileClientPollTimer = null;
 let profileVisibilityBound = false;
 const PROFILE_CLIENT_REFRESH_MS = 3 * 60 * 1000;
 let profilePendingOpsBound = false;
+let profileWithdrawalEventsBound = false;
 
 function safeCount(value) {
   const n = Number(value);
@@ -274,6 +275,18 @@ function refreshProfilePendingOperationsModal() {
   }
 }
 
+function applyWithdrawalCancelledFundingSnapshot(detail = {}) {
+  const fundingSnapshot = detail?.fundingSnapshot;
+  if (fundingSnapshot && typeof fundingSnapshot === "object") {
+    latestProfileFundingData = {
+      ...(latestProfileFundingData || {}),
+      ...fundingSnapshot,
+    };
+  }
+  scheduleProfileFundingRefresh(auth.currentUser, 80);
+  updateProfileData(auth.currentUser);
+}
+
 function maybeShowWithdrawalHoldModal(user, payload = {}) {
   const uid = String(user?.uid || auth.currentUser?.uid || "").trim();
   if (!uid || payload.withdrawalHold !== true) return;
@@ -376,6 +389,14 @@ function bindProfileVisibilityRefresh() {
     const activeUser = auth.currentUser || null;
     ensureProfileRealtimeWatchers(activeUser);
     scheduleProfileFundingRefresh(activeUser, 0);
+  });
+}
+
+function bindProfileWithdrawalEvents() {
+  if (profileWithdrawalEventsBound) return;
+  profileWithdrawalEventsBound = true;
+  window.addEventListener("withdrawalCancelled", (event) => {
+    applyWithdrawalCancelledFundingSnapshot(event?.detail || {});
   });
 }
 
@@ -1344,6 +1365,7 @@ export function mountProfileModal(options = {}) {
     updateProfileData(activeUser);
   });
   bindProfileVisibilityRefresh();
+  bindProfileWithdrawalEvents();
 
   window.addEventListener("userBalanceUpdated", () => {
     scheduleProfileFundingRefresh(auth.currentUser, 80);
@@ -1540,6 +1562,7 @@ export function mountProfilePage(options = {}) {
     updateProfileData(activeUser);
   });
   bindProfileVisibilityRefresh();
+  bindProfileWithdrawalEvents();
 
   window.addEventListener("userBalanceUpdated", () => {
     scheduleProfileFundingRefresh(auth.currentUser, 80);

@@ -780,11 +780,12 @@ export function bindPendingOperationsActions(target) {
         if (action === "cancel-withdrawal" && kind === "withdrawal") {
           const confirmed = window.confirm("Annuler ce retrait et remettre le montant dans ton solde disponible ?");
           if (!confirmed) return;
-          await cancelWithdrawalOperation(orderId);
+          const result = await cancelWithdrawalOperation(orderId);
           window.dispatchEvent(new CustomEvent("withdrawalCancelled", {
             detail: {
               id: orderId,
               status: "cancelled",
+              fundingSnapshot: result && typeof result === "object" ? result : null,
             },
           }));
         }
