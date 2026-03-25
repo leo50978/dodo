@@ -18,6 +18,7 @@ import { getXchangeState } from "./xchange.js";
 const MIN_WITHDRAWAL_HTG = 50;
 const BALANCE_DEBUG = true;
 const ASSISTANCE_PHONE = "50940507232";
+const WITHDRAWAL_AGENT_PHONES = ["50940507232", "50941752992"];
 
 function createClientRequestId(prefix = "wd") {
   const safePrefix = String(prefix || "req").replace(/[^a-zA-Z0-9_-]/g, "").slice(0, 12) || "req";
@@ -317,6 +318,123 @@ function showRetraitRuleModal(payload = {}) {
 function hasPendingExamWithdrawalLock(ruleStatus = {}) {
   return safeInt(ruleStatus?.provisionalHtgAvailable) > 0
     && safeInt(ruleStatus?.remainingToExchangeHtg) <= 0;
+}
+
+function openWhatsappForWithdrawal(phone, amount = 0) {
+  const digits = String(phone || "").replace(/[^\d]/g, "");
+  if (!digits) return;
+  const text = amount > 0
+    ? `Bonjour, je viens de soumettre un retrait de ${amount} HTG et je veux un traitement rapide.`
+    : "Bonjour, je viens de soumettre un retrait et je veux un traitement rapide.";
+  window.open(`https://wa.me/${digits}?text=${encodeURIComponent(text)}`, "_blank", "noopener,noreferrer");
+}
+
+function ensureRetraitSuccessModal() {
+  const existing = document.getElementById("retraitSuccessModalOverlay");
+  if (existing) return existing;
+
+  const overlay = document.createElement("div");
+  overlay.id = "retraitSuccessModalOverlay";
+  overlay.className = "fixed inset-0 z-[3470] hidden items-end justify-center bg-black/55 p-0 backdrop-blur-sm sm:items-center sm:p-4";
+  overlay.innerHTML = `
+    <div id="retraitSuccessModalPanel" class="flex max-h-[92dvh] w-full max-w-lg flex-col overflow-hidden rounded-t-[30px] border border-white/20 bg-[#101827]/94 text-white shadow-[18px_18px_40px_rgba(2,6,17,0.58),-10px_-10px_24px_rgba(24,35,58,0.14)] sm:max-h-[86vh] sm:rounded-[30px]">
+      <div class="flex-1 overflow-y-auto px-5 pb-[max(1.1rem,env(safe-area-inset-bottom))] pt-5 sm:px-6 sm:pt-6">
+        <div class="flex items-start gap-3">
+          <div class="grid h-12 w-12 shrink-0 place-items-center rounded-2xl border border-emerald-300/20 bg-emerald-500/15 text-emerald-100">
+            <i class="fa-solid fa-circle-check text-lg"></i>
+          </div>
+          <div class="min-w-0">
+            <p class="text-[11px] font-semibold uppercase tracking-[0.16em] text-emerald-100/70">Retrait soumis</p>
+            <h3 class="mt-1 text-xl font-bold text-white">Ta demande a été envoyée avec succès</h3>
+          </div>
+        </div>
+
+        <div class="mt-4 rounded-2xl border border-white/10 bg-white/5 p-4">
+          <p id="retraitSuccessPrimary" class="text-sm leading-6 text-white/90">
+            Tu peux vérifier l'état de ton retrait dans Opérations en cours.
+          </p>
+          <p id="retraitSuccessSecondary" class="mt-2 text-sm leading-6 text-white/72">
+            Tu peux aussi annuler le retrait à tout moment depuis cette section.
+          </p>
+        </div>
+
+        <div class="mt-4 rounded-2xl border border-[#ffb26e]/25 bg-[#1b2437]/90 p-4">
+          <p class="text-sm font-semibold text-white">Besoin de recevoir ton argent tout de suite ?</p>
+          <p class="mt-2 text-sm leading-6 text-white/80">
+            Contacte un agent sur WhatsApp et appelle-le. Si ton dossier est prêt, il pourra accélérer le paiement.
+          </p>
+          <div class="mt-4 grid gap-2">
+            <button id="retraitSuccessWhatsapp1" type="button" class="min-h-[48px] w-full rounded-2xl border border-emerald-300/20 bg-emerald-500/15 px-4 text-sm font-semibold text-emerald-50">
+              Ecrire sur WhatsApp 50940507232
+            </button>
+            <button id="retraitSuccessWhatsapp2" type="button" class="min-h-[48px] w-full rounded-2xl border border-emerald-300/20 bg-emerald-500/10 px-4 text-sm font-semibold text-emerald-50">
+              Ecrire sur WhatsApp 50941752992
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <div class="grid gap-2 border-t border-white/10 bg-[#101827]/96 px-5 pb-[max(1rem,env(safe-area-inset-bottom))] pt-4 sm:grid-cols-2 sm:px-6">
+        <button id="retraitSuccessPending" type="button" class="h-11 rounded-2xl border border-white/15 bg-white/10 text-sm font-semibold text-white">
+          Voir plus tard
+        </button>
+        <button id="retraitSuccessClose" type="button" class="h-11 rounded-2xl border border-[#ffb26e] bg-[#F57C00] text-sm font-semibold text-white shadow-[8px_8px_18px_rgba(163,82,27,0.45),-6px_-6px_14px_rgba(255,175,102,0.22)]">
+          Compris
+        </button>
+      </div>
+    </div>
+  `;
+
+  document.body.appendChild(overlay);
+
+  const panel = overlay.querySelector("#retraitSuccessModalPanel");
+  const closeBtn = overlay.querySelector("#retraitSuccessClose");
+  const laterBtn = overlay.querySelector("#retraitSuccessPending");
+  const whatsappBtn1 = overlay.querySelector("#retraitSuccessWhatsapp1");
+  const whatsappBtn2 = overlay.querySelector("#retraitSuccessWhatsapp2");
+  const close = () => {
+    overlay.classList.add("hidden");
+    overlay.classList.remove("flex");
+  };
+
+  if (closeBtn) closeBtn.addEventListener("click", close);
+  if (laterBtn) laterBtn.addEventListener("click", close);
+  if (whatsappBtn1) {
+    whatsappBtn1.addEventListener("click", () => {
+      openWhatsappForWithdrawal(WITHDRAWAL_AGENT_PHONES[0], safeInt(overlay.dataset.amount || 0));
+    });
+  }
+  if (whatsappBtn2) {
+    whatsappBtn2.addEventListener("click", () => {
+      openWhatsappForWithdrawal(WITHDRAWAL_AGENT_PHONES[1], safeInt(overlay.dataset.amount || 0));
+    });
+  }
+  overlay.addEventListener("click", (ev) => {
+    if (ev.target === overlay) close();
+  });
+  if (panel) panel.addEventListener("click", (ev) => ev.stopPropagation());
+
+  return overlay;
+}
+
+function showRetraitSuccessModal(payload = {}) {
+  const overlay = ensureRetraitSuccessModal();
+  const primaryEl = overlay.querySelector("#retraitSuccessPrimary");
+  const secondaryEl = overlay.querySelector("#retraitSuccessSecondary");
+  const amount = safeInt(payload.amount || 0);
+  overlay.dataset.amount = String(amount);
+
+  if (primaryEl) {
+    primaryEl.textContent = amount > 0
+      ? `Ta demande de retrait de ${amount} HTG a été soumise avec succès. Tu peux vérifier son état dans Opérations en cours.`
+      : "Ta demande de retrait a été soumise avec succès. Tu peux vérifier son état dans Opérations en cours.";
+  }
+  if (secondaryEl) {
+    secondaryEl.textContent = "Tu peux annuler le retrait à tout moment depuis Opérations en cours si tu changes d'avis.";
+  }
+
+  overlay.classList.remove("hidden");
+  overlay.classList.add("flex");
 }
 
 async function loadActiveMethods() {
@@ -709,6 +827,11 @@ function ensureRetraitModal() {
         }
 
         close();
+        showRetraitSuccessModal({
+          amount,
+          withdrawalId: response?.withdrawalId || "",
+          status: response?.status || "pending",
+        });
       } catch (err) {
         console.error("Erreur soumission retrait:", {
           code: err?.code || "",
