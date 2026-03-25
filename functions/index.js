@@ -470,13 +470,43 @@ function computeReservedWithdrawalAmount(withdrawal) {
   return safeInt(withdrawal?.requestedAmount ?? withdrawal?.amount);
 }
 
-function isWithdrawalReservedStatus(status = "") {
-  const normalized = String(status || "").trim().toLowerCase();
+function getWithdrawalStatus(withdrawal = {}) {
+  const resolution = String(withdrawal?.resolutionStatus || "").trim().toLowerCase();
+  if (
+    resolution === "approved"
+    || resolution === "rejected"
+    || resolution === "pending"
+    || resolution === "review"
+    || resolution === "cancelled"
+    || resolution === "canceled"
+  ) {
+    return resolution;
+  }
+  const status = String(withdrawal?.status || "").trim().toLowerCase();
+  if (
+    status === "approved"
+    || status === "rejected"
+    || status === "pending"
+    || status === "review"
+    || status === "cancelled"
+    || status === "canceled"
+  ) {
+    return status;
+  }
+  return "pending";
+}
+
+function isWithdrawalReservedStatus(withdrawalOrStatus = "") {
+  const normalized = typeof withdrawalOrStatus === "object" && withdrawalOrStatus
+    ? getWithdrawalStatus(withdrawalOrStatus)
+    : String(withdrawalOrStatus || "").trim().toLowerCase();
   return normalized !== "rejected" && normalized !== "cancelled" && normalized !== "canceled";
 }
 
-function isWithdrawalClientCancellableStatus(status = "") {
-  const normalized = String(status || "").trim().toLowerCase();
+function isWithdrawalClientCancellableStatus(withdrawalOrStatus = "") {
+  const normalized = typeof withdrawalOrStatus === "object" && withdrawalOrStatus
+    ? getWithdrawalStatus(withdrawalOrStatus)
+    : String(withdrawalOrStatus || "").trim().toLowerCase();
   return normalized === "pending" || normalized === "review";
 }
 
@@ -490,7 +520,7 @@ function computeWalletAvailableGourdes({
     0
   );
   const reservedWithdrawalsHtg = (Array.isArray(withdrawals) ? withdrawals : []).reduce((sum, item) => {
-    if (!isWithdrawalReservedStatus(item?.status)) return sum;
+    if (!isWithdrawalReservedStatus(item)) return sum;
     return sum + computeReservedWithdrawalAmount(item);
   }, 0);
   // Keep the raw base so gains already reconverted from Does do not recreate
@@ -526,11 +556,24 @@ function isWelcomeBonusOrder(order = {}) {
 
 function getOrderResolutionStatus(order = {}) {
   const resolution = String(order?.resolutionStatus || "").trim().toLowerCase();
-  if (resolution === "approved" || resolution === "rejected" || resolution === "pending") {
+  if (
+    resolution === "approved"
+    || resolution === "rejected"
+    || resolution === "pending"
+    || resolution === "review"
+    || resolution === "cancelled"
+    || resolution === "canceled"
+  ) {
     return resolution;
   }
   const status = String(order?.status || "").trim().toLowerCase();
-  if (status === "approved" || status === "rejected") return status;
+  if (
+    status === "approved"
+    || status === "rejected"
+    || status === "review"
+    || status === "cancelled"
+    || status === "canceled"
+  ) return status;
   return "pending";
 }
 
@@ -726,7 +769,7 @@ function buildWalletFundingSnapshot({
     0
   );
   const reservedWithdrawalsHtg = (Array.isArray(withdrawals) ? withdrawals : []).reduce((sum, item) => {
-    if (!isWithdrawalReservedStatus(item?.status)) return sum;
+    if (!isWithdrawalReservedStatus(item)) return sum;
     return sum + computeReservedWithdrawalAmount(item);
   }, 0);
   const approvedBaseHtg = approvedDepositsHtg - reservedWithdrawalsHtg;
@@ -9262,7 +9305,22 @@ exports.cancelWithdrawalSecure = publicOnCall("cancelWithdrawalSecure", async (r
 
     const clientData = clientSnap.exists ? (clientSnap.data() || {}) : {};
     const withdrawalData = withdrawalSnap.data() || {};
-    const currentStatus = String(withdrawalData.status || "").trim().toLowerCase();
+    const currentStatus = getWithdrawalStatus(withdrawalData);
+
+    console.info("[WITHDRAWAL_CANCEL_DEBUG][FUNCTIONS] start", {
+      uid,
+      withdrawalId,
+      currentStatus,
+      docStatus: String(withdrawalData.status || ""),
+      docResolutionStatus: String(withdrawalData.resolutionStatus || ""),
+      requestedAmount: safeInt(withdrawalData.requestedAmount ?? withdrawalData.amount),
+      allWithdrawals: withdrawalsSnap.docs.map((item) => ({
+        id: item.id,
+        status: String(item.data()?.status || ""),
+        resolutionStatus: String(item.data()?.resolutionStatus || ""),
+        requestedAmount: safeInt(item.data()?.requestedAmount ?? item.data()?.amount),
+      })),
+    });
 
     if (currentStatus === "cancelled" || currentStatus === "canceled") {
       return {
@@ -9297,6 +9355,23 @@ exports.cancelWithdrawalSecure = publicOnCall("cancelWithdrawalSecure", async (r
       withdrawals: nextWithdrawals,
       walletData: clientData,
       exchangeHistory: xchangesSnap.docs.map((item) => item.data() || {}),
+    });
+
+    console.info("[WITHDRAWAL_CANCEL_DEBUG][FUNCTIONS] recompute", {
+      uid,
+      withdrawalId,
+      nextWithdrawals: nextWithdrawals.map((item) => ({
+        id: String(item?.id || item?.withdrawalId || ""),
+        status: String(item?.status || ""),
+        resolutionStatus: String(item?.resolutionStatus || ""),
+        requestedAmount: safeInt(item?.requestedAmount ?? item?.amount),
+      })),
+      nextFundingSnapshot: {
+        reservedWithdrawalsHtg: safeInt(nextFundingSnapshot.reservedWithdrawalsHtg),
+        approvedBaseHtg: safeInt(nextFundingSnapshot.approvedBaseHtg),
+        approvedHtgAvailable: safeInt(nextFundingSnapshot.approvedHtgAvailable),
+        withdrawableHtg: safeInt(nextFundingSnapshot.withdrawableHtg),
+      },
     });
 
     tx.set(withdrawalRef, {
