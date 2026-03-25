@@ -127,9 +127,10 @@ const DEPOSIT_ANALYTICS_DEFAULT_WINDOW_MS = 30 * 24 * 60 * 60 * 1000;
 const DEPOSIT_ANALYTICS_MAX_WINDOW_MS = 180 * 24 * 60 * 60 * 1000;
 const DEPOSIT_ANALYTICS_PAGE_FETCH_SIZE = 1000;
 const DEPOSIT_ANALYTICS_DOC_LIMIT = 12000;
-const DEPOSIT_PROOF_MIN_DELAY_MS = 45 * 1000;
-const DEPOSIT_SHADOW_GUARD_WINDOW_MS = 24 * 60 * 60 * 1000;
+const DEPOSIT_PROOF_MIN_DELAY_MS = 6 * 60 * 1000;
+const DEPOSIT_SHADOW_GUARD_WINDOW_MS = DEPOSIT_PROOF_MIN_DELAY_MS;
 const DEPOSIT_SHADOW_GUARD_RAPID_THRESHOLD = 2;
+const DEPOSIT_SHADOW_GUARD_LOCK_MS = 30 * 60 * 1000;
 const BOT_DIFFICULTY_LOOKAHEAD = Object.freeze({
   amateur: 0,
   expert: 3,
@@ -568,6 +569,7 @@ function normalizeDepositShadowGuard(value = {}) {
     lastAttemptAtMs: safeSignedInt(data.lastAttemptAtMs),
     rapidAttemptCount: safeInt(data.rapidAttemptCount),
     lastProofStepDurationMs: safeInt(data.lastProofStepDurationMs),
+    lockedUntilMs: safeSignedInt(data.lockedUntilMs),
   };
 }
 
@@ -8600,13 +8602,51 @@ exports.createOrderSecure = publicOnCall("createOrderSecure", async (request) =>
     const priorShadowGuard = normalizeDepositShadowGuard(clientData.depositShadowGuard);
     const withinShadowWindow = priorShadowGuard.windowStartedAtMs > 0
       && (nowMs - priorShadowGuard.windowStartedAtMs) <= DEPOSIT_SHADOW_GUARD_WINDOW_MS;
+    const lockActive = priorShadowGuard.lockedUntilMs > nowMs;
     const rapidAttempt = proofStepDurationMs > 0 && proofStepDurationMs < DEPOSIT_PROOF_MIN_DELAY_MS;
     const nextRapidAttemptCount = rapidAttempt
       ? ((withinShadowWindow ? priorShadowGuard.rapidAttemptCount : 0) + 1)
       : 0;
-    const shouldShadowDrop = rapidAttempt
+    const shouldActivateLock = rapidAttempt
       && !hasRealApprovedDeposit
       && nextRapidAttemptCount >= DEPOSIT_SHADOW_GUARD_RAPID_THRESHOLD;
+    const shouldShadowDrop = !hasRealApprovedDeposit && (lockActive || shouldActivateLock);
+
+    let nextShadowGuard = {
+      windowStartedAtMs: 0,
+      lastAttemptAtMs: nowMs,
+      rapidAttemptCount: 0,
+      lastProofStepDurationMs: proofStepDurationMs,
+      lockedUntilMs: 0,
+    };
+
+    if (!hasRealApprovedDeposit) {
+      if (shouldActivateLock) {
+        nextShadowGuard = {
+          windowStartedAtMs: withinShadowWindow ? priorShadowGuard.windowStartedAtMs : nowMs,
+          lastAttemptAtMs: nowMs,
+          rapidAttemptCount: nextRapidAttemptCount,
+          lastProofStepDurationMs: proofStepDurationMs,
+          lockedUntilMs: nowMs + DEPOSIT_SHADOW_GUARD_LOCK_MS,
+        };
+      } else if (lockActive) {
+        nextShadowGuard = {
+          windowStartedAtMs: priorShadowGuard.windowStartedAtMs,
+          lastAttemptAtMs: nowMs,
+          rapidAttemptCount: priorShadowGuard.rapidAttemptCount,
+          lastProofStepDurationMs: proofStepDurationMs,
+          lockedUntilMs: priorShadowGuard.lockedUntilMs,
+        };
+      } else if (rapidAttempt) {
+        nextShadowGuard = {
+          windowStartedAtMs: withinShadowWindow ? priorShadowGuard.windowStartedAtMs : nowMs,
+          lastAttemptAtMs: nowMs,
+          rapidAttemptCount: nextRapidAttemptCount,
+          lastProofStepDurationMs: proofStepDurationMs,
+          lockedUntilMs: 0,
+        };
+      }
+    }
 
     console.info("[DEPOSIT_GUARD_DEBUG][FUNCTIONS] createOrderSecure:decision", {
       uid,
@@ -8615,8 +8655,11 @@ exports.createOrderSecure = publicOnCall("createOrderSecure", async (request) =>
       nextRapidAttemptCount,
       windowStartedAtMs: priorShadowGuard.windowStartedAtMs,
       withinShadowWindow,
+      lockActive,
+      lockedUntilMs: priorShadowGuard.lockedUntilMs,
       hasRealApprovedDeposit,
       hasPlayedGame,
+      shouldActivateLock,
       shouldShadowDrop,
       ordersCount: ordersSnap.size,
       withdrawalsCount: withdrawalsSnap.size,
@@ -8686,12 +8729,7 @@ exports.createOrderSecure = publicOnCall("createOrderSecure", async (request) =>
       email,
       name: customerName || sanitizeText(clientData.name || "", 80) || sanitizeText(String(email || "").split("@")[0], 80) || "Player",
       phone: customerPhone || sanitizePhone(clientData.phone || ""),
-      depositShadowGuard: {
-        windowStartedAtMs: rapidAttempt ? (withinShadowWindow ? priorShadowGuard.windowStartedAtMs : nowMs) : 0,
-        lastAttemptAtMs: nowMs,
-        rapidAttemptCount: nextRapidAttemptCount,
-        lastProofStepDurationMs: proofStepDurationMs,
-      },
+      depositShadowGuard: nextShadowGuard,
       lastSeenAt: admin.firestore.FieldValue.serverTimestamp(),
       lastSeenAtMs: nowMs,
       updatedAt: admin.firestore.FieldValue.serverTimestamp(),
@@ -8703,6 +8741,8 @@ exports.createOrderSecure = publicOnCall("createOrderSecure", async (request) =>
         uid,
         proofStepDurationMs,
         nextRapidAttemptCount,
+        lockActive,
+        lockedUntilMs: nextShadowGuard.lockedUntilMs,
       });
       tx.set(clientRef, nextWallet, { merge: true });
       return {
