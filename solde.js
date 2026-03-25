@@ -684,24 +684,88 @@ function renderOrderCard(order) {
   `;
 }
 
-function renderOrdersSection(orders, withdrawals) {
-  const listEl = document.getElementById("soldeOrdersList");
-  if (!listEl) return;
-
+function getPendingOperationsSnapshot(orders = cachedOrders, withdrawals = cachedWithdrawals) {
   const ops = [
     ...(orders || []).map((o) => ({ ...o, type: "order" })),
     ...(withdrawals || []).map((w) => ({ ...w, type: "withdrawal" })),
   ];
-  const visible = ops
+  return ops
     .filter((o) => o && !o.userHiddenByClient && o.status !== "approved")
     .sort((a, b) => new Date(b.createdAt || 0) - new Date(a.createdAt || 0));
+}
+
+function dispatchPendingOperationsUpdate(orders = cachedOrders, withdrawals = cachedWithdrawals) {
+  const visible = getPendingOperationsSnapshot(orders, withdrawals);
+  window.dispatchEvent(
+    new CustomEvent("pendingOperationsUpdated", {
+      detail: {
+        count: visible.length,
+        operations: visible.map((item) => ({ ...item })),
+      },
+    })
+  );
+}
+
+export function getPendingOperations() {
+  return getPendingOperationsSnapshot().map((item) => ({ ...item }));
+}
+
+export function renderPendingOperationsList(target, options = {}) {
+  const listEl = typeof target === "string" ? document.querySelector(target) : target;
+  if (!listEl) return [];
+  const visible = getPendingOperationsSnapshot();
+  const emptyText = String(options.emptyText || "Aucune opération en cours.");
 
   if (visible.length === 0) {
-    listEl.innerHTML = `<p class="text-sm text-white/70">Aucune commande en attente.</p>`;
-    return;
+    listEl.innerHTML = `<p class="text-sm text-white/70">${escapeHtml(emptyText)}</p>`;
+    return visible;
   }
 
   listEl.innerHTML = visible.map(renderOrderCard).join("");
+  return visible;
+}
+
+export function bindPendingOperationsActions(target) {
+  const listEl = typeof target === "string" ? document.querySelector(target) : target;
+  if (!listEl) return;
+  if (listEl.dataset.pendingOpsBound === "1") {
+    listEl.dataset.pendingOpsBound = "0";
+  }
+  listEl.dataset.pendingOpsBound = "1";
+
+  listEl.querySelectorAll("button[data-action]").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      const action = btn.getAttribute("data-action");
+      const orderId = btn.getAttribute("data-order-id");
+      const kind = btn.getAttribute("data-kind") || "order";
+      if (!orderId) return;
+
+      try {
+        if (action === "hide") {
+          await hideOperationForUser(orderId, kind);
+        }
+        if (action === "review") {
+          await requestOperationReview(orderId, kind);
+        }
+      } catch (err) {
+        console.error("Erreur action commande:", err);
+      }
+    });
+  });
+}
+
+function renderOrdersSection(orders, withdrawals) {
+  const listEl = document.getElementById("soldeOrdersList");
+  if (!listEl) {
+    dispatchPendingOperationsUpdate(orders, withdrawals);
+    return;
+  }
+
+  const visible = renderPendingOperationsList(listEl, {
+    emptyText: "Aucune opération en cours.",
+  });
+  bindPendingOperationsActions(listEl);
+  dispatchPendingOperationsUpdate(orders, withdrawals);
 }
 
 async function hideOrderForUser(orderId) {
@@ -753,28 +817,7 @@ async function requestOperationReview(orderId, kind) {
 }
 
 function bindOrdersActions() {
-  const listEl = document.getElementById("soldeOrdersList");
-  if (!listEl) return;
-
-  listEl.querySelectorAll("button[data-action]").forEach((btn) => {
-    btn.addEventListener("click", async () => {
-      const action = btn.getAttribute("data-action");
-      const orderId = btn.getAttribute("data-order-id");
-      const kind = btn.getAttribute("data-kind") || "order";
-      if (!orderId) return;
-
-      try {
-        if (action === "hide") {
-          await hideOperationForUser(orderId, kind);
-        }
-        if (action === "review") {
-          await requestOperationReview(orderId, kind);
-        }
-      } catch (err) {
-        console.error("Erreur action commande:", err);
-      }
-    });
-  });
+  bindPendingOperationsActions(document.getElementById("soldeOrdersList"));
 }
 
 async function attachOrdersListener() {
@@ -996,11 +1039,6 @@ function ensureSoldeModal() {
         <button id="soldeClose" type="button" class="grid h-10 w-10 place-items-center rounded-full border border-white/20 bg-white/10 text-white shadow-[8px_8px_18px_rgba(18,25,42,0.42),-6px_-6px_14px_rgba(121,135,173,0.2)]">
           <i class="fa-solid fa-xmark"></i>
         </button>
-      </div>
-
-      <div class="mt-4 rounded-2xl border border-white/20 bg-white/10 p-4">
-        <p class="text-sm font-semibold text-white">Opérations en cours</p>
-        <div id="soldeOrdersList" class="mt-3 grid gap-3"></div>
       </div>
 
       <div class="mt-5 rounded-2xl border border-white/20 bg-white/10 p-4 shadow-[inset_6px_6px_12px_rgba(19,26,43,0.42),inset_-6px_-6px_12px_rgba(120,134,172,0.22)]">

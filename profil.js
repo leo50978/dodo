@@ -1,7 +1,13 @@
 import { auth, logoutCurrentUser, watchAuthState } from "./auth.js";
 import { mountXchangeModal, getXchangeState } from "./xchange.js";
 import { mountRetraitModal, getWithdrawalRuleStatus } from "./retrait.js";
-import { mountSoldeModal, waitForBalanceHydration } from "./solde.js";
+import {
+  bindPendingOperationsActions,
+  getPendingOperations,
+  mountSoldeModal,
+  renderPendingOperationsList,
+  waitForBalanceHydration,
+} from "./solde.js";
 import { db, doc, getDoc } from "./firebase-init.js";
 import { getDepositFundingStatusSecure } from "./secure-functions.js";
 const BALANCE_DEBUG = false;
@@ -26,6 +32,7 @@ let lastWithdrawalHoldSignature = "";
 let profileClientPollTimer = null;
 let profileVisibilityBound = false;
 const PROFILE_CLIENT_REFRESH_MS = 3 * 60 * 1000;
+let profilePendingOpsBound = false;
 
 function safeCount(value) {
   const n = Number(value);
@@ -207,6 +214,64 @@ function ensureWithdrawalHoldModal() {
     if (ev.target === overlay) close();
   });
   return overlay;
+}
+
+function ensureProfilePendingOperationsModal() {
+  const overlay = document.getElementById("profilePendingOpsOverlay");
+  if (!overlay) return null;
+  if (overlay.dataset.bound === "1") return overlay;
+  overlay.dataset.bound = "1";
+
+  const close = () => {
+    overlay.classList.add("hidden");
+    overlay.classList.remove("flex");
+    document.body.classList.remove("overflow-hidden");
+  };
+
+  overlay.querySelector("#profilePendingOpsClose")?.addEventListener("click", close);
+  overlay.addEventListener("click", (event) => {
+    if (event.target === overlay) {
+      close();
+    }
+  });
+
+  window.addEventListener("keydown", (event) => {
+    if (event.key === "Escape" && overlay.classList.contains("flex")) {
+      close();
+    }
+  });
+
+  overlay.__openPendingOps = () => {
+    overlay.classList.remove("hidden");
+    overlay.classList.add("flex");
+    document.body.classList.add("overflow-hidden");
+    refreshProfilePendingOperationsModal();
+  };
+  overlay.__closePendingOps = close;
+
+  return overlay;
+}
+
+function refreshProfilePendingOperationsModal() {
+  const listEl = document.getElementById("profilePendingOpsList");
+  const countEl = document.getElementById("profilePendingOpsCount");
+  const hintEl = document.getElementById("profilePendingOpsHint");
+  if (!listEl) return;
+
+  const operations = renderPendingOperationsList(listEl, {
+    emptyText: "Aucune opération en cours sur ton compte.",
+  });
+  bindPendingOperationsActions(listEl);
+
+  const count = Array.isArray(operations) ? operations.length : getPendingOperations().length;
+  if (countEl) {
+    countEl.textContent = `${count} opération${count > 1 ? "s" : ""}`;
+  }
+  if (hintEl) {
+    hintEl.textContent = count > 0
+      ? "Les dépôts et retraits non finalisés restent visibles ici jusqu'à leur résolution."
+      : "Tu n'as actuellement aucun dépôt ou retrait en attente.";
+  }
 }
 
 function maybeShowWithdrawalHoldModal(user, payload = {}) {
@@ -1441,6 +1506,26 @@ export function mountProfilePage(options = {}) {
       const link = copyReferralLinkBtn.getAttribute("data-link") || "";
       const ok = await copyToClipboard(link);
       showReferralCopyFeedback(ok ? "Lien copié avec succès." : "Impossible de copier le lien.", ok);
+    });
+  }
+
+  const pendingOpsOverlay = ensureProfilePendingOperationsModal();
+  const pendingOpsBtn = document.getElementById("profilePendingOpsBtn");
+  if (pendingOpsBtn && pendingOpsBtn.dataset.bound !== "1") {
+    pendingOpsBtn.dataset.bound = "1";
+    pendingOpsBtn.addEventListener("click", async () => {
+      await waitForBalanceHydration(auth.currentUser?.uid, 1800);
+      pendingOpsOverlay?.__openPendingOps?.();
+    });
+  }
+
+  if (!profilePendingOpsBound) {
+    profilePendingOpsBound = true;
+    window.addEventListener("pendingOperationsUpdated", () => {
+      const overlay = document.getElementById("profilePendingOpsOverlay");
+      if (overlay?.classList.contains("flex")) {
+        refreshProfilePendingOperationsModal();
+      }
     });
   }
 
