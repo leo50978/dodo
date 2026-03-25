@@ -12,6 +12,9 @@ const DEPOSIT_BONUS_PERCENT = 10;
 const DEPOSIT_BONUS_RATE_HTG_TO_DOES = 20;
 const WELCOME_BONUS_HTG = 25;
 const DEPOSIT_PROOF_TIMER_STORAGE_PREFIX = 'deposit_proof_started_at';
+const DEPOSIT_RAPID_WARNING_DELAY_MS = 6 * 60 * 1000;
+const SUPPORT_WHATSAPP_DIGITS = '50940507232';
+const SUPPORT_WHATSAPP_LABEL = '40507232';
 let tesseractRuntimePromise = null;
 
 async function loadTesseractRuntime() {
@@ -222,6 +225,119 @@ class PaymentModal {
     const startedAtMs = this.ensureProofStepStartedAtMs();
     if (startedAtMs <= 0) return 0;
     return Math.max(0, Date.now() - startedAtMs);
+  }
+
+  async confirmRapidDepositSubmission() {
+    return new Promise((resolve) => {
+      const overlay = document.createElement('div');
+      overlay.style.cssText = `
+        position: fixed;
+        inset: 0;
+        z-index: 100000;
+        background: rgba(15, 23, 42, 0.72);
+        backdrop-filter: blur(3px);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        padding: 1rem;
+      `;
+
+      const modal = document.createElement('div');
+      modal.style.cssText = `
+        width: min(100%, 460px);
+        background: linear-gradient(180deg, #FFF9E8 0%, #F6E7B8 100%);
+        border: 1px solid rgba(127, 29, 29, 0.18);
+        border-radius: 24px;
+        box-shadow: 0 28px 80px rgba(15, 23, 42, 0.28);
+        padding: 1.35rem;
+        color: #3F2D14;
+      `;
+
+      modal.innerHTML = `
+        <div style="display:flex; align-items:flex-start; gap:0.85rem;">
+          <div style="
+            width:42px;
+            height:42px;
+            border-radius:999px;
+            background: rgba(180, 83, 9, 0.12);
+            color:#9A3412;
+            display:flex;
+            align-items:center;
+            justify-content:center;
+            font-size:1.2rem;
+            flex-shrink:0;
+          ">!</div>
+          <div style="min-width:0;">
+            <div style="font-size:1.08rem; font-weight:800; margin-bottom:0.35rem;">
+              Avez-vous effectue ce depot ?
+            </div>
+            <div style="font-size:0.95rem; line-height:1.55; color:#6B4F2A;">
+              Si vous ne l'avez pas effectue, le systeme le remarquera automatiquement et votre solde ne sera pas credite.
+            </div>
+            <div style="font-size:0.92rem; line-height:1.5; color:#7C2D12; margin-top:0.65rem; font-weight:700;">
+              En cas de probleme, veuillez contacter l'assistance.
+            </div>
+          </div>
+        </div>
+        <div style="display:flex; flex-wrap:wrap; gap:0.65rem; margin-top:1.2rem;">
+          <button type="button" data-rapid-confirm="cancel" style="
+            flex:1 1 120px;
+            min-height:46px;
+            border:none;
+            border-radius:14px;
+            background:#E5E7EB;
+            color:#374151;
+            font-weight:700;
+            cursor:pointer;
+            padding:0.85rem 1rem;
+          ">Annuler</button>
+          <a href="https://wa.me/${SUPPORT_WHATSAPP_DIGITS}" target="_blank" rel="noopener noreferrer" data-rapid-confirm="support" style="
+            flex:1 1 160px;
+            min-height:46px;
+            border-radius:14px;
+            background:#16A34A;
+            color:white;
+            font-weight:800;
+            text-decoration:none;
+            display:flex;
+            align-items:center;
+            justify-content:center;
+            padding:0.85rem 1rem;
+          ">Contacter l'assistance</a>
+          <button type="button" data-rapid-confirm="continue" style="
+            flex:1 1 180px;
+            min-height:46px;
+            border:none;
+            border-radius:14px;
+            background:linear-gradient(135deg, #B45309 0%, #D97706 100%);
+            color:white;
+            font-weight:800;
+            cursor:pointer;
+            padding:0.85rem 1rem;
+          ">Oui, j'ai effectue ce depot</button>
+        </div>
+        <div style="margin-top:0.75rem; font-size:0.82rem; color:#6B7280; text-align:center;">
+          Assistance WhatsApp: ${SUPPORT_WHATSAPP_LABEL}
+        </div>
+      `;
+
+      const cleanup = (result) => {
+        overlay.remove();
+        resolve(result);
+      };
+
+      overlay.addEventListener('click', (event) => {
+        if (event.target === overlay) {
+          cleanup(false);
+        }
+      });
+
+      modal.querySelector('[data-rapid-confirm="cancel"]')?.addEventListener('click', () => cleanup(false));
+      modal.querySelector('[data-rapid-confirm="continue"]')?.addEventListener('click', () => cleanup(true));
+
+      overlay.appendChild(modal);
+      document.body.appendChild(overlay);
+    });
   }
 
   getDefaultSteps() {
@@ -1692,6 +1808,13 @@ class PaymentModal {
     if (!proofImage && !this.proofImageFile) {
       alert('Veuillez sélectionner une image');
       return false;
+    }
+
+    if (!this.isWelcomeBonusSelected() && this.proofSubmitAttemptDurationMs > 0 && this.proofSubmitAttemptDurationMs < DEPOSIT_RAPID_WARNING_DELAY_MS) {
+      const confirmedRapidSubmission = await this.confirmRapidDepositSubmission();
+      if (!confirmedRapidSubmission) {
+        return false;
+      }
     }
     
     const imageFile = this.proofImageFile || proofImage;
