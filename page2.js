@@ -1722,6 +1722,17 @@ export function renderPage2(user, options = {}) {
     );
   };
 
+  const isWelcomeBonusFlowFinished = (clientData = page2ClientData, fundingData = page2WelcomeBonusFundingCache) => {
+    return (
+      clientData?.welcomeBonusClaimed === true
+      || fundingData?.welcomeBonusClaimed === true
+      || Number(clientData?.welcomeBonusTutorialCompletedAtMs) > 0
+      || Number(fundingData?.welcomeBonusTutorialCompletedAtMs) > 0
+      || fundingData?.welcomeBonusEligible === false
+      || fundingData?.welcomeBonusOfferEnded === true
+    );
+  };
+
   const closeWelcomeBonusPrompt = () => {
     if (!welcomeBonusPromptOverlay) return;
     welcomeBonusPromptOverlay.classList.add("hidden");
@@ -1770,6 +1781,7 @@ export function renderPage2(user, options = {}) {
     const uid = String(user?.uid || "");
     if (!uid) return;
     if (page2AccountFrozen) return;
+    if (isWelcomeBonusFlowFinished(clientData, page2WelcomeBonusFundingCache)) return;
     const currentPromptStatus = getCurrentWelcomeBonusPromptStatus(clientData, page2WelcomeBonusFundingCache);
     if (currentPromptStatus === "accepted" || currentPromptStatus === "declined") return;
     if (welcomeBonusPromptOverlay?.classList.contains("flex")) return;
@@ -1778,6 +1790,7 @@ export function renderPage2(user, options = {}) {
     const tryOpen = async () => {
       if (uid !== String(auth.currentUser?.uid || "")) return;
       if (page2AccountFrozen) return;
+      if (isWelcomeBonusFlowFinished(page2ClientData, page2WelcomeBonusFundingCache)) return;
       if (getCurrentWelcomeBonusPromptStatus(page2ClientData, page2WelcomeBonusFundingCache) === "accepted") return;
       if (getCurrentWelcomeBonusPromptStatus(page2ClientData, page2WelcomeBonusFundingCache) === "declined") return;
       if (isPage2BlockingOverlayOpen()) {
@@ -2113,7 +2126,8 @@ export function renderPage2(user, options = {}) {
 
   const startWelcomeBonusCoach = () => {
     if (welcomeBonusCoachDismissedInSession) return;
-    if (Number(page2ClientData?.welcomeBonusTutorialCompletedAtMs) > 0) return;
+    if (isWelcomeBonusFlowFinished(page2ClientData, page2WelcomeBonusFundingCache)) return;
+    if (getCurrentWelcomeBonusPromptStatus(page2ClientData, page2WelcomeBonusFundingCache) !== "accepted") return;
     try {
       window.localStorage?.setItem(DEPOSIT_INFO_DISMISSED_KEY, "1");
     } catch (_) {
@@ -2150,7 +2164,11 @@ export function renderPage2(user, options = {}) {
       maybeShowSupportMigrationNotice(page2PresenceUser, page2ClientData);
       maybeShowWelcomeBonusPrompt(page2PresenceUser, page2ClientData);
       if (
+        !isWelcomeBonusFlowFinished(page2ClientData, page2WelcomeBonusFundingCache)
+        && !welcomeBonusCoachOverlay?.classList.contains("flex")
+        && (
         getCurrentWelcomeBonusPromptStatus(page2ClientData, page2WelcomeBonusFundingCache) === "accepted"
+        )
         && Number(page2ClientData?.welcomeBonusTutorialCompletedAtMs) <= 0
       ) {
         startWelcomeBonusCoach();
@@ -3309,6 +3327,7 @@ export function renderPage2(user, options = {}) {
         ? Number(page2WelcomeBonusFundingCache.welcomeBonusTutorialCompletedAtMs)
         : claimedAtMs,
     };
+    closeWelcomeBonusCoach({ completed: false });
     closeWelcomeBonusPrompt();
   });
 
