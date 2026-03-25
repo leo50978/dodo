@@ -9322,12 +9322,16 @@ exports.cancelWithdrawalSecure = publicOnCall("cancelWithdrawalSecure", async (r
       })),
     });
 
-    if (currentStatus === "cancelled" || currentStatus === "canceled") {
+    if (
+      currentStatus === "cancelled"
+      || currentStatus === "canceled"
+      || (currentStatus === "rejected" && String(withdrawalData.cancelledBy || "").trim().toLowerCase() === "client")
+    ) {
       return {
         ok: true,
         alreadyCancelled: true,
         withdrawalId,
-        status: "cancelled",
+        status: "rejected",
       };
     }
 
@@ -9341,8 +9345,9 @@ exports.cancelWithdrawalSecure = publicOnCall("cancelWithdrawalSecure", async (r
       if (item.id !== withdrawalId) return item.data() || {};
       return {
         ...(item.data() || {}),
-        status: "cancelled",
-        resolutionStatus: "cancelled",
+        status: "rejected",
+        resolutionStatus: "rejected",
+        rejectedReason: "Retrait annulé par le client",
         cancelledBy: "client",
         cancelledAtMs: nowMs,
         cancelledAt: nowIso,
@@ -9375,8 +9380,9 @@ exports.cancelWithdrawalSecure = publicOnCall("cancelWithdrawalSecure", async (r
     });
 
     tx.set(withdrawalRef, {
-      status: "cancelled",
-      resolutionStatus: "cancelled",
+      status: "rejected",
+      resolutionStatus: "rejected",
+      rejectedReason: "Retrait annulé par le client",
       cancelledBy: "client",
       cancelledAtMs: nowMs,
       cancelledAt: nowIso,
@@ -9395,7 +9401,7 @@ exports.cancelWithdrawalSecure = publicOnCall("cancelWithdrawalSecure", async (r
       ok: true,
       alreadyCancelled: false,
       withdrawalId,
-      status: "cancelled",
+      status: "rejected",
       ...nextFundingSnapshot,
     };
   });

@@ -126,6 +126,11 @@ function isWithdrawalClientCancellableStatus(status = "") {
   return normalized === "pending" || normalized === "review";
 }
 
+function isClientCancelledWithdrawal(order = {}) {
+  return String(order?.status || "").trim().toLowerCase() === "rejected"
+    && String(order?.cancelledBy || "").trim().toLowerCase() === "client";
+}
+
 function escapeHtml(input) {
   return String(input || "")
     .replace(/&/g, "&amp;")
@@ -620,6 +625,7 @@ function updateSoldBadge(balanceValue) {
 function getOrderUiStatus(order) {
   if (!order) return "pending";
   if (order.status === "approved") return "approved";
+  if (isClientCancelledWithdrawal(order)) return "cancelled";
   if (order.status === "rejected") return "rejected";
   if (order.status === "cancelled" || order.status === "canceled") return "cancelled";
   if (order.status === "review") return "review";
@@ -714,7 +720,14 @@ function getPendingOperationsSnapshot(orders = cachedOrders, withdrawals = cache
     ...(withdrawals || []).map((w) => ({ ...w, type: "withdrawal" })),
   ];
   return ops
-    .filter((o) => o && !o.userHiddenByClient && o.status !== "approved" && o.status !== "cancelled" && o.status !== "canceled")
+    .filter((o) => (
+      o
+      && !o.userHiddenByClient
+      && o.status !== "approved"
+      && o.status !== "cancelled"
+      && o.status !== "canceled"
+      && !isClientCancelledWithdrawal(o)
+    ))
     .sort((a, b) => new Date(b.createdAt || 0) - new Date(a.createdAt || 0));
 }
 
@@ -784,7 +797,7 @@ export function bindPendingOperationsActions(target) {
           window.dispatchEvent(new CustomEvent("withdrawalCancelled", {
             detail: {
               id: orderId,
-              status: "cancelled",
+              status: "rejected",
               fundingSnapshot: result && typeof result === "object" ? result : null,
             },
           }));
@@ -1360,8 +1373,9 @@ export function mountSoldeModal(options = {}) {
       item && item.id === targetId
         ? {
             ...item,
-            status: "cancelled",
-            resolutionStatus: "cancelled",
+            status: "rejected",
+            resolutionStatus: "rejected",
+            rejectedReason: "Retrait annulé par le client",
             cancelledBy: "client",
             cancelledAt: new Date().toISOString(),
           }
