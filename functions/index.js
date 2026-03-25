@@ -127,6 +127,10 @@ const DEPOSIT_ANALYTICS_DEFAULT_WINDOW_MS = 30 * 24 * 60 * 60 * 1000;
 const DEPOSIT_ANALYTICS_MAX_WINDOW_MS = 180 * 24 * 60 * 60 * 1000;
 const DEPOSIT_ANALYTICS_PAGE_FETCH_SIZE = 1000;
 const DEPOSIT_ANALYTICS_DOC_LIMIT = 12000;
+const AGENT_DEPOSIT_SEARCH_FALLBACK_LIMIT = 250;
+const AGENT_DEPOSIT_CONTEXT_ORDER_LIMIT = 12;
+const AGENT_DEPOSIT_SEARCH_RESULT_LIMIT = 12;
+const AGENT_ASSISTED_METHOD_ID = "agent_assisted";
 const DEPOSIT_PROOF_MIN_DELAY_MS = 6 * 60 * 1000;
 const DEPOSIT_SHADOW_GUARD_WINDOW_MS = DEPOSIT_PROOF_MIN_DELAY_MS;
 const DEPOSIT_SHADOW_GUARD_RAPID_THRESHOLD = 2;
@@ -964,6 +968,84 @@ function sanitizeEmail(value, maxLength = 160) {
 function sanitizePhone(value, maxLength = 40) {
   const out = sanitizeText(value, maxLength);
   return out.replace(/[^\d+\-\s().]/g, "");
+}
+
+function phoneDigits(value = "") {
+  return String(value || "").replace(/\D/g, "");
+}
+
+function normalizeSearchText(value = "") {
+  return String(value || "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .trim();
+}
+
+function getAgentDepositMethodMeta(methodId = "", methodDoc = {}) {
+  const normalized = sanitizeText(methodId || "", 80).toLowerCase();
+  if (normalized === "moncash") {
+    return {
+      id: "moncash",
+      name: sanitizeText(methodDoc.name || "MonCash", 80) || "MonCash",
+      accountName: sanitizeText(methodDoc.accountName || "", 120),
+      phoneNumber: sanitizePhone(methodDoc.phoneNumber || "", 40),
+    };
+  }
+  if (normalized === "natcash") {
+    return {
+      id: "natcash",
+      name: sanitizeText(methodDoc.name || "NatCash", 80) || "NatCash",
+      accountName: sanitizeText(methodDoc.accountName || "", 120),
+      phoneNumber: sanitizePhone(methodDoc.phoneNumber || "", 40),
+    };
+  }
+  return {
+    id: AGENT_ASSISTED_METHOD_ID,
+    name: sanitizeText(methodDoc.name || "Depot via agent", 80) || "Depot via agent",
+    accountName: sanitizeText(methodDoc.accountName || "", 120),
+    phoneNumber: sanitizePhone(methodDoc.phoneNumber || "", 40),
+  };
+}
+
+function buildAgentDepositSearchRecord(clientId = "", raw = {}) {
+  const approvedHtgAvailable = safeInt(raw.approvedHtgAvailable);
+  const provisionalHtgAvailable = safeInt(raw.provisionalHtgAvailable);
+  const doesApprovedBalance = safeInt(raw.doesApprovedBalance);
+  const doesProvisionalBalance = safeInt(raw.doesProvisionalBalance);
+  return {
+    id: String(clientId || raw.uid || "").trim(),
+    uid: String(raw.uid || clientId || "").trim(),
+    name: sanitizeText(raw.name || raw.displayName || raw.username || "", 120),
+    username: sanitizeUsername(raw.username || "", 24),
+    email: sanitizeEmail(raw.email || "", 160),
+    phone: sanitizePhone(raw.phone || raw.customerPhone || "", 40),
+    createdAtMs: safeSignedInt(raw.createdAtMs),
+    lastSeenAtMs: safeSignedInt(raw.lastSeenAtMs),
+    approvedHtgAvailable,
+    provisionalHtgAvailable,
+    htgBalance: approvedHtgAvailable + provisionalHtgAvailable,
+    doesBalance: safeInt(raw.doesBalance || (doesApprovedBalance + doesProvisionalBalance)),
+    accountFrozen: raw.accountFrozen === true,
+    hasApprovedDeposit: raw.hasApprovedDeposit === true,
+  };
+}
+
+function buildAgentDepositContextOrder(docSnap) {
+  const data = docSnap.data() || {};
+  return {
+    id: docSnap.id,
+    amountHtg: computeOrderAmount(data),
+    status: String(data.status || getOrderResolutionStatus(data) || "pending"),
+    methodId: sanitizeText(data.methodId || "", 120),
+    methodName: sanitizeText(data.methodName || data.methodId || "", 80),
+    orderType: getOrderType(data),
+    source: sanitizeText(data.source || "", 80),
+    createdAtMs: safeSignedInt(data.createdAtMs),
+    approvedAtMs: safeSignedInt(data.approvedAtMs || data.reviewResolvedAtMs || data.fundingSettledAtMs),
+    bonusDoesAwarded: safeInt(data.bonusDoesAwarded),
+    agentAssisted: data.agentAssisted === true,
+  };
 }
 
 function sanitizePublicAsset(value, maxLength = 400) {
@@ -9263,6 +9345,328 @@ exports.getDepositFundingStatusSecure = publicOnCall("getDepositFundingStatusSec
         status: String(item.status || "pending"),
       })),
   };
+});
+
+exports.searchAgentDepositClientsSecure = publicOnCall("searchAgentDepositClientsSecure", async (request) => {
+  assertFinanceAdmin(request);
+  const payload = request.data && typeof request.data === "object" ? request.data : {};
+  const rawQuery = sanitizeText(payload.query || "", 160);
+  const normalizedQuery = normalizeSearchText(rawQuery);
+  const queryDigits = phoneDigits(rawQuery);
+  const queryUsername = sanitizeUsername(rawQuery || "", 24);
+  const queryEmail = sanitizeEmail(rawQuery || "", 160);
+  const results = new Map();
+
+  if (!rawQuery) {
+    return { ok: true, results: [] };
+  }
+
+  const addClientSnap = (docSnap) => {
+    if (!docSnap?.exists) return;
+    results.set(docSnap.id, buildAgentDepositSearchRecord(docSnap.id, docSnap.data() || {}));
+  };
+
+  const addClientDocs = (snap) => {
+    (snap?.docs || []).forEach((docSnap) => addClientSnap(docSnap));
+  };
+
+  if (rawQuery.length >= 20 && /^[A-Za-z0-9_-]+$/.test(rawQuery)) {
+    addClientSnap(await walletRef(rawQuery).get());
+  }
+
+  const exactLookups = [];
+  if (queryEmail) {
+    exactLookups.push(
+      db.collection(CLIENTS_COLLECTION).where("email", "==", queryEmail).limit(6).get()
+    );
+  }
+  if (queryUsername) {
+    exactLookups.push(
+      db.collection(CLIENTS_COLLECTION).where("username", "==", queryUsername).limit(6).get()
+    );
+  }
+  if (queryDigits.length >= 8) {
+    const sanitizedPhone = sanitizePhone(rawQuery, 40);
+    exactLookups.push(
+      db.collection(CLIENTS_COLLECTION).where("phone", "==", sanitizedPhone).limit(6).get()
+    );
+  }
+
+  if (exactLookups.length) {
+    const exactSnaps = await Promise.allSettled(exactLookups);
+    exactSnaps.forEach((entry) => {
+      if (entry.status === "fulfilled") {
+        addClientDocs(entry.value);
+      }
+    });
+  }
+
+  if (results.size < AGENT_DEPOSIT_SEARCH_RESULT_LIMIT && normalizedQuery.length >= 2) {
+    let fallbackSnap = null;
+    try {
+      fallbackSnap = await db.collection(CLIENTS_COLLECTION)
+        .orderBy("lastSeenAtMs", "desc")
+        .limit(AGENT_DEPOSIT_SEARCH_FALLBACK_LIMIT)
+        .get();
+    } catch (_) {
+      fallbackSnap = await db.collection(CLIENTS_COLLECTION)
+        .limit(AGENT_DEPOSIT_SEARCH_FALLBACK_LIMIT)
+        .get();
+    }
+
+    (fallbackSnap?.docs || []).forEach((docSnap) => {
+      if (results.size >= AGENT_DEPOSIT_SEARCH_RESULT_LIMIT) return;
+      const raw = docSnap.data() || {};
+      const haystack = [
+        docSnap.id,
+        raw.uid,
+        raw.name,
+        raw.displayName,
+        raw.username,
+        raw.email,
+        raw.phone,
+      ]
+        .map((value) => normalizeSearchText(value))
+        .filter(Boolean)
+        .join(" ");
+
+      const phoneHaystack = [
+        phoneDigits(raw.phone || ""),
+        phoneDigits(raw.customerPhone || ""),
+      ].filter(Boolean).join(" ");
+
+      const match = haystack.includes(normalizedQuery)
+        || (queryDigits.length >= 4 && phoneHaystack.includes(queryDigits));
+      if (match) {
+        addClientSnap(docSnap);
+      }
+    });
+  }
+
+  const sorted = Array.from(results.values())
+    .sort((left, right) =>
+      safeSignedInt(right.lastSeenAtMs) - safeSignedInt(left.lastSeenAtMs)
+      || safeSignedInt(right.createdAtMs) - safeSignedInt(left.createdAtMs)
+      || String(left.name || left.email || left.id).localeCompare(String(right.name || right.email || right.id), "fr")
+    )
+    .slice(0, AGENT_DEPOSIT_SEARCH_RESULT_LIMIT);
+
+  return {
+    ok: true,
+    query: rawQuery,
+    results: sorted,
+  };
+});
+
+exports.getAgentDepositClientContextSecure = publicOnCall("getAgentDepositClientContextSecure", async (request) => {
+  assertFinanceAdmin(request);
+  const payload = request.data && typeof request.data === "object" ? request.data : {};
+  const clientId = sanitizeText(payload.clientId || payload.uid || "", 160);
+  if (!clientId) {
+    throw new HttpsError("invalid-argument", "Client introuvable.");
+  }
+
+  const clientRef = walletRef(clientId);
+  const clientSnap = await clientRef.get();
+  if (!clientSnap.exists) {
+    throw new HttpsError("not-found", "Compte client introuvable.");
+  }
+
+  let ordersSnap = null;
+  try {
+    ordersSnap = await clientRef.collection("orders")
+      .orderBy("createdAtMs", "desc")
+      .limit(AGENT_DEPOSIT_CONTEXT_ORDER_LIMIT)
+      .get();
+  } catch (_) {
+    ordersSnap = await clientRef.collection("orders")
+      .limit(AGENT_DEPOSIT_CONTEXT_ORDER_LIMIT)
+      .get();
+  }
+
+  const client = buildAgentDepositSearchRecord(clientSnap.id, clientSnap.data() || {});
+  const recentOrders = (ordersSnap?.docs || [])
+    .map((docSnap) => buildAgentDepositContextOrder(docSnap))
+    .sort((left, right) => safeSignedInt(right.createdAtMs) - safeSignedInt(left.createdAtMs));
+
+  return {
+    ok: true,
+    client,
+    recentOrders,
+  };
+});
+
+exports.creditAgentDepositSecure = publicOnCall("creditAgentDepositSecure", async (request) => {
+  const { uid: agentUid, email: agentEmail } = assertFinanceAdmin(request);
+  const payload = request.data && typeof request.data === "object" ? request.data : {};
+  const clientId = sanitizeText(payload.clientId || payload.uid || "", 160);
+  const amountHtg = safeInt(payload.amountHtg);
+  const note = sanitizeText(payload.note || "", 240);
+  const requestedMethodId = sanitizeText(payload.methodId || AGENT_ASSISTED_METHOD_ID, 80).toLowerCase();
+
+  if (!clientId || amountHtg < MIN_ORDER_HTG) {
+    throw new HttpsError("invalid-argument", "Crédit agent invalide.");
+  }
+
+  const clientRef = walletRef(clientId);
+  const methodMetaBase = getAgentDepositMethodMeta(requestedMethodId);
+  let methodMeta = methodMetaBase;
+
+  if (methodMetaBase.id !== AGENT_ASSISTED_METHOD_ID) {
+    const methodSnap = await db.collection("paymentMethods").doc(methodMetaBase.id).get();
+    if (methodSnap.exists) {
+      methodMeta = getAgentDepositMethodMeta(methodMetaBase.id, methodSnap.data() || {});
+    }
+  }
+
+  const result = await db.runTransaction(async (tx) => {
+    const [clientSnap, ordersSnap, withdrawalsSnap, xchangesSnap] = await Promise.all([
+      tx.get(clientRef),
+      tx.get(clientRef.collection("orders")),
+      tx.get(clientRef.collection("withdrawals")),
+      tx.get(walletHistoryRef(clientId)),
+    ]);
+
+    if (!clientSnap.exists) {
+      throw new HttpsError("not-found", "Compte client introuvable.");
+    }
+
+    const clientData = clientSnap.data() || {};
+    const nowMs = Date.now();
+    const nowIso = new Date(nowMs).toISOString();
+    const orderRef = clientRef.collection("orders").doc();
+    const depositBonusSnapshot = computeDepositBonusSnapshot(amountHtg);
+    const bonusDoesAwarded = safeInt(depositBonusSnapshot.bonusDoes);
+    const beforeApprovedDoes = safeInt(
+      typeof clientData.doesApprovedBalance === "number"
+        ? clientData.doesApprovedBalance
+        : Math.max(0, safeInt(clientData.doesBalance) - safeInt(clientData.doesProvisionalBalance))
+    );
+    const beforeProvisionalDoes = safeInt(clientData.doesProvisionalBalance);
+    const beforeExchangeableDoes = safeInt(
+      typeof clientData.exchangeableDoesAvailable === "number"
+        ? Math.min(clientData.exchangeableDoesAvailable, beforeApprovedDoes)
+        : beforeApprovedDoes
+    );
+    const beforePendingFromXchange = safeInt(clientData.pendingPlayFromXchangeDoes);
+    const beforePendingFromReferral = safeInt(clientData.pendingPlayFromReferralDoes);
+    const beforePendingFromWelcome = safeInt(clientData.pendingPlayFromWelcomeDoes);
+
+    const orderData = {
+      uid: clientId,
+      clientId,
+      clientUid: clientId,
+      amount: amountHtg,
+      methodId: methodMeta.id,
+      methodName: methodMeta.name,
+      methodDetails: {
+        name: methodMeta.name,
+        accountName: methodMeta.accountName,
+        phoneNumber: methodMeta.phoneNumber,
+      },
+      status: "approved",
+      resolutionStatus: "approved",
+      approvedAmountHtg: amountHtg,
+      uniqueCode: `AGT-${crypto.randomBytes(4).toString("hex").toUpperCase()}-${Date.now().toString(36).toUpperCase()}`,
+      proofRef: `agent_credit_${nowMs}`,
+      customerName: sanitizeText(clientData.name || clientData.displayName || clientData.username || "", 120),
+      customerEmail: sanitizeEmail(clientData.email || "", 160),
+      customerPhone: sanitizePhone(clientData.phone || "", 40),
+      depositorPhone: "",
+      extractedText: "",
+      extractedTextStatus: "agent_assisted",
+      createdAtMs: nowMs,
+      createdAt: nowIso,
+      updatedAt: nowIso,
+      updatedAtMs: nowMs,
+      resolvedAtMs: nowMs,
+      reviewResolvedAtMs: nowMs,
+      approvedAtMs: nowMs,
+      approvedAt: nowIso,
+      fundingSettledAtMs: nowMs,
+      source: AGENT_ASSISTED_METHOD_ID,
+      agentAssisted: true,
+      creditedByAgentUid: agentUid,
+      creditedByAgentEmail: sanitizeEmail(agentEmail || "", 160),
+      creditedAtMs: nowMs,
+      creditedAt: nowIso,
+      adminNote: note,
+      bonusEligible: depositBonusSnapshot.eligible,
+      bonusThresholdHtg: safeInt(depositBonusSnapshot.thresholdHtg),
+      bonusPercent: safeInt(depositBonusSnapshot.bonusPercent),
+      bonusRateHtgToDoes: safeInt(depositBonusSnapshot.rateHtgToDoes),
+      bonusHtgBasis: amountHtg,
+      bonusHtgRaw: Number(depositBonusSnapshot.bonusHtgRaw || 0),
+      bonusDoesAwarded,
+      bonusAwardedAtMs: bonusDoesAwarded > 0 ? nowMs : 0,
+      bonusAwardedAt: bonusDoesAwarded > 0 ? nowIso : "",
+      bonusSettledAtMs: bonusDoesAwarded > 0 ? nowMs : 0,
+      clientStatusNoticeEventAtMs: nowMs,
+    };
+
+    const nextOrders = [
+      ...ordersSnap.docs.map((item) => item.data() || {}),
+      orderData,
+    ];
+
+    const nextWallet = {
+      ...clientData,
+      uid: clientId,
+      email: sanitizeEmail(clientData.email || "", 160),
+      doesApprovedBalance: beforeApprovedDoes + bonusDoesAwarded,
+      doesProvisionalBalance: beforeProvisionalDoes,
+      doesBalance: beforeApprovedDoes + beforeProvisionalDoes + bonusDoesAwarded,
+      pendingPlayFromXchangeDoes: beforePendingFromXchange,
+      pendingPlayFromReferralDoes: beforePendingFromReferral + bonusDoesAwarded,
+      pendingPlayFromWelcomeDoes: beforePendingFromWelcome,
+      updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      hasApprovedDeposit: true,
+    };
+
+    const pendingTotalAfter = safeInt(nextWallet.pendingPlayFromXchangeDoes)
+      + safeInt(nextWallet.pendingPlayFromReferralDoes)
+      + safeInt(nextWallet.pendingPlayFromWelcomeDoes);
+    nextWallet.exchangeableDoesAvailable = pendingTotalAfter <= 0
+      ? safeInt(nextWallet.doesApprovedBalance)
+      : Math.min(safeInt(nextWallet.doesApprovedBalance), beforeExchangeableDoes);
+
+    const fundingSnapshot = buildWalletFundingSnapshot({
+      orders: nextOrders,
+      withdrawals: withdrawalsSnap.docs.map((item) => item.data() || {}),
+      walletData: nextWallet,
+      exchangeHistory: xchangesSnap.docs.map((item) => item.data() || {}),
+    });
+
+    tx.set(orderRef, orderData, { merge: true });
+    tx.set(clientRef, {
+      ...buildFundingWalletPatch(fundingSnapshot),
+      doesApprovedBalance: safeInt(nextWallet.doesApprovedBalance),
+      doesProvisionalBalance: safeInt(nextWallet.doesProvisionalBalance),
+      doesBalance: safeInt(nextWallet.doesBalance),
+      exchangeableDoesAvailable: safeInt(nextWallet.exchangeableDoesAvailable),
+      pendingPlayFromXchangeDoes: safeInt(nextWallet.pendingPlayFromXchangeDoes),
+      pendingPlayFromReferralDoes: safeInt(nextWallet.pendingPlayFromReferralDoes),
+      pendingPlayFromWelcomeDoes: safeInt(nextWallet.pendingPlayFromWelcomeDoes),
+      hasApprovedDeposit: true,
+      updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      lastSeenAt: admin.firestore.FieldValue.serverTimestamp(),
+      lastSeenAtMs: nowMs,
+    }, { merge: true });
+
+    return {
+      ok: true,
+      orderId: orderRef.id,
+      uid: clientId,
+      amountHtg,
+      methodId: methodMeta.id,
+      methodName: methodMeta.name,
+      bonusEligible: depositBonusSnapshot.eligible,
+      bonusDoesAwarded,
+      ...fundingSnapshot,
+    };
+  });
+
+  return result;
 });
 
 exports.resolveDepositReviewSecure = publicOnCall("resolveDepositReviewSecure", async (request) => {

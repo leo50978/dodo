@@ -15,6 +15,8 @@ const DEPOSIT_PROOF_TIMER_STORAGE_PREFIX = 'deposit_proof_started_at';
 const DEPOSIT_RAPID_WARNING_STORAGE_PREFIX = 'deposit_rapid_warning_guard';
 const DEPOSIT_RAPID_WARNING_DELAY_MS = 6 * 60 * 1000;
 const DEPOSIT_RAPID_WARNING_THRESHOLD = 2;
+const AGENT_DEPOSIT_WHATSAPP_DIGITS = '50941752992';
+const AGENT_DEPOSIT_WHATSAPP_LABEL = '50941752992';
 const SUPPORT_WHATSAPP_DIGITS = '50940507232';
 const SUPPORT_WHATSAPP_LABEL = '40507232';
 let tesseractRuntimePromise = null;
@@ -415,6 +417,108 @@ class PaymentModal {
 
       modal.querySelector('[data-rapid-confirm="cancel"]')?.addEventListener('click', () => cleanup(false));
       modal.querySelector('[data-rapid-confirm="continue"]')?.addEventListener('click', () => cleanup(true));
+
+      overlay.appendChild(modal);
+      document.body.appendChild(overlay);
+    });
+  }
+
+  async openAgentDepositSupportModal() {
+    return new Promise((resolve) => {
+      const overlay = document.createElement('div');
+      overlay.style.cssText = `
+        position: fixed;
+        inset: 0;
+        z-index: 2147483647;
+        background: rgba(15, 23, 42, 0.72);
+        backdrop-filter: blur(4px);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        padding: 1rem;
+      `;
+
+      const modal = document.createElement('div');
+      modal.style.cssText = `
+        width: min(100%, 470px);
+        background: linear-gradient(180deg, #f7f4ff 0%, #ebe4ff 100%);
+        border: 1px solid rgba(76, 29, 149, 0.14);
+        border-radius: 24px;
+        box-shadow: 0 28px 80px rgba(15, 23, 42, 0.28);
+        padding: 1.4rem;
+        color: #2e1065;
+      `;
+
+      modal.innerHTML = `
+        <div style="display:flex;align-items:flex-start;gap:0.85rem;">
+          <div style="
+            width:44px;
+            height:44px;
+            border-radius:999px;
+            background: rgba(124, 58, 237, 0.12);
+            color:#6d28d9;
+            display:flex;
+            align-items:center;
+            justify-content:center;
+            font-size:1.15rem;
+            flex-shrink:0;
+          "><i class="fas fa-user-tie"></i></div>
+          <div style="min-width:0;">
+            <div style="font-size:1.08rem;font-weight:800;margin-bottom:0.35rem;">
+              Dépôt via agent
+            </div>
+            <div style="font-size:0.95rem;line-height:1.55;color:#4c1d95;">
+              Contacte un agent pour faire ton dépôt. Cette méthode n'est pas automatique, elle dépend de l'agent.
+            </div>
+            <div style="margin-top:0.7rem;font-size:0.9rem;line-height:1.55;color:#5b21b6;">
+              Envoie ta capture et les informations nécessaires sur WhatsApp. L'agent pourra ensuite créditer ton compte à distance.
+            </div>
+          </div>
+        </div>
+        <div style="display:flex;flex-wrap:wrap;gap:0.65rem;margin-top:1.25rem;">
+          <button type="button" data-agent-deposit="cancel" style="
+            flex:1 1 140px;
+            min-height:46px;
+            border:none;
+            border-radius:14px;
+            background:#e5e7eb;
+            color:#374151;
+            font-weight:700;
+            cursor:pointer;
+            padding:0.85rem 1rem;
+          ">Fermer</button>
+          <a href="https://wa.me/${AGENT_DEPOSIT_WHATSAPP_DIGITS}" target="_blank" rel="noopener noreferrer" data-agent-deposit="continue" style="
+            flex:1 1 200px;
+            min-height:46px;
+            border-radius:14px;
+            background:#16A34A;
+            color:white;
+            font-weight:800;
+            text-decoration:none;
+            display:flex;
+            align-items:center;
+            justify-content:center;
+            padding:0.85rem 1rem;
+          ">Continuer sur WhatsApp</a>
+        </div>
+        <div style="margin-top:0.75rem;font-size:0.82rem;color:#6b7280;text-align:center;">
+          Agent WhatsApp : ${AGENT_DEPOSIT_WHATSAPP_LABEL}
+        </div>
+      `;
+
+      const cleanup = (result) => {
+        overlay.remove();
+        resolve(result);
+      };
+
+      overlay.addEventListener('click', (event) => {
+        if (event.target === overlay) {
+          cleanup(false);
+        }
+      });
+
+      modal.querySelector('[data-agent-deposit="cancel"]')?.addEventListener('click', () => cleanup(false));
+      modal.querySelector('[data-agent-deposit="continue"]')?.addEventListener('click', () => cleanup(true));
 
       overlay.appendChild(modal);
       document.body.appendChild(overlay);
@@ -954,6 +1058,41 @@ class PaymentModal {
         <div id="methodsList" style="display: flex; flex-direction: column; gap: 1rem;">
           ${this.methods.map(method => this.renderMethodCard(method)).join('')}
         </div>
+
+        <button id="agentDepositBtn" type="button" style="
+          width: 100%;
+          margin-top: 1rem;
+          min-height: 54px;
+          border-radius: 1rem;
+          border: 1px dashed rgba(255,255,255,0.28);
+          background: rgba(124,58,237,0.12);
+          color: #ffffff;
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          gap: 1rem;
+          padding: 0.95rem 1rem;
+          cursor: pointer;
+          box-shadow: 10px 10px 22px rgba(18,25,42,0.28), -8px -8px 18px rgba(121,135,173,0.12);
+        ">
+          <span style="display:flex;align-items:center;gap:0.85rem;text-align:left;">
+            <span style="
+              width: 42px;
+              height: 42px;
+              border-radius: 999px;
+              background: rgba(255,255,255,0.12);
+              display:flex;
+              align-items:center;
+              justify-content:center;
+              flex-shrink:0;
+            "><i class="fas fa-user-headset" style="color:#d8b4fe;"></i></span>
+            <span>
+              <strong style="display:block;font-size:0.98rem;color:#fff;">Dépôt via agent</strong>
+              <span style="display:block;font-size:0.84rem;color:rgba(255,255,255,0.76);margin-top:0.18rem;">Besoin d'aide ? Un agent peut t'accompagner et créditer ton compte à distance.</span>
+            </span>
+          </span>
+          <i class="fas fa-chevron-right" style="color:#e9d5ff;"></i>
+        </button>
       </div>
     `;
   }
@@ -1626,6 +1765,7 @@ class PaymentModal {
     }
 
     const methodsList = this.modal.querySelector('#methodsList');
+    const agentDepositBtn = this.modal.querySelector('#agentDepositBtn');
     
     if (methodsList) {
       methodsList.querySelectorAll('.method-card').forEach(card => {
@@ -1640,6 +1780,12 @@ class PaymentModal {
             this.updateStepDisplay();
           }
         });
+      });
+    }
+
+    if (agentDepositBtn) {
+      agentDepositBtn.addEventListener('click', async () => {
+        await this.openAgentDepositSupportModal();
       });
     }
   }
