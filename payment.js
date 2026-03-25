@@ -12,7 +12,9 @@ const DEPOSIT_BONUS_PERCENT = 10;
 const DEPOSIT_BONUS_RATE_HTG_TO_DOES = 20;
 const WELCOME_BONUS_HTG = 25;
 const DEPOSIT_PROOF_TIMER_STORAGE_PREFIX = 'deposit_proof_started_at';
+const DEPOSIT_RAPID_WARNING_STORAGE_PREFIX = 'deposit_rapid_warning_guard';
 const DEPOSIT_RAPID_WARNING_DELAY_MS = 6 * 60 * 1000;
+const DEPOSIT_RAPID_WARNING_THRESHOLD = 2;
 const SUPPORT_WHATSAPP_DIGITS = '50940507232';
 const SUPPORT_WHATSAPP_LABEL = '40507232';
 let tesseractRuntimePromise = null;
@@ -175,6 +177,85 @@ class PaymentModal {
     return uid ? `${DEPOSIT_PROOF_TIMER_STORAGE_PREFIX}_${uid}` : '';
   }
 
+  getRapidWarningStorageKey() {
+    const uid = this.getClientUid();
+    return uid ? `${DEPOSIT_RAPID_WARNING_STORAGE_PREFIX}_${uid}` : '';
+  }
+
+  readRapidWarningState() {
+    const storageKey = this.getRapidWarningStorageKey();
+    if (!storageKey) {
+      return {
+        windowStartedAtMs: 0,
+        rapidAttemptCount: 0,
+        lastAttemptAtMs: 0,
+      };
+    }
+    try {
+      const raw = window.localStorage.getItem(storageKey);
+      const parsed = raw ? JSON.parse(raw) : null;
+      return {
+        windowStartedAtMs: Number(parsed?.windowStartedAtMs) || 0,
+        rapidAttemptCount: Number(parsed?.rapidAttemptCount) || 0,
+        lastAttemptAtMs: Number(parsed?.lastAttemptAtMs) || 0,
+      };
+    } catch (_) {
+      return {
+        windowStartedAtMs: 0,
+        rapidAttemptCount: 0,
+        lastAttemptAtMs: 0,
+      };
+    }
+  }
+
+  writeRapidWarningState(state) {
+    const storageKey = this.getRapidWarningStorageKey();
+    if (!storageKey) return;
+    try {
+      window.localStorage.setItem(storageKey, JSON.stringify({
+        windowStartedAtMs: Number(state?.windowStartedAtMs) || 0,
+        rapidAttemptCount: Number(state?.rapidAttemptCount) || 0,
+        lastAttemptAtMs: Number(state?.lastAttemptAtMs) || 0,
+      }));
+    } catch (_) {
+      // ignore storage failure
+    }
+  }
+
+  clearRapidWarningState() {
+    const storageKey = this.getRapidWarningStorageKey();
+    if (!storageKey) return;
+    try {
+      window.localStorage.removeItem(storageKey);
+    } catch (_) {
+      // ignore storage failure
+    }
+  }
+
+  shouldPromptRapidDepositWarning() {
+    if (this.isWelcomeBonusSelected()) return false;
+    if (!(this.proofSubmitAttemptDurationMs > 0) || this.proofSubmitAttemptDurationMs >= DEPOSIT_RAPID_WARNING_DELAY_MS) {
+      this.clearRapidWarningState();
+      return false;
+    }
+
+    const nowMs = Date.now();
+    const previousState = this.readRapidWarningState();
+    const withinWindow = previousState.windowStartedAtMs > 0
+      && (nowMs - previousState.windowStartedAtMs) < DEPOSIT_RAPID_WARNING_DELAY_MS;
+    const nextRapidAttemptCount = withinWindow
+      ? previousState.rapidAttemptCount + 1
+      : 1;
+
+    this.writeRapidWarningState({
+      windowStartedAtMs: withinWindow ? previousState.windowStartedAtMs : nowMs,
+      rapidAttemptCount: nextRapidAttemptCount,
+      lastAttemptAtMs: nowMs,
+    });
+
+    return nextRapidAttemptCount >= DEPOSIT_RAPID_WARNING_THRESHOLD;
+  }
+
   ensureProofStepStartedAtMs() {
     if (this.isWelcomeBonusSelected()) {
       this.clearProofStepStartedAtMs();
@@ -233,7 +314,7 @@ class PaymentModal {
       overlay.style.cssText = `
         position: fixed;
         inset: 0;
-        z-index: 100000;
+        z-index: 2147483647;
         background: rgba(15, 23, 42, 0.72);
         backdrop-filter: blur(3px);
         display: flex;
@@ -1810,7 +1891,7 @@ class PaymentModal {
       return false;
     }
 
-    if (!this.isWelcomeBonusSelected() && this.proofSubmitAttemptDurationMs > 0 && this.proofSubmitAttemptDurationMs < DEPOSIT_RAPID_WARNING_DELAY_MS) {
+    if (this.shouldPromptRapidDepositWarning()) {
       const confirmedRapidSubmission = await this.confirmRapidDepositSubmission();
       if (!confirmedRapidSubmission) {
         return false;
