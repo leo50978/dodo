@@ -349,17 +349,9 @@ function ensureRetraitSuccessModal() {
           </div>
         </div>
 
-        <div class="mt-4 rounded-2xl border border-white/10 bg-white/5 p-4">
-          <p id="retraitSuccessPrimary" class="text-sm leading-6 text-white/90">
-            Tu peux vérifier l'état de ton retrait dans Opérations en cours.
-          </p>
-          <p id="retraitSuccessSecondary" class="mt-2 text-sm leading-6 text-white/72">
-            Tu peux aussi annuler le retrait à tout moment depuis cette section.
-          </p>
-        </div>
-
         <div class="mt-4 rounded-2xl border border-[#ffb26e]/25 bg-[#1b2437]/90 p-4">
-          <p class="text-sm font-semibold text-white">Besoin de recevoir ton argent tout de suite ?</p>
+          <p class="text-[11px] font-semibold uppercase tracking-[0.16em] text-[#ffcf9f]">Priorité</p>
+          <p class="mt-1 text-base font-semibold text-white">Besoin de recevoir ton argent tout de suite ?</p>
           <p class="mt-2 text-sm leading-6 text-white/80">
             Contacte un agent sur WhatsApp et appelle-le. Si ton dossier est prêt, il pourra accélérer le paiement.
           </p>
@@ -371,6 +363,15 @@ function ensureRetraitSuccessModal() {
               Ecrire sur WhatsApp 50941752992
             </button>
           </div>
+        </div>
+
+        <div class="mt-4 rounded-2xl border border-white/10 bg-white/5 p-4">
+          <p id="retraitSuccessPrimary" class="text-sm leading-6 text-white/90">
+            Tu peux vérifier l'état de ton retrait dans Opérations en cours.
+          </p>
+          <p id="retraitSuccessSecondary" class="mt-2 text-sm leading-6 text-white/72">
+            Tu peux aussi annuler le retrait à tout moment depuis cette section.
+          </p>
         </div>
       </div>
 
