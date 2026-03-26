@@ -12,6 +12,7 @@ import { db, doc, getDoc } from "./firebase-init.js";
 import { getDepositFundingStatusSecure } from "./secure-functions.js";
 const BALANCE_DEBUG = false;
 const WELCOME_PROGRESS_DEBUG = true;
+const WITHDRAWAL_CANCEL_DEBUG = true;
 const ASSISTANCE_PHONE = "50940507232";
 const RATE_HTG_TO_DOES = 20;
 const AUTH_PROFILE_HINT_STORAGE_KEY = "domino_auth_profile_hint_v1";
@@ -277,11 +278,32 @@ function refreshProfilePendingOperationsModal() {
 
 function applyWithdrawalCancelledFundingSnapshot(detail = {}) {
   const fundingSnapshot = detail?.fundingSnapshot;
+  if (WITHDRAWAL_CANCEL_DEBUG) {
+    console.log("[WITHDRAWAL_CANCEL_DEBUG][PROFILE] event received", {
+      uid: String(auth.currentUser?.uid || ""),
+      id: String(detail?.id || ""),
+      status: String(detail?.status || ""),
+      fundingSnapshot,
+      previousFunding: latestProfileFundingData,
+    });
+  }
   if (fundingSnapshot && typeof fundingSnapshot === "object") {
     latestProfileFundingData = {
       ...(latestProfileFundingData || {}),
       ...fundingSnapshot,
     };
+    if (WITHDRAWAL_CANCEL_DEBUG) {
+      console.log("[WITHDRAWAL_CANCEL_DEBUG][PROFILE] funding merged", {
+        uid: String(auth.currentUser?.uid || ""),
+        mergedFunding: latestProfileFundingData,
+      });
+    }
+  }
+  if (WITHDRAWAL_CANCEL_DEBUG && !(fundingSnapshot && typeof fundingSnapshot === "object")) {
+    console.log("[WITHDRAWAL_CANCEL_DEBUG][PROFILE] missing funding snapshot", {
+      uid: String(auth.currentUser?.uid || ""),
+      detail,
+    });
   }
   scheduleProfileFundingRefresh(auth.currentUser, 80);
   updateProfileData(auth.currentUser);
@@ -412,6 +434,13 @@ async function refreshProfileFundingStatus(user) {
   profileFundingUid = uid;
   const token = ++profileFundingRequestToken;
   try {
+    if (WITHDRAWAL_CANCEL_DEBUG) {
+      console.log("[WITHDRAWAL_CANCEL_DEBUG][PROFILE] funding refresh:start", {
+        uid,
+        token,
+        currentFunding: latestProfileFundingData,
+      });
+    }
     if (BALANCE_DEBUG) {
       console.log("[BALANCE_DEBUG][PROFILE] funding status request", {
         uid,
@@ -422,6 +451,13 @@ async function refreshProfileFundingStatus(user) {
     if (token !== profileFundingRequestToken) return;
     if (uid !== String(auth.currentUser?.uid || "").trim()) return;
     latestProfileFundingData = result && typeof result === "object" ? result : null;
+    if (WITHDRAWAL_CANCEL_DEBUG) {
+      console.log("[WITHDRAWAL_CANCEL_DEBUG][PROFILE] funding refresh:result", {
+        uid,
+        token,
+        result: latestProfileFundingData,
+      });
+    }
     if (BALANCE_DEBUG) {
       console.log("[BALANCE_DEBUG][PROFILE] funding status", {
         uid,
@@ -906,10 +942,20 @@ function updateProfileData(user) {
   const nameEl = document.getElementById("profileName");
   const emailEl = document.getElementById("profileEmail");
   const balanceEl = document.getElementById("profileBalance");
+  const totalHtgEl = document.getElementById("profileTotalHtg");
+  const totalDoesEl = document.getElementById("profileTotalDoes");
   const approvedHtgEl = document.getElementById("profileApprovedHtg");
   const provisionalHtgEl = document.getElementById("profileProvisionalHtg");
   const approvedDoesEl = document.getElementById("profileApprovedDoes");
   const provisionalDoesEl = document.getElementById("profileProvisionalDoes");
+  const htgApprovedBadgeEl = document.getElementById("profileHtgApprovedBadge");
+  const htgPendingBadgeEl = document.getElementById("profileHtgPendingBadge");
+  const htgBonusBadgeEl = document.getElementById("profileHtgBonusBadge");
+  const htgSummaryEl = document.getElementById("profileHtgSummary");
+  const doesApprovedBadgeEl = document.getElementById("profileDoesApprovedBadge");
+  const doesPendingBadgeEl = document.getElementById("profileDoesPendingBadge");
+  const doesLockedBadgeEl = document.getElementById("profileDoesLockedBadge");
+  const doesSummaryEl = document.getElementById("profileDoesSummary");
   const approvedDepositsSummaryEl = document.getElementById("profileApprovedDepositsSummary");
   const exchangedEl = document.getElementById("profileExchanged");
   const verifiedAvailableHintEl = document.getElementById("profileVerifiedAvailableHint");
@@ -931,6 +977,15 @@ function updateProfileData(user) {
   const xState = getXchangeState(baseForUi, user?.uid || auth.currentUser?.uid);
   const clientData = latestProfileClientData || {};
   const fundingData = latestProfileFundingData || {};
+  if (WITHDRAWAL_CANCEL_DEBUG) {
+    console.log("[WITHDRAWAL_CANCEL_DEBUG][PROFILE] updateProfileData:start", {
+      uid: String(user?.uid || auth.currentUser?.uid || ""),
+      baseForUi,
+      fundingData,
+      clientData,
+      xState,
+    });
+  }
   const approvedHtgAvailable = safeCount(
     pickFirstFiniteNumber(
       fundingData.approvedHtgAvailable,
@@ -1125,6 +1180,19 @@ function updateProfileData(user) {
     accountFrozen,
     withdrawalHold: withdrawalLocked,
   };
+  const totalVisibleHtg = safeCount(approvedHtgAvailable + provisionalHtgAvailable);
+  const totalVisibleDoes = safeCount(resolvedDoesBalance);
+  if (WITHDRAWAL_CANCEL_DEBUG) {
+    console.log("[WITHDRAWAL_CANCEL_DEBUG][PROFILE] updateProfileData:resolved", {
+      uid: String(user?.uid || auth.currentUser?.uid || ""),
+      approvedHtgAvailable,
+      provisionalHtgAvailable,
+      resolvedAvailableHtg,
+      withdrawableHtg: resolvedXState.withdrawableHtg,
+      approvedDepositsTotal,
+      fundingData,
+    });
+  }
 
   if (BALANCE_DEBUG) {
     console.log("[BALANCE_DEBUG][PROFILE] source comparison", {
@@ -1186,6 +1254,8 @@ function updateProfileData(user) {
     emailEl.textContent = contact;
     emailEl.title = contact;
   }
+  if (totalHtgEl) totalHtgEl.textContent = formatAmount(totalVisibleHtg);
+  if (totalDoesEl) totalDoesEl.textContent = `${formatDoesAmount(totalVisibleDoes)} Does`;
   if (balanceEl) balanceEl.textContent = formatAmount(resolvedAvailableHtg);
   if (approvedHtgEl) approvedHtgEl.textContent = formatAmount(approvedHtgAvailable);
   if (provisionalHtgEl) provisionalHtgEl.textContent = formatAmount(provisionalHtgAvailable);
@@ -1205,6 +1275,54 @@ function updateProfileData(user) {
   }
   if (lockedWelcomeDoesEl) lockedWelcomeDoesEl.textContent = formatDoesAmount(lockedWelcomeDoes);
   if (lockedWelcomeDoesCardEl) lockedWelcomeDoesCardEl.classList.toggle("hidden", lockedWelcomeDoes <= 0);
+  if (htgApprovedBadgeEl) {
+    htgApprovedBadgeEl.textContent = `Approuve ${formatAmount(approvedHtgAvailable)}`;
+  }
+  if (htgPendingBadgeEl) {
+    htgPendingBadgeEl.textContent = `En examen ${formatAmount(provisionalHtgAvailable)}`;
+  }
+  if (htgBonusBadgeEl) {
+    htgBonusBadgeEl.textContent = `Bonus ${formatAmount(welcomeBonusHtgAvailable)}`;
+    htgBonusBadgeEl.classList.toggle("hidden", welcomeBonusHtgAvailable <= 0);
+    htgBonusBadgeEl.classList.toggle("inline-flex", welcomeBonusHtgAvailable > 0);
+  }
+  if (htgSummaryEl) {
+    if (approvedHtgAvailable > 0 && provisionalHtgAvailable > 0) {
+      htgSummaryEl.textContent = "Une partie de ton HTG est déjà utilisable. Le reste est encore en examen.";
+    } else if (approvedHtgAvailable > 0) {
+      htgSummaryEl.textContent = "Ton HTG visible est déjà approuvé et prêt à être utilisé.";
+    } else if (provisionalHtgAvailable > 0) {
+      htgSummaryEl.textContent = "Ton HTG visible est encore en examen avant validation.";
+    } else if (welcomeBonusHtgAvailable > 0) {
+      htgSummaryEl.textContent = "Tu n'as pas encore de HTG dépôt visible. Ton bonus bienvenue reste jouable séparément.";
+    } else {
+      htgSummaryEl.textContent = "Aucun HTG visible pour le moment sur ton compte.";
+    }
+  }
+  if (doesApprovedBadgeEl) {
+    doesApprovedBadgeEl.textContent = `Approuves ${formatDoesAmount(doesApprovedBalance)} Does`;
+  }
+  if (doesPendingBadgeEl) {
+    doesPendingBadgeEl.textContent = `En examen ${formatDoesAmount(doesProvisionalBalance)} Does`;
+  }
+  if (doesLockedBadgeEl) {
+    doesLockedBadgeEl.textContent = `Geles ${formatDoesAmount(lockedWelcomeDoes)} Does`;
+    doesLockedBadgeEl.classList.toggle("hidden", lockedWelcomeDoes <= 0);
+    doesLockedBadgeEl.classList.toggle("inline-flex", lockedWelcomeDoes > 0);
+  }
+  if (doesSummaryEl) {
+    if (lockedWelcomeDoes > 0) {
+      doesSummaryEl.textContent = "Une partie de tes Does reste gelée tant que ton premier dépôt réel n'est pas approuvé.";
+    } else if (doesApprovedBalance > 0 && doesProvisionalBalance > 0) {
+      doesSummaryEl.textContent = "Tu peux déjà jouer avec les Does approuvés. Le reste est encore en examen.";
+    } else if (doesApprovedBalance > 0) {
+      doesSummaryEl.textContent = "Tes Does visibles sont déjà approuvés et prêts pour le jeu.";
+    } else if (doesProvisionalBalance > 0) {
+      doesSummaryEl.textContent = "Tes Does visibles sont encore en examen avant validation.";
+    } else {
+      doesSummaryEl.textContent = "Aucun Does visible pour le moment sur ton compte.";
+    }
+  }
   if (approvedDepositsSummaryEl) approvedDepositsSummaryEl.textContent = `Dépôts approuvés: ${formatAmount(approvedDepositsTotal)}`;
   if (exchangedEl) exchangedEl.textContent = `Déjà converti: ${formatAmount(convertedApprovedHtg)}`;
   if (approvedDepositsSummaryEl && welcomeBonusHtgAvailable > 0) {

@@ -190,6 +190,14 @@
         line-height: 1.2;
       }
 
+      .profile-disclosure summary {
+        list-style: none;
+      }
+
+      .profile-disclosure summary::-webkit-details-marker {
+        display: none;
+      }
+
       .profile-dynamic-inline {
         display: inline;
       }
@@ -258,8 +266,78 @@
                   <h2 class="mt-1 text-xl font-bold text-white sm:text-2xl">Résumé financier</h2>
                 </div>
                 <div class="profile-liquid-accent w-full rounded-2xl border border-[#ffb26e]/25 bg-[#1b2437] px-3 py-2 text-left sm:w-auto sm:text-right">
-                  <p class="text-[10px] uppercase tracking-[0.18em] text-white/70">HTG dispo échange</p>
-                  <p id="profileBalance" class="profile-dynamic-value profile-dynamic-stat profile-balance-mobile mt-1 text-lg font-semibold text-white sm:text-2xl">-</p>
+                  <p class="text-[10px] uppercase tracking-[0.18em] text-white/70">Vue simplifiée</p>
+                  <p class="mt-1 text-sm font-semibold text-white sm:text-base">HTG, Does, puis actions utiles</p>
+                </div>
+              </div>
+
+              <div class="mt-4 grid gap-3 lg:grid-cols-2">
+                <article class="profile-liquid-soft rounded-[28px] border border-emerald-300/12 bg-[linear-gradient(160deg,rgba(16,185,129,0.16),rgba(17,24,39,0.84)_55%,rgba(8,12,24,0.94))] p-4 sm:p-5">
+                  <div class="flex items-start justify-between gap-3">
+                    <div class="min-w-0">
+                      <p class="text-[11px] font-semibold uppercase tracking-[0.16em] text-emerald-100/70">HTG total visible</p>
+                      <p id="profileTotalHtg" class="profile-dynamic-value profile-dynamic-stat mt-3 text-[1.9rem] font-bold tracking-tight text-white sm:text-[2.25rem]">0 HTG</p>
+                    </div>
+                    <span class="inline-flex shrink-0 items-center rounded-full border border-white/10 bg-white/10 px-3 py-1 text-[10px] font-semibold uppercase tracking-[0.14em] text-white/75">
+                      HTG
+                    </span>
+                  </div>
+                  <div class="mt-4 flex flex-wrap gap-2">
+                    <span id="profileHtgApprovedBadge" class="inline-flex items-center rounded-full border border-emerald-300/25 bg-emerald-500/15 px-3 py-1 text-xs font-semibold text-emerald-100">Approuvé 0 HTG</span>
+                    <span id="profileHtgPendingBadge" class="inline-flex items-center rounded-full border border-amber-300/25 bg-amber-500/15 px-3 py-1 text-xs font-semibold text-amber-100">En examen 0 HTG</span>
+                    <span id="profileHtgBonusBadge" class="hidden items-center rounded-full border border-sky-300/25 bg-sky-500/15 px-3 py-1 text-xs font-semibold text-sky-100">Bonus 0 HTG</span>
+                  </div>
+                  <p id="profileHtgSummary" class="mt-4 text-sm leading-6 text-white/78">
+                    Ton HTG approuvé est utilisable maintenant. Le HTG en examen est encore en vérification.
+                  </p>
+                </article>
+
+                <article class="profile-liquid-soft rounded-[28px] border border-sky-300/12 bg-[linear-gradient(160deg,rgba(59,130,246,0.18),rgba(17,24,39,0.84)_55%,rgba(8,12,24,0.94))] p-4 sm:p-5">
+                  <div class="flex items-start justify-between gap-3">
+                    <div class="min-w-0">
+                      <p class="text-[11px] font-semibold uppercase tracking-[0.16em] text-sky-100/70">Does total visible</p>
+                      <p id="profileTotalDoes" class="profile-dynamic-value profile-dynamic-stat mt-3 text-[1.9rem] font-bold tracking-tight text-white sm:text-[2.25rem]">0 Does</p>
+                    </div>
+                    <img src="./does.png" alt="Does" class="h-12 w-12 shrink-0 rounded-[18px] object-cover shadow-[0_10px_24px_rgba(0,0,0,0.26)]" data-hide-on-error="1" />
+                  </div>
+                  <div class="mt-4 flex flex-wrap gap-2">
+                    <span id="profileDoesApprovedBadge" class="inline-flex items-center rounded-full border border-emerald-300/25 bg-emerald-500/15 px-3 py-1 text-xs font-semibold text-emerald-100">Approuvés 0 Does</span>
+                    <span id="profileDoesPendingBadge" class="inline-flex items-center rounded-full border border-amber-300/25 bg-amber-500/15 px-3 py-1 text-xs font-semibold text-amber-100">En examen 0 Does</span>
+                    <span id="profileDoesLockedBadge" class="hidden items-center rounded-full border border-[#f6c177]/35 bg-[#3b2a16]/72 px-3 py-1 text-xs font-semibold text-[#f7e8c7]">Gelés 0 Does</span>
+                  </div>
+                  <p id="profileDoesSummary" class="mt-4 text-sm leading-6 text-white/78">
+                    Tes Does approuvés sont prêts pour le jeu. Les Does en examen attendent encore la validation du dépôt.
+                  </p>
+                </article>
+              </div>
+
+              <div class="mt-4">
+                <div class="flex items-center justify-between gap-3">
+                  <div>
+                    <p class="text-[11px] font-semibold uppercase tracking-[0.16em] text-white/60">Disponible maintenant</p>
+                    <h3 class="mt-1 text-lg font-semibold text-white">Ce que tu peux faire tout de suite</h3>
+                  </div>
+                  <span class="rounded-full border border-white/10 bg-white/5 px-3 py-1 text-[10px] font-semibold uppercase tracking-[0.14em] text-white/55">
+                    Lecture rapide
+                  </span>
+                </div>
+
+                <div class="mt-3 grid gap-3 sm:grid-cols-3">
+                  <article class="profile-liquid-soft rounded-[24px] border border-white/10 bg-[#111827]/82 p-4">
+                    <p class="text-[11px] uppercase tracking-[0.14em] text-white/60">Retrait possible</p>
+                    <p id="profileWithdrawAvailable" class="profile-dynamic-value profile-dynamic-stat mt-2 text-xl font-semibold text-white">-</p>
+                    <p class="mt-2 text-xs leading-5 text-white/62">Montant que tu peux retirer maintenant.</p>
+                  </article>
+                  <article class="profile-liquid-soft rounded-[24px] border border-white/10 bg-[#111827]/82 p-4">
+                    <p class="text-[11px] uppercase tracking-[0.14em] text-white/60">HTG vers Does</p>
+                    <p id="profileBalance" class="profile-dynamic-value profile-dynamic-stat mt-2 text-xl font-semibold text-white">-</p>
+                    <p class="mt-2 text-xs leading-5 text-white/62">Partie de ton HTG que tu peux convertir en Does.</p>
+                  </article>
+                  <article class="profile-liquid-soft rounded-[24px] border border-white/10 bg-[#111827]/82 p-4">
+                    <p id="profileExchangeableDoesLabel" class="text-[11px] uppercase tracking-[0.14em] text-white/60">Does vers HTG</p>
+                    <p class="profile-dynamic-value profile-dynamic-stat mt-2 text-xl font-semibold text-white"><span id="profileExchangeableDoesAvailable" class="profile-dynamic-inline">0</span> Does</p>
+                    <p id="profileExchangeableDoesHint" class="mt-2 text-xs leading-5 text-white/62">Does approuvés que tu peux reconvertir.</p>
+                  </article>
                 </div>
               </div>
 
@@ -282,81 +360,63 @@
                 <p id="profileAccountStatusMeta" class="profile-dynamic-text mt-1 text-xs leading-5 text-white/62">Encore 3 rejets avant gel du retrait.</p>
               </div>
 
-              <div class="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
-                <div class="profile-liquid-soft rounded-2xl border border-white/10 bg-[#111827]/82 p-4">
-                  <p class="text-[11px] uppercase tracking-[0.14em] text-white/60">HTG approuvé</p>
-                  <p id="profileApprovedHtg" class="profile-dynamic-value profile-dynamic-stat profile-stat-mobile mt-2 text-lg font-semibold text-white sm:text-xl">-</p>
-                  <p class="mt-1 text-xs leading-5 text-white/62">Partie validée qui reste encore en HTG.</p>
-                </div>
-                <div class="profile-liquid-soft rounded-2xl border border-white/10 bg-[#111827]/82 p-4">
-                  <p class="text-[11px] uppercase tracking-[0.14em] text-white/60">HTG en examen</p>
-                  <p id="profileProvisionalHtg" class="profile-dynamic-value profile-dynamic-stat profile-stat-mobile mt-2 text-lg font-semibold text-white sm:text-xl">-</p>
-                  <p class="mt-1 text-xs leading-5 text-white/62">Jouable, mais pas retirable tant que non validé.</p>
-                </div>
-                <div class="profile-liquid-soft rounded-2xl border border-white/10 bg-[#111827]/82 p-4">
-                  <div class="flex items-center gap-3">
-                    <img src="./does.png" alt="Does" class="h-10 w-10 rounded-2xl object-cover" data-hide-on-error="1" />
-                    <div class="min-w-0">
-                      <p class="text-[11px] uppercase tracking-[0.14em] text-white/60">Does approuvés</p>
-                      <p class="profile-dynamic-value profile-stat-mobile mt-1 text-lg font-semibold text-white sm:text-xl"><span id="profileApprovedDoes" class="profile-dynamic-inline profile-dynamic-stat">0</span> Does</p>
-                    </div>
+              <details class="profile-disclosure profile-liquid-rule mt-4 rounded-2xl border border-white/10 bg-[#0b1222]/90 p-4">
+                <summary class="flex cursor-pointer list-none items-center justify-between gap-3">
+                  <div class="min-w-0">
+                    <p class="text-[11px] font-semibold uppercase tracking-[0.14em] text-white/65">Détails avancés</p>
+                    <p class="mt-1 text-sm font-semibold text-white">Voir le détail du solde et des règles</p>
                   </div>
-                  <p class="mt-1 text-xs leading-5 text-white/62">Does venant d'un dépôt déjà validé.</p>
-                </div>
-                <div class="profile-liquid-soft rounded-2xl border border-white/10 bg-[#111827]/82 p-4">
-                  <div class="flex items-center gap-3">
-                    <img src="./does.png" alt="Does" class="h-10 w-10 rounded-2xl object-cover" data-hide-on-error="1" />
-                    <div class="min-w-0">
-                      <p class="text-[11px] uppercase tracking-[0.14em] text-white/60">Does en examen</p>
-                      <p class="profile-dynamic-value profile-stat-mobile mt-1 text-lg font-semibold text-white sm:text-xl"><span id="profileProvisionalDoes" class="profile-dynamic-inline profile-dynamic-stat">0</span> Does</p>
-                    </div>
-                  </div>
-                  <p class="mt-1 text-xs leading-5 text-white/62">Does venant d'un dépôt pas encore validé.</p>
-                </div>
-                <div class="profile-liquid-soft rounded-2xl border border-white/10 bg-[#111827]/82 p-4">
-                  <p class="text-[11px] uppercase tracking-[0.14em] text-white/60">HTG dispo retrait</p>
-                  <p id="profileWithdrawAvailable" class="profile-dynamic-value profile-dynamic-stat profile-stat-mobile mt-2 text-lg font-semibold text-white sm:text-xl">-</p>
-                  <p class="mt-1 text-xs leading-5 text-white/62">Montant que tu peux demander en retrait maintenant.</p>
-                </div>
-                <div class="profile-liquid-soft rounded-2xl border border-white/10 bg-[#111827]/82 p-4">
-                  <div class="flex items-center gap-3">
-                    <img src="./does.png" alt="Does" class="h-10 w-10 rounded-2xl object-cover" data-hide-on-error="1" />
-                    <div class="min-w-0">
-                      <p id="profileExchangeableDoesLabel" class="text-[11px] uppercase tracking-[0.14em] text-white/60">Does dispo échange</p>
-                      <p class="profile-dynamic-value profile-stat-mobile mt-1 text-lg font-semibold text-white sm:text-xl"><span id="profileExchangeableDoesAvailable" class="profile-dynamic-inline profile-dynamic-stat">0</span> Does</p>
-                    </div>
-                  </div>
-                  <p id="profileExchangeableDoesHint" class="mt-1 text-xs leading-5 text-white/62">Does approuvés que tu peux reconvertir.</p>
-                </div>
-                <div id="profileLockedWelcomeDoesCard" class="profile-liquid-soft hidden rounded-2xl border border-[#f6c177]/35 bg-[#3b2a16]/72 p-4">
-                  <div class="flex items-center gap-3">
-                    <img src="./does.png" alt="Does" class="h-10 w-10 rounded-2xl object-cover" data-hide-on-error="1" />
-                    <div class="min-w-0">
-                      <p class="text-[11px] uppercase tracking-[0.14em] text-[#ffd89a]">Does gelés en attente de dépôt</p>
-                      <p class="profile-dynamic-value profile-stat-mobile mt-1 text-lg font-semibold text-white sm:text-xl"><span id="profileLockedWelcomeDoes" class="profile-dynamic-inline profile-dynamic-stat">0</span> Does</p>
-                    </div>
-                  </div>
-                  <p class="mt-1 text-xs leading-5 text-[#f7e8c7]">Ces Does viennent du bonus bienvenue. Ils seront débloqués après l'approbation de ton premier dépôt réel.</p>
-                </div>
-                <div class="profile-liquid-soft rounded-2xl border border-white/10 bg-[#111827]/82 p-4 sm:col-span-2 xl:col-span-3">
-                  <p id="profileApprovedDepositsSummary" class="profile-dynamic-text text-xs leading-5 text-white/68">Dépôts approuvés: 0 HTG</p>
-                  <p id="profileExchanged" class="profile-dynamic-text mt-1 text-xs leading-5 text-white/68">Déjà converti: 0 HTG</p>
-                  <p id="profileVerifiedAvailableHint" class="profile-dynamic-text mt-1 text-xs leading-5 text-white/68">HTG vérifié dispo: 0 HTG</p>
-                  <p id="profilePendingBalanceHint" class="profile-dynamic-text mt-2 text-xs leading-5 text-white/68">HTG en examen: 0 HTG</p>
-                  <p id="profileDoesBreakdown" class="profile-dynamic-text mt-1 text-xs leading-5 text-white/58">Does approuvés: 0 | Does en examen: 0</p>
-                </div>
-              </div>
+                  <span class="grid h-10 w-10 shrink-0 place-items-center rounded-full border border-white/10 bg-white/5 text-white/70">
+                    <i class="fa-solid fa-chevron-down text-xs"></i>
+                  </span>
+                </summary>
 
-              <div class="profile-liquid-rule mt-4 rounded-2xl border border-white/10 bg-[#0b1222]/90 p-4">
-                <div class="flex items-center gap-2 text-white">
-                  <i class="fa-solid fa-shield-halved text-sm text-[#ffcb95]"></i>
-                  <p class="text-[11px] font-semibold uppercase tracking-[0.14em] text-white/65">Règle de retrait</p>
+                <div class="mt-4 grid gap-3">
+                  <div class="grid gap-3 sm:grid-cols-2">
+                    <div class="rounded-2xl border border-white/10 bg-white/[0.04] p-4">
+                      <p class="text-[11px] uppercase tracking-[0.14em] text-white/60">HTG approuvé</p>
+                      <p id="profileApprovedHtg" class="profile-dynamic-value profile-dynamic-stat mt-2 text-lg font-semibold text-white">-</p>
+                    </div>
+                    <div class="rounded-2xl border border-white/10 bg-white/[0.04] p-4">
+                      <p class="text-[11px] uppercase tracking-[0.14em] text-white/60">HTG en examen</p>
+                      <p id="profileProvisionalHtg" class="profile-dynamic-value profile-dynamic-stat mt-2 text-lg font-semibold text-white">-</p>
+                    </div>
+                    <div class="rounded-2xl border border-white/10 bg-white/[0.04] p-4">
+                      <p class="text-[11px] uppercase tracking-[0.14em] text-white/60">Does approuvés</p>
+                      <p class="profile-dynamic-value profile-dynamic-stat mt-2 text-lg font-semibold text-white"><span id="profileApprovedDoes" class="profile-dynamic-inline">0</span> Does</p>
+                    </div>
+                    <div class="rounded-2xl border border-white/10 bg-white/[0.04] p-4">
+                      <p class="text-[11px] uppercase tracking-[0.14em] text-white/60">Does en examen</p>
+                      <p class="profile-dynamic-value profile-dynamic-stat mt-2 text-lg font-semibold text-white"><span id="profileProvisionalDoes" class="profile-dynamic-inline">0</span> Does</p>
+                    </div>
+                  </div>
+
+                  <div id="profileLockedWelcomeDoesCard" class="hidden rounded-2xl border border-[#f6c177]/35 bg-[#3b2a16]/72 p-4">
+                    <p class="text-[11px] uppercase tracking-[0.14em] text-[#ffd89a]">Does gelés en attente de dépôt</p>
+                    <p class="profile-dynamic-value profile-dynamic-stat mt-2 text-lg font-semibold text-white"><span id="profileLockedWelcomeDoes" class="profile-dynamic-inline">0</span> Does</p>
+                    <p class="mt-2 text-xs leading-5 text-[#f7e8c7]">Ces Does viennent du bonus bienvenue. Ils seront débloqués après l'approbation de ton premier dépôt réel.</p>
+                  </div>
+
+                  <div class="rounded-2xl border border-white/10 bg-white/[0.04] p-4">
+                    <p id="profileApprovedDepositsSummary" class="profile-dynamic-text text-xs leading-5 text-white/68">Dépôts approuvés: 0 HTG</p>
+                    <p id="profileExchanged" class="profile-dynamic-text mt-1 text-xs leading-5 text-white/68">Déjà converti: 0 HTG</p>
+                    <p id="profileVerifiedAvailableHint" class="profile-dynamic-text mt-1 text-xs leading-5 text-white/68">HTG vérifié dispo: 0 HTG</p>
+                    <p id="profilePendingBalanceHint" class="profile-dynamic-text mt-2 text-xs leading-5 text-white/68">HTG en examen: 0 HTG</p>
+                    <p id="profileDoesBreakdown" class="profile-dynamic-text mt-1 text-xs leading-5 text-white/58">Does approuvés: 0 | Does en examen: 0</p>
+                  </div>
+
+                  <div class="rounded-2xl border border-white/10 bg-white/[0.04] p-4">
+                    <div class="flex items-center gap-2 text-white">
+                      <i class="fa-solid fa-shield-halved text-sm text-[#ffcb95]"></i>
+                      <p class="text-[11px] font-semibold uppercase tracking-[0.14em] text-white/65">Règle de retrait</p>
+                    </div>
+                    <p id="profileWithdrawRuleHint" class="profile-dynamic-text mt-2 text-sm leading-6 text-white/84">
+                      Vérification des règles de retrait...
+                    </p>
+                    <p id="profileWithdrawRuleMeta" class="profile-dynamic-text mt-2 text-xs leading-5 text-white/62"></p>
+                  </div>
                 </div>
-                <p id="profileWithdrawRuleHint" class="profile-dynamic-text mt-2 text-sm leading-6 text-white/84">
-                  Vérification des règles de retrait...
-                </p>
-                <p id="profileWithdrawRuleMeta" class="profile-dynamic-text mt-2 text-xs leading-5 text-white/62"></p>
-              </div>
+              </details>
             </section>
 
             <section class="profile-liquid-panel rounded-[32px] border border-white/10 bg-[#0f172a]/88 p-5 shadow-[18px_18px_40px_rgba(2,6,17,0.58),-10px_-10px_24px_rgba(24,35,58,0.14)] backdrop-blur-xl sm:p-6">
