@@ -124,6 +124,38 @@ export async function getPublicGameStakeOptionsSecure(payload = {}) {
   return invokeCallable("getPublicGameStakeOptionsSecure", payload, "Impossible de charger les mises de partie.");
 }
 
+export async function getPublicDuelStakeOptionsSecure(payload = {}) {
+  return invokeCallable("getPublicDuelStakeOptionsSecure", payload, "Impossible de charger les mises duel.");
+}
+
+export async function joinMatchmakingDuelSecure(payload = {}) {
+  return invokeCallable("joinMatchmakingDuel", payload, "Impossible de rejoindre un duel.");
+}
+
+export async function ensureRoomReadyDuelSecure(payload = {}) {
+  return invokeCallable("ensureRoomReadyDuel", payload, "Impossible de demarrer le duel.");
+}
+
+export async function touchRoomPresenceDuelSecure(payload = {}) {
+  return invokeCallable("touchRoomPresenceDuel", payload, "Impossible de mettre a jour la presence duel.");
+}
+
+export async function ackRoomStartSeenDuelSecure(payload = {}) {
+  return invokeCallable("ackRoomStartSeenDuel", payload, "Impossible de synchroniser le demarrage du duel.");
+}
+
+export async function leaveRoomDuelSecure(payload = {}) {
+  return invokeCallable("leaveRoomDuel", payload, "Impossible de quitter la salle duel.");
+}
+
+export async function submitActionDuelSecure(payload = {}) {
+  return invokeCallable("submitActionDuel", payload, "Impossible d'envoyer l'action duel.");
+}
+
+export async function claimWinRewardDuelSecure(payload = {}) {
+  return invokeCallable("claimWinRewardDuel", payload, "Impossible de valider le gain duel.");
+}
+
 export async function getShareSitePromoStatusSecure(payload = {}) {
   return invokeCallable("getShareSitePromoStatus", payload, "Impossible de charger le bonus de partage.");
 }

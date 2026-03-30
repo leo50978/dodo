@@ -1,0 +1,971 @@
+<!-- 
+    Domino ThreeJS creado por Josep Antoni Bover Comas el 16/01/2019
+
+        Indice
+
+        Vista por defecto en el Laboratorio de pruebas  
+		devildrey33_Lab->Opciones->Vista = Filas;
+
+        Ultima modificación el 28/02/2019
+-->
+<!DOCTYPE html>
+<html lang='fr'>
+    <head>
+        <meta http-equiv='Content-Type' content='text/html; charset=utf-8' />
+        <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+        <link rel="icon" type="image/png" href="/favicon-96x96.png" sizes="96x96" />
+        <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+        <link rel="shortcut icon" href="/favicon.ico" />
+        <link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png" />
+        <link rel="manifest" href="/site.webmanifest" />
+        <meta name="firebase-app-check-site-key" content="6Lc80IAsAAAAAD1dmys7iHV4bu8DeWdbYeM86y8D" />
+        <meta
+          http-equiv="Content-Security-Policy"
+          content="default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval' 'wasm-unsafe-eval' https://www.gstatic.com https://apis.google.com https://cdn.tailwindcss.com https://cdnjs.cloudflare.com https://cdn.jsdelivr.net https://unpkg.com https://www.google.com https://www.recaptcha.net; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com https://cdnjs.cloudflare.com https://www.gstatic.com; font-src 'self' https://fonts.gstatic.com https://cdnjs.cloudflare.com data:; img-src 'self' data: https: blob:; connect-src 'self' data: blob: https://*.googleapis.com https://apis.google.com https://firestore.googleapis.com https://identitytoolkit.googleapis.com https://securetoken.googleapis.com https://firebaseinstallations.googleapis.com https://content-firebaseappcheck.googleapis.com https://www.gstatic.com https://www.google.com https://accounts.google.com https://does-2c234.firebaseapp.com https://does-2c234.web.app https://www.recaptcha.net https://us-central1-does-2c234.cloudfunctions.net https://*.cloudfunctions.net https://cdn.jsdelivr.net https://unpkg.com; frame-src https://www.google.com https://accounts.google.com https://apis.google.com https://www.gstatic.com https://does-2c234.firebaseapp.com https://does-2c234.web.app https://www.recaptcha.net; worker-src 'self' blob: https://cdn.jsdelivr.net https://unpkg.com; object-src 'none'; base-uri 'self'; form-action 'self'; upgrade-insecure-requests; block-all-mixed-content;"
+        />
+        <title>Domino-lakay | Duel 2 joueurs</title>
+        <script src="https://cdn.tailwindcss.com"></script>
+        <!-- Estilos CSS para el objeto canvas -->
+        <link rel='stylesheet' href='./ObjetoCanvas.css' />       
+        <link rel='stylesheet' href='./Domino.css' />        
+                
+        <!-- Three.JS -->
+        <script src="./three.min.js"></script>
+        <!-- ObjetoCanvas similar al ObjetoBanner para testear Banners -->
+        <script src="./ObjetoCanvas.js"></script>
+        <!-- Objeto para crear animaciones de tiempo -->
+        <script src="./ObjetoAnimacion.js"></script>
+
+        <script src="./Domino_Texturas.js"></script>        
+        <script src="./Domino_Ficha_Duel.js"></script>        
+        <script src="./Domino_UI.js"></script>        
+        <script src="./Domino_Opciones.js"></script>        
+        <script src="./Domino_Partida_Duel.js"></script>        
+        <script src="./Domino.js"></script>        
+
+        <script type="module" src="./logiquejeu-duel.js"></script>
+        <style>
+            html,
+            body {
+                margin: 0;
+                width: 100%;
+                height: 100%;
+                background: #2b180d;
+                overscroll-behavior: none;
+            }
+
+            body {
+                overflow: hidden;
+            }
+
+            #GamePhotoBackdrop {
+                position: fixed;
+                inset: 0;
+                z-index: 0;
+                background-image:
+                    linear-gradient(180deg, rgba(30, 15, 8, 0.28), rgba(24, 14, 8, 0.42)),
+                    radial-gradient(circle at center, rgba(255, 214, 148, 0.08), rgba(0, 0, 0, 0.18)),
+                    url("./jui.png");
+                background-size: cover;
+                background-position: center center;
+                background-repeat: no-repeat;
+                transform: scale(1.03);
+                filter: saturate(1.02) contrast(1.02);
+            }
+
+            #GamePhotoBackdrop::after {
+                content: "";
+                position: absolute;
+                inset: 0;
+                background:
+                    linear-gradient(180deg, rgba(13, 9, 5, 0.05), rgba(13, 9, 5, 0.18)),
+                    radial-gradient(circle at center, rgba(255, 222, 171, 0.06), rgba(0, 0, 0, 0.24));
+                pointer-events: none;
+            }
+
+            #ObjetoCanvas {
+                z-index: 1 !important;
+            }
+
+            #Cabecera_Canvas {
+                background: transparent !important;
+            }
+
+            @media (orientation: portrait) {
+                #OrientationGuardOverlay {
+                    padding: 0.75rem !important;
+                }
+                #OrientationGuardOverlay > div {
+                    width: 100% !important;
+                    max-width: none !important;
+                    min-height: 72vh;
+                    padding: 1rem !important;
+                    border-radius: 1.25rem !important;
+                }
+                #OrientationGuardTitle {
+                    font-size: 1.55rem !important;
+                    line-height: 1.2 !important;
+                }
+            }
+
+            body.game-hud-minimal #LeaveRoomTopBtn,
+            body.game-hud-minimal #FullscreenToggleBtn,
+            body.game-hud-minimal #FullscreenHint,
+            body.game-hud-minimal #PlayerLightsToggleBtn,
+            body.game-hud-minimal #LotModalOpenBtn,
+            body.game-hud-minimal #OnlineUsersHud,
+            body.game-hud-minimal #LocalTurnDoesWrap {
+                display: none !important;
+            }
+
+            #DuelLotViewportWrap {
+                position: relative;
+                margin-top: 0.9rem;
+                height: min(58vw, 20rem);
+                min-height: 14rem;
+                overflow: hidden;
+                border: 1px solid rgba(255, 255, 255, 0.12);
+                border-radius: 1.35rem;
+                background:
+                    radial-gradient(circle at top, rgba(255, 232, 194, 0.08), rgba(255, 255, 255, 0.01) 42%),
+                    linear-gradient(180deg, rgba(19, 24, 38, 0.92), rgba(9, 12, 20, 0.98));
+                box-shadow:
+                    inset 0 1px 0 rgba(255, 255, 255, 0.06),
+                    14px 14px 34px rgba(16, 23, 40, 0.4),
+                    -10px -10px 24px rgba(112, 126, 165, 0.12);
+            }
+
+            #DuelLotViewport {
+                position: absolute;
+                inset: 0;
+            }
+
+            #DuelLotViewport canvas {
+                width: 100% !important;
+                height: 100% !important;
+                display: block;
+            }
+
+            #DuelLotViewportShade {
+                position: absolute;
+                inset: 0;
+                pointer-events: none;
+                background:
+                    linear-gradient(180deg, rgba(0,0,0,0.08), transparent 18%, transparent 78%, rgba(0,0,0,0.22));
+            }
+
+            #DuelLotEmpty {
+                position: absolute;
+                inset: 0;
+                display: none;
+                align-items: center;
+                justify-content: center;
+                padding: 1rem;
+                text-align: center;
+                font-size: 0.92rem;
+                color: rgba(255,255,255,0.74);
+            }
+
+            body.game-hud-minimal #LocalTurnHud {
+                max-width: 4.9rem;
+            }
+
+            body.game-hud-minimal #LocalTurnHud > div:first-child {
+                justify-content: center;
+            }
+
+            #GameStartCinematicOverlay {
+                position: fixed;
+                inset: 0;
+                z-index: 2810;
+                display: none;
+                align-items: center;
+                justify-content: center;
+                padding:
+                    max(1rem, env(safe-area-inset-top))
+                    max(1rem, env(safe-area-inset-right))
+                    max(1rem, env(safe-area-inset-bottom))
+                    max(1rem, env(safe-area-inset-left));
+                background:
+                    radial-gradient(circle at center, rgba(255, 208, 140, 0.12), rgba(9, 8, 10, 0.82)),
+                    linear-gradient(180deg, rgba(14, 10, 8, 0.72), rgba(8, 7, 10, 0.88));
+                backdrop-filter: blur(12px);
+            }
+
+            #GameStartCinematicOverlay.active {
+                display: flex;
+            }
+
+            #GameStartCinematicPanel {
+                width: min(92vw, 30rem);
+                display: flex;
+                flex-direction: column;
+                align-items: center;
+                gap: 0.75rem;
+                color: #fff7eb;
+            }
+
+            #GameStartCinematicStage {
+                text-align: center;
+                font-size: 0.72rem;
+                font-weight: 700;
+                letter-spacing: 0.16em;
+                text-transform: uppercase;
+                color: rgba(255, 223, 184, 0.78);
+            }
+
+            #GameStartCinematicText {
+                text-align: center;
+                font-size: 1.02rem;
+                line-height: 1.45;
+                font-weight: 700;
+                color: #fff8ef;
+                text-shadow: 0 8px 24px rgba(0, 0, 0, 0.28);
+            }
+
+            #GameStartCinematicBoard {
+                position: relative;
+                width: min(84vw, 25rem);
+                aspect-ratio: 1;
+                border-radius: 2rem;
+                border: 1px solid rgba(255, 255, 255, 0.14);
+                background:
+                    radial-gradient(circle at center, rgba(115, 69, 28, 0.46), rgba(31, 20, 10, 0.78)),
+                    linear-gradient(180deg, rgba(59, 38, 20, 0.46), rgba(19, 13, 8, 0.7));
+                box-shadow:
+                    0 20px 50px rgba(0, 0, 0, 0.32),
+                    inset 0 1px 0 rgba(255, 240, 220, 0.09);
+                overflow: hidden;
+            }
+
+            .game-start-seat-pocket {
+                position: absolute;
+                border: 1px dashed rgba(255, 225, 186, 0.2);
+                background: rgba(255, 255, 255, 0.03);
+                box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.03);
+                border-radius: 999px;
+            }
+
+            .game-start-seat-pocket[data-seat="top"],
+            .game-start-seat-pocket[data-seat="bottom"] {
+                left: 50%;
+                width: 58%;
+                height: 14%;
+                transform: translateX(-50%);
+            }
+
+            .game-start-seat-pocket[data-seat="top"] {
+                top: 6%;
+            }
+
+            .game-start-seat-pocket[data-seat="bottom"] {
+                bottom: 6%;
+            }
+
+            .game-start-seat-pocket[data-seat="left"],
+            .game-start-seat-pocket[data-seat="right"] {
+                top: 50%;
+                width: 14%;
+                height: 58%;
+                transform: translateY(-50%);
+            }
+
+            .game-start-seat-pocket[data-seat="left"] {
+                left: 6%;
+            }
+
+            .game-start-seat-pocket[data-seat="right"] {
+                right: 6%;
+            }
+
+            #GameStartCinematicTileLayer {
+                position: absolute;
+                inset: 0;
+            }
+
+            .game-start-tile,
+            #GameStartCinematicRevealTile {
+                position: absolute;
+                left: 50%;
+                top: 50%;
+                width: clamp(1.3rem, 4vw, 1.85rem);
+                height: clamp(2.75rem, 8.8vw, 3.75rem);
+                border-radius: 0.5rem;
+                border: 1px solid rgba(255, 246, 232, 0.28);
+                box-shadow:
+                    0 12px 22px rgba(0, 0, 0, 0.3),
+                    inset 0 1px 0 rgba(255, 255, 255, 0.08);
+                transform: translate(-50%, -50%);
+                will-change: transform, opacity;
+            }
+
+            .game-start-tile {
+                background:
+                    linear-gradient(135deg, rgba(246, 163, 63, 0.92), rgba(124, 62, 14, 0.96));
+            }
+
+            .game-start-tile::before {
+                content: "";
+                position: absolute;
+                left: 50%;
+                top: 18%;
+                bottom: 18%;
+                width: 1px;
+                transform: translateX(-50%);
+                background: rgba(255, 238, 220, 0.28);
+            }
+
+            #GameStartCinematicRevealTile {
+                display: none;
+                align-items: stretch;
+                justify-content: stretch;
+                overflow: hidden;
+                background:
+                    linear-gradient(180deg, rgba(255, 251, 245, 0.98), rgba(241, 230, 215, 0.95));
+            }
+
+            #GameStartCinematicRevealTile.visible {
+                display: flex;
+            }
+
+            .game-start-reveal-half {
+                flex: 1;
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                font-size: clamp(1rem, 3.4vw, 1.35rem);
+                font-weight: 800;
+                color: #3a2414;
+            }
+
+            .game-start-reveal-half + .game-start-reveal-half {
+                border-left: 1px solid rgba(84, 51, 28, 0.18);
+            }
+
+            @media (max-width: 640px) {
+                #GameStartCinematicPanel {
+                    gap: 0.65rem;
+                }
+
+                #GameStartCinematicStage {
+                    font-size: 0.65rem;
+                    letter-spacing: 0.14em;
+                }
+
+                #GameStartCinematicText {
+                    font-size: 0.94rem;
+                }
+            }
+
+        </style>
+    </head>
+    <body data-game-mode="duel_2p">
+        <div id="GamePhotoBackdrop" aria-hidden="true"></div>
+
+        <div id="MatchLoadingOverlay" class="fixed inset-0 z-[2500] hidden items-center justify-center bg-black/45 p-4 backdrop-blur-md">
+            <div id="MatchLoadingPanel" class="w-[min(92vw,30rem)] rounded-3xl border border-white/20 bg-[#3F4766]/60 p-5 text-center text-white shadow-[14px_14px_34px_rgba(16,23,40,0.5),-10px_-10px_24px_rgba(112,126,165,0.2)] backdrop-blur-xl">
+                <div id="MatchLoadingTitle" class="text-lg font-bold tracking-wide">Recherche de partie...</div>
+                <div id="MatchLoadingText" class="mt-1 text-sm text-white/80">Connexion des joueurs en cours.</div>
+                <div class="mt-4 h-2 w-full overflow-hidden rounded-full border border-white/20 bg-white/10 shadow-[inset_6px_6px_12px_rgba(19,26,43,0.42),inset_-6px_-6px_12px_rgba(120,134,172,0.22)]">
+                    <span class="block h-full w-2/5 animate-pulse rounded-full bg-gradient-to-r from-orange-500 to-amber-300"></span>
+                </div>
+            </div>
+        </div>
+
+        <div id="GameStartCinematicOverlay" aria-hidden="true">
+            <div id="GameStartCinematicPanel">
+                <div id="GameStartCinematicStage">Preparation de la main</div>
+                <div id="GameStartCinematicText">Brassage des dominos en cours...</div>
+                <div id="GameStartCinematicBoard">
+                    <div class="game-start-seat-pocket" data-seat="top" aria-hidden="true"></div>
+                    <div class="game-start-seat-pocket" data-seat="right" aria-hidden="true"></div>
+                    <div class="game-start-seat-pocket" data-seat="bottom" aria-hidden="true"></div>
+                    <div class="game-start-seat-pocket" data-seat="left" aria-hidden="true"></div>
+                    <div id="GameStartCinematicTileLayer" aria-hidden="true"></div>
+                    <div id="GameStartCinematicRevealTile" aria-hidden="true">
+                        <span class="game-start-reveal-half">6</span>
+                        <span class="game-start-reveal-half">6</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div id="ResumeRoomOverlay" class="fixed inset-0 z-[2520] hidden items-center justify-center bg-black/55 p-4 backdrop-blur-md">
+            <div class="w-[min(92vw,28rem)] rounded-3xl border border-white/20 bg-[#3F4766]/70 p-6 text-white shadow-[14px_14px_34px_rgba(16,23,40,0.5),-10px_-10px_24px_rgba(112,126,165,0.2)] backdrop-blur-xl">
+                <h3 class="text-xl font-bold tracking-wide">Partie trouvée</h3>
+                <p class="mt-2 text-sm text-white/80">Une partie est déjà en cours avec ce compte.</p>
+                <p class="mt-1 text-xs text-white/65">Tu veux rentrer dans la salle ou la quitter ?</p>
+                <div class="mt-5 grid grid-cols-1 gap-3 sm:grid-cols-2">
+                    <button id="ResumeRoomJoinBtn" type="button" class="h-11 rounded-2xl border border-[#ffb26e] bg-[#F57C00] text-sm font-semibold text-white shadow-[8px_8px_18px_rgba(163,82,27,0.45),-6px_-6px_14px_rgba(255,175,102,0.22)] transition hover:-translate-y-0.5">
+                        Rentrer
+                    </button>
+                    <button id="ResumeRoomLeaveBtn" type="button" class="h-11 rounded-2xl border border-white/20 bg-white/10 text-sm font-semibold text-white shadow-[8px_8px_18px_rgba(19,25,40,0.34),-6px_-6px_14px_rgba(111,126,164,0.2)] transition hover:bg-white/15">
+                        Quitter
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <div id="OrientationGuardOverlay" class="fixed inset-0 z-[2900] hidden items-center justify-center bg-black/75 p-3 backdrop-blur-md sm:p-6">
+            <div class="w-full max-w-2xl max-h-[90vh] overflow-y-auto rounded-[2rem] border border-white/20 bg-[#3F4766]/85 p-6 text-white shadow-[16px_16px_38px_rgba(16,23,40,0.52),-10px_-10px_26px_rgba(112,126,165,0.22)] backdrop-blur-xl sm:p-8">
+                <div class="flex items-start gap-3">
+                    <div class="mt-1 inline-grid h-12 w-12 place-items-center rounded-2xl border border-white/20 bg-white/10 text-white/90 shadow-[inset_4px_4px_10px_rgba(18,24,38,0.34),inset_-4px_-4px_10px_rgba(110,124,163,0.16)] sm:h-14 sm:w-14">
+                        <svg xmlns="http://www.w3.org/2000/svg" class="h-7 w-7 sm:h-8 sm:w-8" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true">
+                            <path d="M7 4h10a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2Z"></path>
+                            <path d="M10 2 8 4l2 2"></path>
+                            <path d="M14 22l2-2-2-2"></path>
+                        </svg>
+                    </div>
+                    <div class="min-w-0 flex-1">
+                        <h3 id="OrientationGuardTitle" class="text-2xl font-bold leading-tight sm:text-3xl">Tourne ton telephone pour jouer</h3>
+                        <p class="mt-2 text-sm leading-relaxed text-white/90 sm:text-base">
+                            Mets ton telephone en mode horizontal pour profiter d'une zone de jeu complete et garder le controle de la partie.
+                        </p>
+                    </div>
+                </div>
+                <div class="mt-6 rounded-2xl border border-white/20 bg-white/10 p-4 text-sm leading-relaxed text-white/90 sm:p-5 sm:text-base">
+                    <p class="font-semibold text-white">Comment faire:</p>
+                    <p class="mt-2">Tiens le telephone couche, avec le cote le plus long a l'horizontale.</p>
+                    <p class="mt-2">Si l'ecran reste vertical, active la rotation auto dans les reglages rapides du telephone.</p>
+                </div>
+                <p id="OrientationGuardRisk" class="mt-5 rounded-xl border border-amber-300/35 bg-amber-500/10 p-3 text-sm font-semibold leading-relaxed text-amber-100 hidden sm:text-base">
+                    Attention: la partie continue. Remets vite le telephone en mode horizontal, sinon tu risques de perdre la partie et ton argent.
+                </p>
+                <p class="mt-4 text-xs leading-relaxed text-white/75 sm:text-sm">Le jeu continuera automatiquement quand ton ecran sera horizontal.</p>
+            </div>
+        </div>
+
+        <button id="LeaveRoomTopBtn" type="button" class="fixed left-3 top-3 z-[2455] hidden h-10 items-center gap-2 rounded-2xl border border-white/20 bg-[#3F4766]/70 px-3 text-xs font-semibold tracking-wide text-white shadow-[10px_10px_24px_rgba(16,23,40,0.45),-8px_-8px_18px_rgba(112,126,165,0.18)] backdrop-blur-xl transition hover:bg-[#4a5376]/80">
+            Quitter salle
+        </button>
+
+        <button id="HudViewToggleBtn" type="button" class="fixed bottom-4 left-1/2 z-[2705] grid h-9 w-9 -translate-x-1/2 place-items-center rounded-xl border border-white/20 bg-[#3F4766]/72 text-white shadow-[10px_10px_24px_rgba(16,23,40,0.45),-8px_-8px_18px_rgba(112,126,165,0.18)] backdrop-blur-xl transition hover:bg-[#4a5376]/82 sm:h-10 sm:w-10 sm:rounded-2xl" aria-label="Masquer les panneaux" title="Masquer les panneaux" aria-pressed="false">
+            <svg id="HudViewToggleIcon" xmlns="http://www.w3.org/2000/svg" class="h-4 w-4 sm:h-5 sm:w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" aria-hidden="true">
+                <path d="M2 12s3.6-6 10-6 10 6 10 6-3.6 6-10 6S2 12 2 12Z"></path>
+                <circle cx="12" cy="12" r="2.8"></circle>
+            </svg>
+        </button>
+
+        <button id="FullscreenToggleBtn" type="button" class="fixed bottom-4 right-3 z-[2465] grid h-10 w-10 place-items-center rounded-2xl border border-white/20 bg-[#3F4766]/70 text-white shadow-[10px_10px_24px_rgba(16,23,40,0.45),-8px_-8px_18px_rgba(112,126,165,0.18)] backdrop-blur-xl transition hover:bg-[#4a5376]/80" aria-label="Passer en plein ecran" title="Passer en plein ecran">
+            <svg id="FullscreenToggleIcon" xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+                <path d="M8 3H5a2 2 0 0 0-2 2v3"></path>
+                <path d="M16 3h3a2 2 0 0 1 2 2v3"></path>
+                <path d="M8 21H5a2 2 0 0 1-2-2v-3"></path>
+                <path d="M16 21h3a2 2 0 0 0 2-2v-3"></path>
+            </svg>
+        </button>
+
+        <div id="FullscreenHint" class="pointer-events-none fixed bottom-16 right-3 z-[2466] hidden rounded-xl border border-amber-300/35 bg-black/45 px-3 py-2 text-xs font-semibold text-amber-100 shadow-[8px_8px_18px_rgba(16,23,40,0.5),-6px_-6px_14px_rgba(112,126,165,0.18)] backdrop-blur-xl">
+            Plein ecran non supporte sur cet appareil.
+        </div>
+
+        <button id="PlayerLightsToggleBtn" type="button" class="fixed bottom-4 left-3 z-[2465] inline-flex h-10 items-center gap-2 rounded-2xl border border-white/20 bg-[#3F4766]/70 px-3 text-xs font-semibold tracking-wide text-white shadow-[10px_10px_24px_rgba(16,23,40,0.45),-8px_-8px_18px_rgba(112,126,165,0.18)] backdrop-blur-xl transition hover:bg-[#4a5376]/80" aria-label="Activer ou couper les lumières des joueurs" title="Activer ou couper les lumières des joueurs">
+            <span id="PlayerLightsToggleText">Lumieres ON</span>
+        </button>
+
+        <button id="LotModalOpenBtn" type="button" class="fixed bottom-[3.65rem] right-3 z-[2466] inline-flex h-10 items-center gap-2 rounded-2xl border border-white/20 bg-[#3F4766]/72 px-3 text-xs font-semibold tracking-wide text-white shadow-[10px_10px_24px_rgba(16,23,40,0.45),-8px_-8px_18px_rgba(112,126,165,0.18)] backdrop-blur-xl transition hover:bg-[#4a5376]/82" aria-label="Ouvrir le lot">
+            <span>Lot</span>
+            <span id="LotModalCount" class="rounded-full border border-white/15 bg-white/10 px-1.5 py-[1px] text-[11px] font-bold leading-none">0</span>
+        </button>
+
+        <div id="OnlineUsersHud" class="pointer-events-none fixed left-1/2 top-3 z-[2468] -translate-x-1/2 rounded-2xl border border-emerald-300/35 bg-emerald-500/15 px-4 py-2 text-xs font-bold tracking-wide text-emerald-200 shadow-[10px_10px_24px_rgba(16,23,40,0.45),-8px_-8px_18px_rgba(112,126,165,0.18)] backdrop-blur-xl sm:text-sm">
+            Utilisateurs en ligne: 30 000
+        </div>
+
+        <div id="LocalTurnHud" class="fixed right-1 top-1 z-[2700] max-w-[4.9rem] rounded-xl border border-white/15 bg-[#3F4766]/48 px-1.5 py-1 text-white shadow-[10px_10px_24px_rgba(16,23,40,0.45),-8px_-8px_18px_rgba(112,126,165,0.18)] backdrop-blur-xl sm:right-3 sm:top-3 sm:max-w-none sm:rounded-2xl sm:border-white/20 sm:bg-[#3F4766]/65 sm:px-3 sm:py-2">
+            <div class="flex items-start justify-between gap-1.5 sm:block">
+                <div class="min-w-0 flex-1">
+                    <div id="LocalTurnLabel" class="hidden text-[11px] font-semibold uppercase tracking-wide text-white/80 sm:block">En attente</div>
+                    <div id="LocalTurnValue" class="text-[13px] font-bold leading-none sm:mt-0.5 sm:text-lg">--</div>
+                </div>
+                <div id="LocalTurnDoesWrap" class="inline-flex shrink-0 items-center gap-1 rounded-lg border border-white/15 bg-white/10 px-1 py-0.5 shadow-[inset_4px_4px_8px_rgba(18,24,38,0.35),inset_-4px_-4px_8px_rgba(110,124,163,0.18)] sm:mt-2 sm:gap-1.5 sm:rounded-xl sm:border-white/20 sm:px-2 sm:py-1">
+                    <img src="./does.png" alt="Does" class="h-3 w-3 rounded-full object-cover sm:h-4 sm:w-4" onerror="this.style.display='none'" />
+                    <span class="hidden text-[10px] font-semibold uppercase tracking-wide text-white/75 sm:inline">Does</span>
+                    <span id="LocalDoesValue" class="text-[10px] font-bold text-white sm:text-xs">0</span>
+                </div>
+            </div>
+        </div>
+
+        <div id="PassVisual" class="pointer-events-none fixed left-1/2 top-16 z-[2460] hidden -translate-x-1/2 rounded-xl border border-red-300/35 bg-red-500/25 px-4 py-2 text-sm font-bold tracking-wide text-white shadow-[8px_8px_16px_rgba(90,20,20,0.35),-6px_-6px_14px_rgba(150,60,60,0.18)] backdrop-blur-xl">
+            PASS
+        </div>
+
+        <div id="DuelLotModal" class="fixed inset-0 z-[2555] hidden items-end justify-center bg-black/55 p-3 backdrop-blur-md sm:items-center sm:p-4">
+            <div class="w-full max-w-[26rem] rounded-[28px] border border-white/16 bg-[linear-gradient(180deg,rgba(63,71,102,0.96),rgba(27,33,49,0.98))] p-4 text-white shadow-[14px_14px_34px_rgba(16,23,40,0.5),-10px_-10px_24px_rgba(112,126,165,0.2)]">
+                <div class="flex items-start justify-between gap-3">
+                    <div>
+                        <p class="text-[11px] font-semibold uppercase tracking-[0.22em] text-[#ffd4ab]/78">Lot</p>
+                        <h2 class="mt-2 text-xl font-black leading-tight text-white">Choisis un domino</h2>
+                    </div>
+                </div>
+                <div id="DuelLotViewportWrap">
+                    <div id="DuelLotViewport" aria-label="Lot de dominos du duel"></div>
+                    <div id="DuelLotViewportShade"></div>
+                    <div id="DuelLotEmpty">Le lot est vide.</div>
+                </div>
+            </div>
+        </div>
+
+        <div id="GameEndOverlay" class="fixed inset-0 z-[2550] hidden items-center justify-center bg-black/55 p-4 backdrop-blur-md">
+            <div class="w-[min(92vw,32rem)] rounded-3xl border border-white/20 bg-[#3F4766]/70 p-6 text-center text-white shadow-[14px_14px_34px_rgba(16,23,40,0.5),-10px_-10px_24px_rgba(112,126,165,0.2)] backdrop-blur-xl">
+                <h2 class="text-2xl font-bold">Partie terminée</h2>
+                <p id="GameEndWinnerText" class="mt-2 text-sm text-white/85">Joueur id-00000 a gagné</p>
+                <p id="GameEndInfoText" class="mt-1 text-xs text-white/70">Observe la table puis continue.</p>
+                <div class="mt-4 flex justify-center">
+                    <img id="GameEndTrophy" src="./tropher.jpg" alt="Trophée" onerror="this.onerror=null;this.src='./troper.jpg';" class="hidden h-24 w-24 object-contain" />
+                </div>
+                <div id="GameEndViewWrap" class="mt-5">
+                    <button id="GameEndViewTableBtn" type="button" class="h-12 w-full rounded-2xl border border-[#ffb26e] bg-[#F57C00] text-sm font-semibold text-white shadow-[8px_8px_18px_rgba(163,82,27,0.45),-6px_-6px_14px_rgba(255,175,102,0.22)] transition hover:-translate-y-0.5">
+                        Voir la table
+                    </button>
+                </div>
+                <div id="GameEndActionsWrap" class="mt-5 hidden grid-cols-1 gap-3 sm:grid-cols-2">
+                    <button id="GameEndReplayBtn" type="button" class="h-12 rounded-2xl border border-[#ffb26e] bg-[#F57C00] text-sm font-semibold text-white shadow-[8px_8px_18px_rgba(163,82,27,0.45),-6px_-6px_14px_rgba(255,175,102,0.22)] transition hover:-translate-y-0.5">
+                        Rejouer
+                    </button>
+                    <button id="GameEndBackBtn" type="button" class="h-12 rounded-2xl border border-white/20 bg-white/10 text-sm font-semibold text-white shadow-[8px_8px_18px_rgba(19,25,40,0.34),-6px_-6px_14px_rgba(111,126,164,0.2)] transition hover:bg-white/15">
+                        Retour
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <button id="GameEndGoBtn" type="button" class="fixed bottom-4 left-1/2 z-[2540] hidden h-12 -translate-x-1/2 rounded-2xl border border-[#ffb26e] bg-[#F57C00] px-8 text-sm font-semibold text-white shadow-[8px_8px_18px_rgba(163,82,27,0.45),-6px_-6px_14px_rgba(255,175,102,0.22)] transition hover:-translate-y-0.5">
+            Aller
+        </button>
+        
+        <!-- Marco para empezar partida -->
+        <div id='MarcoEmpezar' class='MarcoCanvas hidden' style="display:none !important;">
+            <h1>
+                <span data-idioma-en='Welcome to Domino ' 
+                      data-idioma-cat="Benvingut a Dominó " 
+                      data-idioma-es='Bienvenido a Dominó '></span> 
+                <span id="VersionDomino">0.00</span>
+            </h1>
+            <hr />            
+            
+            <button id="BotonEquipos" 
+                    data-idioma-en='Team names' 
+                    data-idioma-cat="Noms d'equips" 
+                    data-idioma-es='Nombres de equipos'></button>
+            <br />
+            <button id="BotonOpciones"
+                    data-idioma-en='Options' 
+                    data-idioma-cat="Opcions" 
+                    data-idioma-es='Opciones'></button>
+            <hr />
+            
+            <div id="BloquePuntosPartida">
+                <h3>
+                    <span data-idioma-en='Points to finish the game' 
+                          data-idioma-cat="Punts per acabar el joc" 
+                          data-idioma-es='Puntos para terminar la partida'></span>
+                </h3>
+                
+                <div class="Centrado">
+                    <button id="Puntos100">100</button>
+                    <button id="Puntos200">200</button>
+                    <button id="Puntos300">300</button>
+                    <button id="Puntos400">400</button>
+                    <button id="Puntos500">500</button>
+                    <button id="Puntos600">600</button>
+                </div>
+            </div>
+            <br />
+            
+            <button id="BotonEmpezar"
+                    data-idioma-en='Start!' 
+                    data-idioma-cat="Començar!" 
+                    data-idioma-es='Empezar!'></button>
+
+        </div>
+        <!-- Opciones de los Equipos -->
+        <div id="MarcoEquipos" class='MarcoCanvas'>
+
+            <h3>
+                <span
+                    data-idioma-en='Team names' 
+                    data-idioma-cat="Noms dels equips" 
+                    data-idioma-es='Nombres de los equipos'></span>
+            </h3>
+            <div class="TablaPuntos"> 
+                <table>
+                    <tr>
+                        <td>
+                            <!-- maxlength="16" -->
+                            <input type="text" id="NEquipo1" placeholder="Equipo 1" spellcheck="false">
+                        </td>
+                    </tr>
+                    <tr>
+                        <td>
+                            <input type="text" id="NNombre1" placeholder="Jugador 1" spellcheck="false">
+                        </td>
+                    </tr>
+                    <tr>
+                        <td>
+                            <input type="text" id="NNombre3" placeholder="Jugador 3" spellcheck="false">
+                        </td>
+                    </tr>
+                </table>
+
+                <table>
+                    <tr>
+                        <td>
+                            <input type="text" id="NEquipo2" placeholder="Equipo 2" spellcheck="false"> 
+                        </td>
+                    </tr>
+                    <tr>
+                        <td>
+                            <input type="text" id="NNombre2" placeholder="Jugador 2" spellcheck="false">
+                        </td>
+                    </tr>
+                    <tr>
+                        <td>
+                            <input type="text" id="NNombre4" placeholder="Jugador 4" spellcheck="false">
+                        </td>
+                    </tr>
+                </table>
+            </div>
+            <br />
+            <button id="BotonCerrarEquipos"
+                    data-idioma-en='Close' 
+                    data-idioma-cat="Tancar" 
+                    data-idioma-es='Cerrar'></button>            
+        </div>
+        
+        <!-- Opciones generales -->
+        <div id="MarcoOpciones" class='MarcoCanvas'>
+
+            <h3>
+                <span
+                    data-idioma-en='Language' 
+                    data-idioma-cat="Idioma" 
+                    data-idioma-es='Idioma'></span>
+            </h3>
+            <table class="Centrado">
+                <tr>
+                    <td><button id="Idioma_en">English</button></td>
+                    <td><button id="Idioma_cat">Català</button></td>
+                    <td><button id="Idioma_es">Castellano</button></td>
+                </tr>
+            </table>
+            
+            <hr />
+            
+            <table class="Centrado">
+                <tr>
+                    <td>
+                        <span 
+                            data-idioma-en='Play uncovered' 
+                            data-idioma-cat='Jugar al descobert' 
+                            data-idioma-es='Jugar al descubierto'></span>
+                        </td>
+                    <td><input type="checkbox" id="Opciones_Descubierto"></td>
+                </tr>
+                <tr>
+                    <td>    
+                        <span 
+                            data-idioma-en='Animate light for actual player' 
+                            data-idioma-cat='Animar llum pel jugador actual' 
+                            data-idioma-es='Animar luz para el jugador actual'></span>
+                        </td>
+                    <td><input type="checkbox" id="Opciones_AnimarTurno"></td>
+                </tr>
+                <tr>
+                    <td>
+                        <span 
+                            data-idioma-en='Help for player' 
+                            data-idioma-cat='Ajuda pel jugador' 
+                            data-idioma-es='Ayuda para el jugador'></span>
+                        </td>
+                    <td><input type="checkbox" id="Opciones_Ayuda"></td>
+                </tr>
+            </table>  
+            <br />
+            <button id="BotonCerrarOpciones"
+                    data-idioma-en='Close' 
+                    data-idioma-cat="Tancar" 
+                    data-idioma-es='Cerrar'></button>            
+        </div>
+        
+        
+        <!-- Victoria de un equipo (un jugador se ha quedado sin fichas) -->
+        <div id="MarcoContinuar"  class='MarcoCanvas'>
+            <h1>
+                <span data-idioma-en='Hand is over' 
+                      data-idioma-cat="Mà finalitzada" 
+                      data-idioma-es='Mano terminada'></span>
+            </h1>
+            <div class="TablaPuntos2">
+                <table>
+                    <tr>
+                        <td id="MV_E1">Equipo 1</td>
+                        <td></td>
+                        <td></td>
+                    </tr>
+                    <tr>
+                        <td id="MVN_P1">Jugador 1</td>
+                        <td>=</td>
+                        <td id="MV_P1">x</td>
+                    </tr>
+                    <tr>
+                        <td id="MVN_P3">Jugador 3</td>
+                        <td>=</td>
+                        <td id="MV_P3">x</td>
+                    </tr>
+                    <tr>
+                        <td></td>
+                        <td></td>
+                        <td id="MV_P13">x</td>
+                    </tr>
+                </table>
+
+                <table>
+                    <tr>
+                        <td id="MV_E2">Equipo 2</td>
+                        <td></td>
+                        <td></td>
+                    </tr>
+                    <tr>
+                        <td id="MVN_P2">Jugador 2</td>
+                        <td>=</td>
+                        <td id="MV_P2">x</td>
+                    </tr>
+                    <tr>
+                        <td id="MVN_P4">Jugador 4</td>
+                        <td>=</td>
+                        <td id="MV_P4">x</td>
+                    </tr>
+                    <tr>
+                        <td></td>
+                        <td></td>
+                        <td id="MV_P24">x</td>
+                    </tr>
+                </table>
+            </div>            
+            
+            <h3>
+                <span class="AniResaltar" id="PG_Equipo">x</span>
+                <span
+                    data-idioma-en=' has won! and gets ' 
+                    data-idioma-cat=" ha guanyat! i suma " 
+                    data-idioma-es=' ha ganado! y suma '></span>
+                
+                <span class="AniResaltar" id="PG_Puntos">x</span>
+                <span
+                    data-idioma-en=' points.' 
+                    data-idioma-cat=" punts." 
+                    data-idioma-es=' puntos.'></span>
+            </h3>
+            <button id="BotonContinuar"
+                    data-idioma-en='Next hand' 
+                    data-idioma-cat="Continuar" 
+                    data-idioma-es='Continuar'></button>
+        </div>
+        
+        <!-- Marco para mostrar los datos del Empate -->
+        <div id="MarcoEmpate" class='MarcoCanvas'>
+            <h1><span 
+                    data-idioma-en='TIE!' 
+                    data-idioma-cat="EMPAT!" 
+                    data-idioma-es='EMPATE!'>                
+                </span>
+            </h1>
+            <p><span
+                    data-idioma-en='Team who sums less points, won.' 
+                    data-idioma-cat="L'equip que suma menys punts, guanya." 
+                    data-idioma-es='El equipo que suma menos puntos, gana.'>                                
+                </span></p>
+            <!--<p>Si los dos equipos tienen la misma cantidad de puntos, nadie gana.</p> -->
+            <br />
+            <div class="TablaPuntos">
+                <table>
+                    <tr>
+                        <td id="ME_E1">Equipo 1</td>
+                        <td></td>
+                        <td></td>
+                    </tr>
+                    <tr>
+                        <td id="MEN_P1">Jugador 1</td>
+                        <td>=</td>
+                        <td id="ME_P1">x</td>
+                    </tr>
+                    <tr>
+                        <td id="MEN_P3">Jugador 3</td>
+                        <td>=</td>
+                        <td id="ME_P3">x</td>
+                    </tr>
+                    <tr>
+                        <td></td>
+                        <td></td>
+                        <td id="ME_P13">x</td>
+                    </tr>
+                </table>
+
+                <table>
+                    <tr>
+                        <td id="ME_E2">Equipo 2</td>
+                        <td></td>
+                        <td></td>
+                    </tr>
+                    <tr>
+                        <td id="MEN_P2">Jugador 2</td>
+                        <td>=</td>
+                        <td id="ME_P2">x</td>
+                    </tr>
+                    <tr>
+                        <td id="MEN_P4">Jugador 4</td>
+                        <td>=</td>
+                        <td id="ME_P4">x</td>
+                    </tr>
+                    <tr>
+                        <td></td>
+                        <td></td>
+                        <td id="ME_P24">x</td>
+                    </tr>
+                </table>
+            </div>
+            <br />
+            
+            <!-- Texto para la victoria por puntos despues de un bloqueo (al quedarse todos los jugadores sin posibilidad de tirar, antes de quedarse sin fichas) -->
+            <p id="TxtVictoria">
+                <span class="AniResaltar" id="TxtVictoriaEquipo">x</span>                 
+                <span 
+                    data-idioma-en=' has won! and gets ' 
+                    data-idioma-cat=" ha guanyat! i suma " 
+                    data-idioma-es=' ha ganado! y suma '></span> 
+                <span class="AniResaltar" id="TxtVictoriaPuntos">x</span>
+                <span
+                    data-idioma-en=' points.' 
+                    data-idioma-cat=" punts." 
+                    data-idioma-es=' puntos.'></span>
+            </p>
+            
+            <!-- Texto para el empate, al quedarse todos los jugadores sin poder tirar, y que los dos equipos sumen los mismos puntos -->
+            <p id="TxtEmpate"><span 
+               data-idioma-en='TIE, no one get points' 
+               data-idioma-cat="EMPAT, no es reparteixen punts" 
+               data-idioma-es='EMPATE, no se reparten puntos'
+               ></span>
+            </p>
+            <br />
+            <button id="BotonContinuar2"
+                    data-idioma-en='Continue' 
+                    data-idioma-cat="Continuar" 
+                    data-idioma-es='Continuar'></button>
+        </div>
+        
+        <!-- Marco para cuando se termina la parida -->
+        <div id="MarcoTerminado" class='MarcoCanvas hidden' style="display:none !important;">
+            <h1>
+                <span
+                    data-idioma-en='Game finished' 
+                    data-idioma-cat="Partida Finalitzada" 
+                    data-idioma-es='Partida TERMINADA'></span>
+            </h1>
+            <p>
+                <span id="EquipoGanador">x</span>
+                <span
+                    data-idioma-en=' has won the game.' 
+                    data-idioma-cat=" ha guanyat la partida." 
+                    data-idioma-es=' ha ganado la partida.'></span>
+            </p>
+            <button id="BotonTerminar"
+                    data-idioma-en='End game' 
+                    data-idioma-cat="Finalitzar" 
+                    data-idioma-es='Terminar'></button>
+        </div>
+        
+        <div class='MarcoCanvas hidden' id="Historial" style="display:none !important;">
+            
+        </div>
+        
+        <div class='MarcoCanvas hidden' id="DatosJuego" style="display:none !important;">
+            <table>
+                <tr>
+                    <td>
+                        <span
+                            data-idioma-en='Hand' 
+                            data-idioma-cat="Mà" 
+                            data-idioma-es='Mano'></span>
+                    </td>
+                    <td>:</td>
+                    <td id="Mano">0</td>
+                </tr>
+                <tr>
+                    <td>
+                        <span
+                            data-idioma-en='Turn' 
+                            data-idioma-cat="Torn" 
+                            data-idioma-es='Turno'></span>
+                    </td>
+                    <td>:</td>
+                    <td id="Turno">0</td>
+                </tr>
+                <tr>
+                    <td>
+                        <span
+                            data-idioma-en='Player' 
+                            data-idioma-cat="Jugador" 
+                            data-idioma-es='Jugador'></span>
+                    </td>
+                    <td>:</td>
+                    <td id="Jugador">0</td>
+                </tr>
+                <tr>
+                    <td>
+                        <span
+                            data-idioma-en='Time left'
+                            data-idioma-cat="Temps"
+                            data-idioma-es='Tiempo'></span>
+                    </td>
+                    <td>:</td>
+                    <td id="TurnTimer">--</td>
+                </tr>
+            </table>
+            <hr />
+            <table>
+                    
+<!--                <tr>
+                    <td style="border-bottom:2px solid #FFF"></td>
+                    <td></td>
+                    <td style="border-bottom:2px solid #FFF"></td>
+                </tr>-->
+                
+                <tr>
+                    <td id="NombreEquipo1"></td>
+                    <td>:</td>
+                    <td id="Equipo1">0</td>
+                </tr>
+                <tr>
+                    <td id="NombreEquipo2"></td>
+                    <td>:</td>
+                    <td id="Equipo2">0</td>
+                </tr>
+            </table>
+        </div>
+        
+<!--        <div id ="MarcoPartida" class='MarcoCanvas'> 
+            <table id="TablaDatos">
+                <tr>
+                    <td id="Partida">Partida 1</td>
+                    <td id="Turno">Turno 1</td>
+                    <td id="Jugador">Jugador 1</td>
+                </tr>                
+            </table>
+            
+        </div> -->
+        
+        <div id='Msg1' class='MarcoCanvas hidden' style="display:none !important;"></div>   <!-- Mensaje Jugador 1 -->
+        <div id='Msg2' class='MarcoCanvas hidden' style="display:none !important;"></div>   <!-- Mensaje Jugador 2 -->
+        <div id='Msg3' class='MarcoCanvas hidden' style="display:none !important;"></div>   <!-- Mensaje Jugador 3 -->
+        <div id='Msg4' class='MarcoCanvas hidden' style="display:none !important;"></div>   <!-- Mensaje Jugador 4 -->
+        
+        <!-- animaciones para la victoria / derrota --> 
+        <div id="VictoriaDerrota">
+    <!--    <div id="Victoria"><img src="./Partida.svg#Ganada" /></div>
+            <div id="Derrota"><img src="./Partida.svg#Perdida" /></div> 
+            <div id='ParitdaGanada'><img src='./PartidaGanada.svg' /></div> -->
+        </div>
+    </body>
+</html>

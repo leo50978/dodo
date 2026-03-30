@@ -32,6 +32,17 @@ service cloud.firestore {
         && request.auth.uid in roomDoc(roomId).data.playerUids;
     }
 
+    function duelRoomDoc(roomId) {
+      return get(/databases/$(database)/documents/duelRooms/$(roomId));
+    }
+
+    function isDuelRoomParticipant(roomId) {
+      return signedIn()
+        && duelRoomDoc(roomId).data != null
+        && duelRoomDoc(roomId).data.playerUids is list
+        && request.auth.uid in duelRoomDoc(roomId).data.playerUids;
+    }
+
     function isSafeClientPresenceCreate(uid) {
       return isOwner(uid)
         && request.resource.data.keys().hasOnly([
@@ -125,6 +136,28 @@ service cloud.firestore {
     }
 
     match /gameStates/{roomId} {
+      allow read, write: if false;
+    }
+
+    match /duelRooms/{roomId} {
+      allow read: if isFinanceAdmin()
+        || (signedIn()
+          && resource.data.playerUids is list
+          && request.auth.uid in resource.data.playerUids);
+      allow write: if false;
+
+      match /actions/{actionId} {
+        allow read: if isFinanceAdmin() || isDuelRoomParticipant(roomId);
+        allow write: if false;
+      }
+
+      match /settlements/{uid} {
+        allow read: if isFinanceAdmin() || isOwner(uid);
+        allow write: if false;
+      }
+    }
+
+    match /duelGameStates/{roomId} {
       allow read, write: if false;
     }
 

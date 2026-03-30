@@ -24,6 +24,7 @@ const SUPPORT_THREADS_COLLECTION = "supportThreads";
 const AUTH_SUCCESS_NOTICE_STORAGE_KEY = "domino_auth_success_notice_v1";
 const DEPOSIT_INFO_DISMISSED_KEY = "domino_deposit_info_hidden_v1";
 const TOURNAMENT_INTRO_SEEN_STORAGE_KEY = "domino_tournament_intro_seen_v1";
+const DUEL_INTRO_SEEN_STORAGE_KEY = "domino_duel_intro_seen_v1";
 const SUPPORT_MIGRATION_NOTICE_STORAGE_KEY = "domino_support_migration_notice_seen_v1";
 const SUPPORT_MIGRATION_CUTOFF_MS = Date.parse("2026-03-23T18:15:00Z");
 const SUPPORT_MIGRATION_PHONE = "50940507232";
@@ -35,6 +36,8 @@ const PAGE2_BOOTSTRAP_MIN_MS = 650;
 const PAGE2_BOOTSTRAP_TIMEOUT_MS = 2600;
 const PAGE2_HERO_IMAGES = Object.freeze(["hero.jpg", "hero1.jpg", "hero2.jpg"]);
 const PAGE2_HERO_ROTATION_MS = 10000;
+const DUEL_RELEASE_DATE_LABEL = "1er avril 2026";
+const TEMPORARILY_LOCKED_DUEL_STAKES = new Set([500, 1000]);
 const SHARE_SITE_PROMO_TARGET = 5;
 const SHARE_SITE_PROMO_REWARD_DOES = 100;
 const SHARE_SITE_PROMO_LINK = "https://dominoeslakay.com";
@@ -47,6 +50,11 @@ const DEFAULT_GAME_STAKE_OPTIONS = Object.freeze([
   Object.freeze({ id: "stake_1000", stakeDoes: 1000, rewardDoes: 3000, enabled: false, sortOrder: 30 }),
   Object.freeze({ id: "stake_5000", stakeDoes: 5000, rewardDoes: 15000, enabled: false, sortOrder: 40 }),
 ]);
+const DEFAULT_DUEL_STAKE_OPTIONS = Object.freeze([
+  Object.freeze({ id: "duel_500", stakeDoes: 500, rewardDoes: 925, enabled: true, sortOrder: 10 }),
+  Object.freeze({ id: "duel_1000", stakeDoes: 1000, rewardDoes: 1850, enabled: true, sortOrder: 20 }),
+]);
+const ALLOWED_DUEL_STAKE_AMOUNTS = Object.freeze([500, 1000]);
 let page2NonCriticalRefreshTimer = null;
 let page2NonCriticalVisibilityHandler = null;
 let page2NonCriticalUid = "";
@@ -156,6 +164,12 @@ function buildFriendGameUrl(roomId, seatIndex, stakeDoes) {
   return `./jeu.html?${params.toString()}`;
 }
 
+function buildDuelGameUrl(stakeDoes = 100) {
+  const params = new URLSearchParams();
+  params.set("stake", String(Math.max(1, Number.parseInt(String(stakeDoes || 0), 10) || 100)));
+  return `./jeu-duel.html?${params.toString()}`;
+}
+
 function hasSeenTournamentIntro() {
   try {
     return localStorage.getItem(TOURNAMENT_INTRO_SEEN_STORAGE_KEY) === "1";
@@ -167,6 +181,28 @@ function hasSeenTournamentIntro() {
 function markTournamentIntroSeen() {
   try {
     localStorage.setItem(TOURNAMENT_INTRO_SEEN_STORAGE_KEY, "1");
+  } catch (_) {
+  }
+}
+
+function getDuelIntroStorageKey(uid = "") {
+  const cleanUid = String(uid || "").trim();
+  return cleanUid
+    ? `${DUEL_INTRO_SEEN_STORAGE_KEY}:${cleanUid}`
+    : DUEL_INTRO_SEEN_STORAGE_KEY;
+}
+
+function hasSeenDuelIntro(uid = "") {
+  try {
+    return localStorage.getItem(getDuelIntroStorageKey(uid)) === "1";
+  } catch (_) {
+    return false;
+  }
+}
+
+function markDuelIntroSeen(uid = "") {
+  try {
+    localStorage.setItem(getDuelIntroStorageKey(uid), "1");
   } catch (_) {
   }
 }
@@ -638,6 +674,8 @@ function isPage2BlockingOverlayOpen() {
     "sharePromoOverlay",
     "sharePromoSuccessOverlay",
     "stakeSelectionOverlay",
+    "duelIntroOverlay",
+    "duelStakeOverlay",
     "friendModeOverlay",
     "friendCreateOverlay",
     "friendJoinOverlay",
@@ -667,29 +705,12 @@ function closeSupportMigrationNotice() {
 }
 
 function openSupportMigrationNotice() {
-  const overlay = document.getElementById("supportMigrationOverlay");
-  if (!overlay || isPage2BlockingOverlayOpen()) return false;
-  overlay.classList.remove("hidden");
-  overlay.classList.add("flex");
-  document.body.classList.add("overflow-hidden");
-  return true;
+  return false;
 }
 
 function maybeShowSupportMigrationNotice(user = null, clientData = {}) {
-  const uid = String(user?.uid || "");
-  if (!uid) return;
-  if (hasSeenSupportMigrationNotice(uid)) return;
-
-  const createdAtMs = getUserCreationMs(user, clientData);
-  if (!(createdAtMs > 0) || createdAtMs >= SUPPORT_MIGRATION_CUTOFF_MS) return;
-
   clearPage2SupportMigrationNoticeTimer();
-  const tryOpen = () => {
-    if (hasSeenSupportMigrationNotice(uid)) return;
-    if (openSupportMigrationNotice()) return;
-    page2SupportMigrationNoticeTimer = window.setTimeout(tryOpen, 1200);
-  };
-  page2SupportMigrationNoticeTimer = window.setTimeout(tryOpen, 1100);
+  closeSupportMigrationNotice();
 }
 
 function formatFinanceAmountHtg(value = 0) {
@@ -750,7 +771,9 @@ function buildFinanceNotice(kind, id, data = {}) {
   if (!(eventMs >= CLIENT_FINANCE_NOTICE_LAUNCH_MS)) return null;
 
   const noticeKey = `${kind}:${id}:${status}:${eventMs}`;
-  if (String(data.clientStatusNoticeSeenKey || "").trim() === noticeKey) return null;
+  const seenKey = String(data.clientStatusNoticeSeenKey || "").trim();
+  const seenPrefix = `${kind}:${id}:${status}:`;
+  if (seenKey === noticeKey || seenKey.startsWith(seenPrefix)) return null;
 
   const amountLabel = formatFinanceAmountHtg(getFinanceNoticeAmountHtg(kind, data));
   const isApproved = status === "approved";
@@ -815,6 +838,8 @@ function setPage2FinanceNoticeOpen(isOpen) {
       document.getElementById("sharePromoOverlay")?.classList.contains("hidden")
       && document.getElementById("sharePromoSuccessOverlay")?.classList.contains("hidden")
       && document.getElementById("stakeSelectionOverlay")?.classList.contains("hidden")
+      && document.getElementById("duelIntroOverlay")?.classList.contains("hidden")
+      && document.getElementById("duelStakeOverlay")?.classList.contains("hidden")
       && document.getElementById("friendModeOverlay")?.classList.contains("hidden")
       && document.getElementById("friendCreateOverlay")?.classList.contains("hidden")
       && document.getElementById("friendJoinOverlay")?.classList.contains("hidden")
@@ -1430,11 +1455,83 @@ export function renderPage2(user, options = {}) {
           </div>
         </div>
         <div class="mt-4 border-t border-white/10 pt-4">
+          <button id="duelModeBtn" type="button" class="flex h-12 w-full items-center justify-center gap-2 rounded-2xl border border-[#8de7ff]/30 bg-[#1293d8]/16 text-sm font-semibold text-white transition hover:-translate-y-0.5 hover:bg-[#1293d8]/22">
+            <i class="fa-solid fa-user-ninja text-[15px] text-[#b8f2ff]"></i>
+            <span>Duel 2 joueurs</span>
+          </button>
           <button id="playWithFriendsBtn" type="button" class="flex h-12 w-full items-center justify-center gap-2 rounded-2xl border border-white/20 bg-white/10 text-sm font-semibold text-white transition hover:-translate-y-0.5 hover:bg-white/15">
             <i class="fa-solid fa-user-group text-[15px]"></i>
             <span>Jouer avec des amis</span>
           </button>
           <p class="mt-2 text-center text-xs text-white/62">Crée une salle privée, copie un code et invite 3 amis.</p>
+        </div>
+      </div>
+    </div>
+  `);
+
+  pageShell.insertAdjacentHTML("beforeend", `
+    <div id="duelIntroOverlay" class="fixed inset-0 z-[3461] hidden items-end justify-center bg-[#12192b]/72 px-[max(12px,env(safe-area-inset-left))] pb-[max(12px,env(safe-area-inset-bottom))] pt-[max(12px,env(safe-area-inset-top))] backdrop-blur-sm sm:items-center sm:px-4 sm:py-4">
+      <div id="duelIntroPanel" class="w-full overflow-hidden rounded-[28px] border border-white/15 bg-[linear-gradient(180deg,rgba(82,94,132,0.98),rgba(55,65,95,0.98))] text-white shadow-[0_-16px_38px_rgba(12,18,31,0.42)] sm:max-w-md sm:rounded-[30px] sm:border-white/20 sm:shadow-[14px_14px_34px_rgba(16,23,40,0.5),-10px_-10px_24px_rgba(112,126,165,0.2)]">
+        <div class="max-h-[calc(100dvh-max(24px,env(safe-area-inset-top))-max(24px,env(safe-area-inset-bottom)))] overflow-y-auto overscroll-contain px-4 pb-[max(1rem,env(safe-area-inset-bottom))] pt-4 sm:max-h-[min(88vh,760px)] sm:px-6 sm:pb-6 sm:pt-6">
+          <div class="flex items-start justify-between gap-3">
+            <div class="min-w-0 pr-2">
+              <p class="text-xs font-semibold uppercase tracking-[0.24em] text-[#ffd4ab]/80">Nouveau mode</p>
+              <h3 class="mt-2 text-[1.2rem] font-bold leading-tight sm:text-[1.45rem]">Duel 2 joueurs</h3>
+            </div>
+            <button id="duelIntroClose" type="button" class="grid h-10 w-10 shrink-0 place-items-center rounded-full border border-white/20 bg-white/10 text-white">
+              <i class="fa-solid fa-xmark"></i>
+            </button>
+          </div>
+          <p class="mt-3 text-[13px] leading-6 text-white/84 sm:text-sm">
+            Voici comment fonctionne le duel pour que tu comprennes tout avant de jouer.
+          </p>
+          <div class="mt-5 space-y-3">
+            <div class="rounded-[22px] border border-white/12 bg-white/8 p-4 shadow-[inset_4px_4px_10px_rgba(20,28,45,0.28),inset_-4px_-4px_10px_rgba(123,137,180,0.08)]">
+              <p class="text-sm font-semibold text-white">7 dominos chacun</p>
+              <p class="mt-1 text-sm leading-6 text-white/80">Chaque joueur commence la partie avec 7 dominos en main.</p>
+            </div>
+            <div class="rounded-[22px] border border-white/12 bg-white/8 p-4 shadow-[inset_4px_4px_10px_rgba(20,28,45,0.28),inset_-4px_-4px_10px_rgba(123,137,180,0.08)]">
+              <p class="text-sm font-semibold text-white">Pioche si tu ne peux pas jouer</p>
+              <p class="mt-1 text-sm leading-6 text-white/80">Si aucun domino ne passe, tu pioches dans le lot jusqu'a trouver un domino jouable ou jusqu'a ce que le lot soit vide.</p>
+            </div>
+            <div class="rounded-[22px] border border-white/12 bg-white/8 p-4 shadow-[inset_4px_4px_10px_rgba(20,28,45,0.28),inset_-4px_-4px_10px_rgba(123,137,180,0.08)]">
+              <p class="text-sm font-semibold text-white">Qui commence ?</p>
+              <p class="mt-1 text-sm leading-6 text-white/80">Le 6-6 commence. Si personne ne l'a, le plus grand domino double commence. S'il n'y a aucun double, le domino avec la somme la plus elevee commence.</p>
+            </div>
+            <div class="rounded-[22px] border border-[#ffcf9f]/20 bg-[#F57C00]/12 p-4 shadow-[inset_4px_4px_10px_rgba(20,28,45,0.2),inset_-4px_-4px_10px_rgba(123,137,180,0.06)]">
+              <p class="text-sm font-semibold text-white">Exemple de gain</p>
+              <p class="mt-1 text-sm leading-6 text-white/84">La cote est de 1.85 : 500 Does donnent 925 Does, et 1000 Does donnent 1850 Does.</p>
+            </div>
+          </div>
+          <button id="duelIntroUnderstoodBtn" type="button" class="mt-5 h-12 w-full rounded-[18px] border border-[#ffb26e] bg-[#F57C00] text-sm font-semibold text-white shadow-[9px_9px_20px_rgba(155,78,25,0.45),-7px_-7px_16px_rgba(255,173,96,0.2)] transition hover:-translate-y-0.5">
+            J'ai compris
+          </button>
+        </div>
+      </div>
+    </div>
+  `);
+
+  pageShell.insertAdjacentHTML("beforeend", `
+    <div id="duelStakeOverlay" class="fixed inset-0 z-[3461] hidden items-end justify-center bg-[#12192b]/72 px-[max(12px,env(safe-area-inset-left))] pb-[max(12px,env(safe-area-inset-bottom))] pt-[max(12px,env(safe-area-inset-top))] backdrop-blur-sm sm:items-center sm:px-4 sm:py-4">
+      <div id="duelStakePanel" class="w-full overflow-hidden rounded-[28px] border border-white/15 bg-[linear-gradient(180deg,rgba(82,94,132,0.98),rgba(55,65,95,0.98))] text-white shadow-[0_-16px_38px_rgba(12,18,31,0.42)] sm:max-w-md sm:rounded-[30px] sm:border-white/20 sm:shadow-[14px_14px_34px_rgba(16,23,40,0.5),-10px_-10px_24px_rgba(112,126,165,0.2)]">
+        <div class="max-h-[calc(100dvh-max(24px,env(safe-area-inset-top))-max(24px,env(safe-area-inset-bottom)))] overflow-y-auto overscroll-contain px-4 pb-[max(1rem,env(safe-area-inset-bottom))] pt-4 sm:max-h-[min(88vh,760px)] sm:px-6 sm:pb-6 sm:pt-6">
+          <div class="flex items-start justify-between gap-3">
+            <div class="min-w-0 pr-2">
+              <p class="text-xs font-semibold uppercase tracking-[0.24em] text-[#ffd4ab]/80">Duel 2 joueurs</p>
+              <h3 class="mt-2 text-[1.2rem] font-bold leading-tight sm:text-[1.45rem]">Choisis ta mise</h3>
+            </div>
+            <button id="duelStakeClose" type="button" class="grid h-10 w-10 shrink-0 place-items-center rounded-full border border-white/20 bg-white/10 text-white">
+              <i class="fa-solid fa-xmark"></i>
+            </button>
+          </div>
+          <p class="mt-3 text-[13px] leading-6 text-white/84 sm:text-sm">
+            Choisis le montant que tu veux miser pour ton duel. Le gain du gagnant est affiche sur chaque option.
+          </p>
+          <div id="duelStakeOptionsGrid" class="mt-5 grid grid-cols-2 gap-3">
+            <div class="col-span-2 rounded-2xl border border-white/15 bg-white/5 px-4 py-4 text-sm text-white/70">
+              Chargement des mises du duel...
+            </div>
+          </div>
         </div>
       </div>
     </div>
@@ -1546,8 +1643,8 @@ export function renderPage2(user, options = {}) {
   pageShell.insertAdjacentHTML("beforeend", `
     <div id="stakeUnavailableOverlay" class="fixed inset-0 z-[3470] hidden items-center justify-center bg-black/55 p-4 backdrop-blur-sm">
       <div id="stakeUnavailablePanel" class="w-full max-w-sm rounded-3xl border border-white/20 bg-[#3F4766]/82 p-5 text-white shadow-[14px_14px_34px_rgba(16,23,40,0.5),-10px_-10px_24px_rgba(112,126,165,0.2)] backdrop-blur-xl sm:p-6">
-        <h3 class="text-lg font-bold">Pas encore disponible</h3>
-        <p class="mt-2 text-sm text-white/90">Cette mise sera activée prochainement.</p>
+        <h3 id="stakeUnavailableTitle" class="text-lg font-bold">Pas encore disponible</h3>
+        <p id="stakeUnavailableMessage" class="mt-2 text-sm text-white/90">Cette mise sera activée prochainement.</p>
         <button id="stakeUnavailableClose" type="button" class="mt-4 h-11 w-full rounded-2xl border border-[#ffb26e] bg-[#F57C00] text-sm font-semibold text-white shadow-[8px_8px_18px_rgba(163,82,27,0.45),-6px_-6px_14px_rgba(255,175,102,0.22)] transition hover:-translate-y-0.5">
           Compris
         </button>
@@ -1610,6 +1707,15 @@ export function renderPage2(user, options = {}) {
   const stakeSelectionPanel = document.getElementById("stakeSelectionPanel");
   const stakeSelectionClose = document.getElementById("stakeSelectionClose");
   const stakeOptionsGrid = document.getElementById("stakeOptionsGrid");
+  const duelModeBtn = document.getElementById("duelModeBtn");
+  const duelIntroOverlay = document.getElementById("duelIntroOverlay");
+  const duelIntroPanel = document.getElementById("duelIntroPanel");
+  const duelIntroClose = document.getElementById("duelIntroClose");
+  const duelIntroUnderstoodBtn = document.getElementById("duelIntroUnderstoodBtn");
+  const duelStakeOverlay = document.getElementById("duelStakeOverlay");
+  const duelStakePanel = document.getElementById("duelStakePanel");
+  const duelStakeClose = document.getElementById("duelStakeClose");
+  const duelStakeOptionsGrid = document.getElementById("duelStakeOptionsGrid");
   const playWithFriendsBtn = document.getElementById("playWithFriendsBtn");
   const friendModeOverlay = document.getElementById("friendModeOverlay");
   const friendModePanel = document.getElementById("friendModePanel");
@@ -1636,6 +1742,8 @@ export function renderPage2(user, options = {}) {
   const stakeUnavailableOverlay = document.getElementById("stakeUnavailableOverlay");
   const stakeUnavailablePanel = document.getElementById("stakeUnavailablePanel");
   const stakeUnavailableClose = document.getElementById("stakeUnavailableClose");
+  const stakeUnavailableTitle = document.getElementById("stakeUnavailableTitle");
+  const stakeUnavailableMessage = document.getElementById("stakeUnavailableMessage");
   const tournamentBtn = document.getElementById("tournamentBtn");
   const sharePromoBtn = document.getElementById("sharePromoBtn");
   const sharePromoBtnTitle = document.getElementById("sharePromoBtnTitle");
@@ -2481,6 +2589,8 @@ export function renderPage2(user, options = {}) {
       sharePromoOverlay?.classList.contains("hidden")
       && sharePromoSuccessOverlay?.classList.contains("hidden")
       && stakeSelectionOverlay?.classList.contains("hidden")
+      && duelIntroOverlay?.classList.contains("hidden")
+      && duelStakeOverlay?.classList.contains("hidden")
       && friendModeOverlay?.classList.contains("hidden")
       && friendCreateOverlay?.classList.contains("hidden")
       && friendJoinOverlay?.classList.contains("hidden")
@@ -2657,6 +2767,59 @@ export function renderPage2(user, options = {}) {
     document.body.classList.remove("overflow-hidden");
   };
 
+  const normalizeDuelStakeOptions = (options = []) => {
+    const source = Array.isArray(options) && options.length ? options : DEFAULT_DUEL_STAKE_OPTIONS;
+    const normalized = source
+      .map((entry, index) => {
+        const stakeDoes = Math.max(1, Number.parseInt(String(entry?.stakeDoes || 0), 10) || 0);
+        const rewardDoes = Math.max(1, Number.parseInt(String(entry?.rewardDoes || 0), 10) || 0);
+        if (!(stakeDoes > 0) || !(rewardDoes > 0)) return null;
+        if (ALLOWED_DUEL_STAKE_AMOUNTS.includes(stakeDoes) === false) return null;
+        return {
+          id: String(entry?.id || `duel_stake_${stakeDoes}_${index + 1}`),
+          stakeDoes,
+          rewardDoes,
+          enabled: entry?.enabled !== false,
+          sortOrder: Number.parseInt(String(entry?.sortOrder || (index + 1) * 10), 10) || (index + 1) * 10,
+        };
+      })
+      .filter(Boolean)
+      .sort((left, right) => left.sortOrder - right.sortOrder);
+    return normalized.length ? normalized : DEFAULT_DUEL_STAKE_OPTIONS.map((item) => ({ ...item }));
+  };
+
+  const openDuelIntro = () => {
+    if (!duelIntroOverlay) return;
+    duelIntroOverlay.classList.remove("hidden");
+    duelIntroOverlay.classList.add("flex");
+    document.body.classList.add("overflow-hidden");
+  };
+
+  const closeDuelIntro = () => {
+    if (!duelIntroOverlay) return;
+    duelIntroOverlay.classList.add("hidden");
+    duelIntroOverlay.classList.remove("flex");
+    if (!isPage2BlockingOverlayOpen()) {
+      document.body.classList.remove("overflow-hidden");
+    }
+  };
+
+  const openDuelStakeSelection = () => {
+    if (!duelStakeOverlay) return;
+    duelStakeOverlay.classList.remove("hidden");
+    duelStakeOverlay.classList.add("flex");
+    document.body.classList.add("overflow-hidden");
+  };
+
+  const closeDuelStakeSelection = () => {
+    if (!duelStakeOverlay) return;
+    duelStakeOverlay.classList.add("hidden");
+    duelStakeOverlay.classList.remove("flex");
+    if (!isPage2BlockingOverlayOpen()) {
+      document.body.classList.remove("overflow-hidden");
+    }
+  };
+
   const friendRoomDraft = {
     roomId: "",
     seatIndex: 0,
@@ -2757,8 +2920,14 @@ export function renderPage2(user, options = {}) {
     }).join("");
   };
 
-  const openUnavailable = () => {
+  const openUnavailable = (options = {}) => {
     if (!stakeUnavailableOverlay) return;
+    if (stakeUnavailableTitle) {
+      stakeUnavailableTitle.textContent = String(options.title || "Pas encore disponible");
+    }
+    if (stakeUnavailableMessage) {
+      stakeUnavailableMessage.textContent = String(options.message || "Cette mise sera activée prochainement.");
+    }
     stakeUnavailableOverlay.classList.remove("hidden");
     stakeUnavailableOverlay.classList.add("flex");
   };
@@ -2788,6 +2957,7 @@ export function renderPage2(user, options = {}) {
   };
 
   let currentStakeOptions = normalizeGameStakeOptions();
+  let currentDuelStakeOptions = normalizeDuelStakeOptions();
 
   const renderStakeOptions = (options = []) => {
     currentStakeOptions = normalizeGameStakeOptions(options);
@@ -2814,6 +2984,58 @@ export function renderPage2(user, options = {}) {
     }).join("");
   };
 
+  const renderDuelStakeOptions = (options = []) => {
+    currentDuelStakeOptions = normalizeDuelStakeOptions(options);
+    if (!duelStakeOptionsGrid) return;
+    duelStakeOptionsGrid.innerHTML = currentDuelStakeOptions.map((option) => {
+      const enabled = option.enabled === true;
+      const classes = enabled
+        ? "duel-stake-option-btn h-14 rounded-2xl border border-[#ffb26e] bg-[#F57C00] text-sm font-semibold text-white shadow-[8px_8px_18px_rgba(163,82,27,0.45),-6px_-6px_14px_rgba(255,175,102,0.22)] transition hover:-translate-y-0.5"
+        : "duel-stake-option-btn h-14 rounded-2xl border border-white/20 bg-white/10 text-sm font-semibold text-white/65 opacity-55 cursor-not-allowed";
+      const badge = enabled
+        ? `<span class="text-[11px] font-medium text-white/75">Gain ${option.rewardDoes} Does</span>`
+        : `<span class="text-[11px] font-medium text-white/55">Indisponible</span>`;
+      return `
+        <button
+          data-stake="${option.stakeDoes}"
+          data-available="${enabled ? "1" : "0"}"
+          type="button"
+          class="${classes}"
+        >
+          <span class="block">${option.stakeDoes} Does</span>
+          ${badge}
+        </button>
+      `;
+    }).join("");
+  };
+
+  const continueToDuel = async (stakeAmount = 100) => {
+    const normalizedStakeAmount = Math.max(1, Number.parseInt(String(stakeAmount || 0), 10) || 0);
+    if (TEMPORARILY_LOCKED_DUEL_STAKES.has(normalizedStakeAmount)) {
+      closeDuelStakeSelection();
+      openUnavailable({
+        title: "Duel bientot disponible",
+        message: `Cette fonctionnalite sera disponible le ${DUEL_RELEASE_DATE_LABEL}.`,
+      });
+      return;
+    }
+    const xchangeMod = await loadXchangeModule().catch(() => null);
+    const state = xchangeMod?.getXchangeState?.() || {};
+    const doesApprovedBalance = Math.max(0, Number(state?.doesApprovedBalance) || 0);
+    if (doesApprovedBalance < normalizedStakeAmount) {
+      closeDuelStakeSelection();
+      if (doesRequiredOverlay) {
+        doesRequiredOverlay.classList.remove("hidden");
+        doesRequiredOverlay.classList.add("flex");
+        document.body.classList.add("overflow-hidden");
+      }
+      return;
+    }
+    closeDuelStakeSelection();
+    showGlobalLoading("Ouverture du duel...");
+    window.location.href = buildDuelGameUrl(normalizedStakeAmount);
+  };
+
   let stakeOptionsHydrationPromise = null;
   const ensureStakeOptionsLoaded = () => {
     if (stakeOptionsHydrationPromise) return stakeOptionsHydrationPromise;
@@ -2834,6 +3056,7 @@ export function renderPage2(user, options = {}) {
   };
 
   renderStakeOptions(currentStakeOptions);
+  renderDuelStakeOptions(currentDuelStakeOptions);
   renderFriendCreateStakeOptions(currentStakeOptions);
 
   if (startGameBtn) {
@@ -2855,6 +3078,30 @@ export function renderPage2(user, options = {}) {
       openStakeSelection();
     });
   }
+
+  duelModeBtn?.addEventListener("click", async () => {
+    if (page2AccountFrozen) return;
+    if (!isAuthenticated) {
+      showGlobalLoading("Redirection vers la connexion...");
+      window.location.href = "./auth.html";
+      return;
+    }
+    if (isOptimisticAuth) {
+      showGlobalLoading("Finalisation de la session...");
+      window.setTimeout(() => {
+        hideGlobalLoading();
+      }, 1600);
+      return;
+    }
+    closeStakeSelection();
+    const duelIntroUid = String(page2PresenceUser?.uid || auth.currentUser?.uid || "");
+    renderDuelStakeOptions();
+    if (hasSeenDuelIntro(duelIntroUid)) {
+      openDuelStakeSelection();
+      return;
+    }
+    openDuelIntro();
+  });
 
   playWithFriendsBtn?.addEventListener("click", async () => {
     if (page2AccountFrozen) return;
@@ -3038,6 +3285,36 @@ export function renderPage2(user, options = {}) {
   if (stakeSelectionPanel) {
     stakeSelectionPanel.addEventListener("click", (ev) => ev.stopPropagation());
   }
+  if (duelIntroClose) duelIntroClose.addEventListener("click", closeDuelIntro);
+  duelIntroUnderstoodBtn?.addEventListener("click", () => {
+    const duelIntroUid = String(page2PresenceUser?.uid || auth.currentUser?.uid || "");
+    markDuelIntroSeen(duelIntroUid);
+    closeDuelIntro();
+    renderDuelStakeOptions();
+    openDuelStakeSelection();
+  });
+  duelIntroOverlay?.addEventListener("click", (ev) => {
+    if (ev.target === duelIntroOverlay) closeDuelIntro();
+  });
+  duelIntroPanel?.addEventListener("click", (ev) => ev.stopPropagation());
+  if (duelStakeClose) duelStakeClose.addEventListener("click", closeDuelStakeSelection);
+  duelStakeOverlay?.addEventListener("click", (ev) => {
+    if (ev.target === duelStakeOverlay) closeDuelStakeSelection();
+  });
+  duelStakePanel?.addEventListener("click", (ev) => ev.stopPropagation());
+  duelStakeOptionsGrid?.addEventListener("click", async (event) => {
+    const origin = event.target instanceof HTMLElement ? event.target : null;
+    const btn = origin ? origin.closest(".duel-stake-option-btn") : null;
+    if (!(btn instanceof HTMLElement) || !duelStakeOptionsGrid.contains(btn)) return;
+    if (btn.getAttribute("data-available") !== "1") {
+      openUnavailable();
+      return;
+    }
+    const stakeAmount = Math.max(1, Number.parseInt(String(btn.getAttribute("data-stake") || 0), 10) || 100);
+    await withButtonLoading(btn, async () => {
+      await continueToDuel(stakeAmount);
+    }, { loadingLabel: "Verification..." });
+  });
   if (friendModeClose) friendModeClose.addEventListener("click", closeFriendMode);
   friendModeOverlay?.addEventListener("click", (ev) => {
     if (ev.target === friendModeOverlay) closeFriendMode();

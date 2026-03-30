@@ -25,6 +25,9 @@ setGlobalOptions({
 const ROOMS_COLLECTION = "rooms";
 const ROOM_RESULTS_COLLECTION = "roomResults";
 const GAME_STATES_COLLECTION = "gameStates";
+const DUEL_ROOMS_COLLECTION = "duelRooms";
+const DUEL_ROOM_RESULTS_COLLECTION = "duelRoomResults";
+const DUEL_GAME_STATES_COLLECTION = "duelGameStates";
 const CLIENTS_COLLECTION = "clients";
 const AMBASSADORS_COLLECTION = "ambassadors";
 const AMBASSADOR_EVENTS_COLLECTION = "ambassadorGameEvents";
@@ -37,6 +40,7 @@ const SURVEYS_COLLECTION = "surveys";
 const SURVEY_RESPONSES_SUBCOLLECTION = "responses";
 const DASHBOARD_PUSH_SUBSCRIPTIONS_COLLECTION = "dashboardPushSubscriptions";
 const MATCHMAKING_POOLS_COLLECTION = "matchmakingPools";
+const DUEL_MATCHMAKING_POOLS_COLLECTION = "duelMatchmakingPools";
 const ANALYTICS_META_COLLECTION = "analyticsMeta";
 const ANALYTICS_PRESENCE_SNAPSHOTS_COLLECTION = "analyticsPresenceSnapshots";
 const ANALYTICS_PRESENCE_DAILY_COLLECTION = "analyticsPresenceDaily";
@@ -86,6 +90,10 @@ const DEFAULT_GAME_STAKE_OPTIONS = Object.freeze([
   Object.freeze({ stakeDoes: 1000, enabled: false, sortOrder: 30 }),
   Object.freeze({ stakeDoes: 5000, enabled: false, sortOrder: 40 }),
 ]);
+const DEFAULT_DUEL_STAKE_OPTIONS = Object.freeze([
+  Object.freeze({ id: "duel_500", stakeDoes: 500, rewardDoes: 925, enabled: true, sortOrder: 10 }),
+  Object.freeze({ id: "duel_1000", stakeDoes: 1000, rewardDoes: 1850, enabled: true, sortOrder: 20 }),
+]);
 
 function computeDepositBonusSnapshot(amountHtg = 0) {
   const safeAmountHtg = Math.max(0, Number(amountHtg) || 0);
@@ -103,6 +111,7 @@ function computeDepositBonusSnapshot(amountHtg = 0) {
 }
 const DEFAULT_BOT_DIFFICULTY = "expert";
 const ROOM_WAIT_MS = 15 * 1000;
+const DUEL_TURN_LIMIT_MS = 15 * 1000;
 const FRIEND_ROOM_WAIT_MS = 10 * 60 * 1000;
 const FRIEND_ROOM_CODE_SIZE = 6;
 const ROOM_DISCONNECT_TAKEOVER_MS = 45 * 1000;
@@ -3338,6 +3347,14 @@ async function readPrivateDeckOrderForRoom(roomId) {
   return normalizePrivateDeckOrder(snap.data()?.deckOrder);
 }
 
+async function readPrivateDeckOrderForDuelRoom(roomId) {
+  const safeRoomId = String(roomId || "").trim();
+  if (!safeRoomId) return [];
+  const snap = await duelGameStateRef(safeRoomId).get();
+  if (!snap.exists) return [];
+  return normalizePrivateDeckOrder(snap.data()?.deckOrder);
+}
+
 function starterSeatFromDeckOrder(deckOrder) {
   if (!Array.isArray(deckOrder) || deckOrder.length !== 28) {
     return Math.floor(Math.random() * 4);
@@ -4477,6 +4494,1359 @@ function buildGameStateWrite(nextState) {
     idempotencyKeys: trimIdempotencyKeys(nextState.idempotencyKeys),
     updatedAt: admin.firestore.FieldValue.serverTimestamp(),
   };
+}
+
+function duelRoomRef(roomId = "") {
+  const safeRoomId = String(roomId || "").trim();
+  return safeRoomId
+    ? db.collection(DUEL_ROOMS_COLLECTION).doc(safeRoomId)
+    : db.collection(DUEL_ROOMS_COLLECTION).doc();
+}
+
+function duelGameStateRef(roomId = "") {
+  return db.collection(DUEL_GAME_STATES_COLLECTION).doc(String(roomId || "").trim());
+}
+
+function duelRoomResultRef(roomId = "") {
+  return db.collection(DUEL_ROOM_RESULTS_COLLECTION).doc(String(roomId || "").trim());
+}
+
+function duelMatchmakingPoolRef(stakeConfigId = "", stakeDoes = 0) {
+  const normalizedStakeConfigId = String(stakeConfigId || "").trim();
+  const poolKey = normalizedStakeConfigId
+    ? `stake_${normalizedStakeConfigId}`
+    : `does_${safeInt(stakeDoes)}`;
+  return db.collection(DUEL_MATCHMAKING_POOLS_COLLECTION).doc(poolKey);
+}
+
+function setDuelMatchmakingPoolOpen(tx, poolRef, roomId, stakeConfigId = "", stakeDoes = 0) {
+  tx.set(poolRef, {
+    openRoomId: String(roomId || "").trim(),
+    stakeConfigId: String(stakeConfigId || "").trim(),
+    stakeDoes: safeInt(stakeDoes),
+    updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+  }, { merge: true });
+}
+
+function clearDuelMatchmakingPool(tx, poolRef) {
+  tx.set(poolRef, {
+    openRoomId: "",
+    updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+  }, { merge: true });
+}
+
+function resolveDuelWaitingDeadlineMs(room = {}, nowMs = Date.now()) {
+  const explicit = safeSignedInt(room.waitingDeadlineMs);
+  if (explicit > 0) return explicit;
+  const createdAtMs = safeSignedInt(room.createdAtMs);
+  if (createdAtMs > 0) return createdAtMs + ROOM_WAIT_MS;
+  return nowMs + ROOM_WAIT_MS;
+}
+
+function getDuelStakeConfigByAmount(stakeDoes) {
+  const targetStakeDoes = safeInt(stakeDoes);
+  return DEFAULT_DUEL_STAKE_OPTIONS.find((item) => item.enabled !== false && safeInt(item.stakeDoes) === targetStakeDoes) || null;
+}
+
+async function findActiveDuelRoomForUser(uid) {
+  const rooms = db.collection(DUEL_ROOMS_COLLECTION);
+  const membershipSnap = await rooms
+    .where("playerUids", "array-contains", uid)
+    .limit(8)
+    .get();
+
+  if (membershipSnap.empty) return null;
+
+  let playingCandidate = null;
+  let waitingCandidate = null;
+
+  membershipSnap.docs.forEach((docSnap) => {
+    const data = docSnap.data() || {};
+    if (getBlockedRejoinSet(data).has(uid)) return;
+    const status = String(data.status || "");
+    if (status === "playing" && !playingCandidate) {
+      playingCandidate = docSnap;
+      return;
+    }
+    if (status === "waiting" && !waitingCandidate) {
+      waitingCandidate = docSnap;
+    }
+  });
+
+  const candidate = playingCandidate || waitingCandidate;
+  if (!candidate) return null;
+
+  const data = candidate.data() || {};
+  const seats = data.seats && typeof data.seats === "object" ? data.seats : {};
+  const seatIndex = typeof seats[uid] === "number" ? seats[uid] : -1;
+
+  return {
+    roomId: candidate.id,
+    status: String(data.status || ""),
+    seatIndex,
+  };
+}
+
+function normalizeDuelExcludedRoomIds(value) {
+  const rawItems = Array.isArray(value) ? value : [value];
+  return Array.from(new Set(
+    rawItems
+      .map((item) => String(item || "").trim())
+      .filter(Boolean)
+  )).slice(0, 8);
+}
+
+function buildDuelPresenceUpdates(room = {}, actorUid = "", nowMs = Date.now()) {
+  const currentPresence = room.roomPresenceMs && typeof room.roomPresenceMs === "object"
+    ? { ...room.roomPresenceMs }
+    : {};
+  const playerUids = Array.from({ length: 2 }, (_, idx) => String((room.playerUids || [])[idx] || ""));
+  const playerNames = Array.from({ length: 2 }, (_, idx) => String((room.playerNames || [])[idx] || ""));
+  const seats = { ...getRoomSeats(room) };
+  const takeoverSeats = getBotTakeoverSeatSet(room);
+  const graceUntil = room.botGraceUntilMs && typeof room.botGraceUntilMs === "object"
+    ? { ...room.botGraceUntilMs }
+    : {};
+  const blockedRejoinUids = Array.from(getBlockedRejoinSet(room));
+  const actor = String(actorUid || "").trim();
+  const actorSeat = actor ? getSeatForUser(room, actor) : -1;
+
+  let changed = false;
+  let removedAny = false;
+
+  if (actor) {
+    currentPresence[actor] = nowMs;
+    changed = true;
+    if (takeoverSeats.has(actorSeat)) {
+      takeoverSeats.delete(actorSeat);
+      delete graceUntil[String(actorSeat)];
+    }
+  }
+
+  for (let seat = 0; seat < 2; seat += 1) {
+    const seatUid = String(playerUids[seat] || "").trim();
+    if (!seatUid || seatUid === actor) continue;
+
+    const lastSeen = safeSignedInt(currentPresence[seatUid]);
+    if (lastSeen <= 0) continue;
+
+    const offlineForMs = nowMs - lastSeen;
+    if (offlineForMs < ROOM_DISCONNECT_TAKEOVER_MS) continue;
+
+    if (!takeoverSeats.has(seat)) {
+      takeoverSeats.add(seat);
+      graceUntil[String(seat)] = lastSeen + ROOM_DISCONNECT_GRACE_MS;
+      changed = true;
+    }
+
+    const seatGraceUntil = safeSignedInt(graceUntil[String(seat)]);
+    if (seatGraceUntil > 0 && nowMs > seatGraceUntil) {
+      removedAny = true;
+      changed = true;
+      playerUids[seat] = "";
+      playerNames[seat] = String(room.status || "") === "playing" ? botSeatLabel(seat) : "";
+      delete seats[seatUid];
+      delete currentPresence[seatUid];
+      takeoverSeats.delete(seat);
+      delete graceUntil[String(seat)];
+      if (!blockedRejoinUids.includes(seatUid)) {
+        blockedRejoinUids.push(seatUid);
+      }
+    }
+  }
+
+  const updates = {
+    roomPresenceMs: currentPresence,
+    botTakeoverSeats: Array.from(takeoverSeats),
+    updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+  };
+
+  if (Object.keys(graceUntil).length > 0) {
+    updates.botGraceUntilMs = graceUntil;
+  } else {
+    updates.botGraceUntilMs = admin.firestore.FieldValue.delete();
+  }
+
+  if (removedAny) {
+    const humans = playerUids.filter(Boolean).length;
+    updates.playerUids = playerUids;
+    updates.playerNames = playerNames;
+    updates.seats = seats;
+    updates.humanCount = humans;
+    updates.botCount = Math.max(0, 2 - humans);
+    updates.blockedRejoinUids = blockedRejoinUids;
+    updates.playerEmails = admin.firestore.FieldValue.delete();
+  }
+
+  const effectiveRoom = {
+    ...room,
+    playerUids: updates.playerUids || room.playerUids,
+    playerNames: updates.playerNames || room.playerNames,
+    seats: updates.seats || room.seats,
+    botTakeoverSeats: updates.botTakeoverSeats,
+  };
+
+  const currentPlayerSeat = safeInt(room.currentPlayer);
+  const shouldNudgeBots = String(room.status || "") === "playing"
+    && room.startRevealPending !== true
+    && currentPlayerSeat >= 0
+    && currentPlayerSeat < 2
+    && !isSeatHuman(effectiveRoom, currentPlayerSeat);
+
+  return {
+    changed,
+    removedAny,
+    updates,
+    shouldNudgeBots,
+    takeoverCount: updates.botTakeoverSeats.length,
+  };
+}
+
+function applyDuelLeaveForUidTx(tx, roomRefDoc, room = {}, uid = "") {
+  const safeUid = String(uid || "").trim();
+  const currentUids = Array.from({ length: 2 }, (_, idx) => String((room.playerUids || [])[idx] || ""));
+  if (!safeUid || !currentUids.includes(safeUid)) {
+    return {
+      result: {
+        ok: true,
+        deleted: false,
+        status: String(room.status || ""),
+      },
+      shouldCleanup: false,
+      shouldNudgeBots: false,
+    };
+  }
+
+  const status = String(room.status || "");
+  const seatIndex = currentUids.findIndex((candidate) => candidate === safeUid);
+  const nextPlayerUids = currentUids.slice();
+  if (seatIndex >= 0) nextPlayerUids[seatIndex] = "";
+  const currentNames = Array.from({ length: 2 }, (_, idx) => String((room.playerNames || [])[idx] || ""));
+  const nextPlayerNames = currentNames.slice();
+  if (seatIndex >= 0) {
+    nextPlayerNames[seatIndex] = status === "playing" ? botSeatLabel(seatIndex) : "";
+  }
+  const nextSeats = { ...getRoomSeats(room) };
+  delete nextSeats[safeUid];
+  const blockedRejoinUids = Array.from(getBlockedRejoinSet(room));
+  if (!blockedRejoinUids.includes(safeUid)) {
+    blockedRejoinUids.push(safeUid);
+  }
+  const nextPresence = room.roomPresenceMs && typeof room.roomPresenceMs === "object"
+    ? { ...room.roomPresenceMs }
+    : {};
+  delete nextPresence[safeUid];
+  const nextBotTakeoverSeats = getBotTakeoverSeatSet(room);
+  nextBotTakeoverSeats.delete(seatIndex);
+  const nextGraceUntil = room.botGraceUntilMs && typeof room.botGraceUntilMs === "object"
+    ? { ...room.botGraceUntilMs }
+    : {};
+  delete nextGraceUntil[String(seatIndex)];
+  const humans = nextPlayerUids.filter(Boolean).length;
+
+  if (humans <= 0) {
+    tx.set(roomRefDoc, {
+      status: "closing",
+      playerUids: ["", ""],
+      playerNames: ["", ""],
+      blockedRejoinUids,
+      seats: {},
+      roomPresenceMs: nextPresence,
+      humanCount: 0,
+      botCount: 2,
+      botTakeoverSeats: [],
+      botGraceUntilMs: admin.firestore.FieldValue.delete(),
+      updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+    }, { merge: true });
+    return {
+      result: {
+        ok: true,
+        deleted: true,
+        status: "closing",
+      },
+      shouldCleanup: true,
+      shouldNudgeBots: false,
+    };
+  }
+
+  const nextAckUids = Array.isArray(room.startRevealAckUids)
+    ? room.startRevealAckUids.map((item) => String(item || "").trim()).filter(Boolean).filter((item) => item !== safeUid)
+    : [];
+  const revealPending = room.startRevealPending === true;
+  const revealReady = revealPending === true
+    && nextPlayerUids.filter(Boolean).every((playerUid) => nextAckUids.includes(playerUid));
+  const nextBotCount = Math.max(0, 2 - humans);
+  const updates = {
+    playerUids: nextPlayerUids,
+    playerNames: nextPlayerNames,
+    blockedRejoinUids,
+    seats: nextSeats,
+    roomPresenceMs: nextPresence,
+    humanCount: humans,
+    botCount: nextBotCount,
+    botTakeoverSeats: Array.from(nextBotTakeoverSeats),
+    botGraceUntilMs: Object.keys(nextGraceUntil).length > 0 ? nextGraceUntil : admin.firestore.FieldValue.delete(),
+    startRevealAckUids: nextAckUids,
+    startRevealPending: revealPending === true ? !revealReady : false,
+    ownerUid: room.ownerUid === safeUid
+      ? String(nextPlayerUids.find(Boolean) || "")
+      : String(room.ownerUid || ""),
+    updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+  };
+
+  tx.update(roomRefDoc, updates);
+
+  const effectiveRoom = {
+    ...room,
+    playerUids: nextPlayerUids,
+    playerNames: nextPlayerNames,
+    seats: nextSeats,
+    botTakeoverSeats: updates.botTakeoverSeats,
+  };
+  const currentPlayerSeat = safeInt(room.currentPlayer);
+  const shouldNudgeBots = status === "playing"
+    && updates.startRevealPending !== true
+    && currentPlayerSeat >= 0
+    && currentPlayerSeat < 2
+    && !isSeatHuman(effectiveRoom, currentPlayerSeat);
+
+  return {
+    result: {
+      ok: true,
+      deleted: false,
+      status: status,
+      humanCount: humans,
+      botCount: nextBotCount,
+      revealPending: updates.startRevealPending === true,
+    },
+    shouldCleanup: false,
+    shouldNudgeBots,
+  };
+}
+
+async function forceRemoveUserFromDuelRoom(roomId = "", uid = "") {
+  const safeRoomId = String(roomId || "").trim();
+  const safeUid = String(uid || "").trim();
+  if (!safeRoomId || !safeUid) {
+    return { ok: true, deleted: false, status: "skipped" };
+  }
+
+  const roomRefDoc = duelRoomRef(safeRoomId);
+  const outcome = await db.runTransaction(async (tx) => {
+    const roomSnap = await tx.get(roomRefDoc);
+    if (!roomSnap.exists) {
+      return {
+        result: {
+          ok: true,
+          deleted: true,
+          status: "missing",
+        },
+        shouldCleanup: false,
+        shouldNudgeBots: false,
+      };
+    }
+    return applyDuelLeaveForUidTx(tx, roomRefDoc, roomSnap.data() || {}, safeUid);
+  });
+
+  if (outcome?.shouldNudgeBots) {
+    await processPendingBotTurnsDuel(safeRoomId);
+  }
+
+  if (outcome?.shouldCleanup) {
+    await cleanupDuelRoom(roomRefDoc);
+    return {
+      ok: true,
+      deleted: true,
+      status: "deleted",
+    };
+  }
+
+  return outcome?.result || { ok: true, deleted: false, status: "left" };
+}
+
+function buildDuelSeatHands(deckOrder = []) {
+  if (!Array.isArray(deckOrder) || deckOrder.length !== 28) return null;
+  return [
+    deckOrder.slice(0, 7),
+    deckOrder.slice(7, 14),
+  ].map((hand) => hand.every((tileId) => Number.isFinite(Number(tileId)) && TILE_VALUES[Number(tileId)]) ? hand.map((tileId) => Math.trunc(Number(tileId))) : []);
+}
+
+function buildDuelStockPile(deckOrder = []) {
+  if (!Array.isArray(deckOrder) || deckOrder.length !== 28) return [];
+  return deckOrder.slice(14).map((tileId) => Math.trunc(Number(tileId))).filter((tileId) => TILE_VALUES[tileId]);
+}
+
+function cloneDuelSeatHands(seatHands) {
+  return Array.isArray(seatHands)
+    ? seatHands.map((hand) => (Array.isArray(hand) ? hand.slice() : []))
+    : [[], []];
+}
+
+function serializeDuelSeatHands(seatHands) {
+  const normalized = cloneDuelSeatHands(seatHands);
+  return {
+    "0": Array.isArray(normalized[0]) ? normalized[0].slice() : [],
+    "1": Array.isArray(normalized[1]) ? normalized[1].slice() : [],
+  };
+}
+
+function normalizeDuelSeatHands(raw, fallbackDeckOrder = []) {
+  const fallback = buildDuelSeatHands(fallbackDeckOrder) || [[], []];
+  let source = null;
+
+  if (Array.isArray(raw) && raw.length === 2) {
+    source = raw;
+  } else if (raw && typeof raw === "object") {
+    source = [raw["0"] ?? raw[0] ?? null, raw["1"] ?? raw[1] ?? null];
+  }
+
+  if (!Array.isArray(source) || source.length !== 2) {
+    return fallback;
+  }
+
+  return source.map((hand, seat) => {
+    if (!Array.isArray(hand)) return fallback[seat].slice();
+    return hand
+      .map((tileId) => {
+        if (tileId === null) return null;
+        const parsed = Number(tileId);
+        return Number.isFinite(parsed) && TILE_VALUES[parsed] ? Math.trunc(parsed) : null;
+      })
+      .filter((tileId) => tileId === null || TILE_VALUES[tileId]);
+  });
+}
+
+function normalizeDuelStockPile(raw, fallbackDeckOrder = []) {
+  const fallback = buildDuelStockPile(fallbackDeckOrder);
+  if (!Array.isArray(raw)) return fallback;
+  return raw
+    .map((tileId) => Number(tileId))
+    .filter((tileId) => Number.isFinite(tileId) && TILE_VALUES[tileId])
+    .map((tileId) => Math.trunc(tileId));
+}
+
+function findDuelSeatWithTile(seatHands, tileId) {
+  for (let seat = 0; seat < 2; seat += 1) {
+    const hand = Array.isArray(seatHands?.[seat]) ? seatHands[seat] : [];
+    for (let slot = 0; slot < hand.length; slot += 1) {
+      if (hand[slot] === tileId) return seat;
+    }
+  }
+  return -1;
+}
+
+function findDuelSeatSlotByTileId(seatHands, seat, tileId) {
+  const hand = Array.isArray(seatHands?.[seat]) ? seatHands[seat] : [];
+  for (let slot = 0; slot < hand.length; slot += 1) {
+    if (hand[slot] === tileId) return slot;
+  }
+  return -1;
+}
+
+function countRemainingTilesForDuelSeat(seatHands, seat) {
+  const hand = Array.isArray(seatHands?.[seat]) ? seatHands[seat] : [];
+  return hand.reduce((count, tileId) => count + (tileId === null ? 0 : 1), 0);
+}
+
+function sumDuelSeatPips(seatHands, seat) {
+  const hand = Array.isArray(seatHands?.[seat]) ? seatHands[seat] : [];
+  return hand.reduce((sum, tileId) => {
+    if (tileId === null) return sum;
+    const values = getTileValues(tileId);
+    return values ? sum + values[0] + values[1] : sum;
+  }, 0);
+}
+
+function computeBlockedWinnerSeatForDuel(seatHands) {
+  let bestSeat = 0;
+  let bestScore = Number.POSITIVE_INFINITY;
+  for (let seat = 0; seat < 2; seat += 1) {
+    const score = sumDuelSeatPips(seatHands, seat);
+    if (score < bestScore) {
+      bestScore = score;
+      bestSeat = seat;
+    }
+  }
+  return bestSeat;
+}
+
+function compareDuelOpeningTiles(leftTileId, rightTileId) {
+  const leftValues = getTileValues(leftTileId) || [0, 0];
+  const rightValues = getTileValues(rightTileId) || [0, 0];
+  const leftIsDouble = leftValues[0] === leftValues[1];
+  const rightIsDouble = rightValues[0] === rightValues[1];
+  if (leftIsDouble !== rightIsDouble) return leftIsDouble ? 1 : -1;
+
+  if (leftIsDouble && rightIsDouble) {
+    if (leftValues[0] !== rightValues[0]) return leftValues[0] > rightValues[0] ? 1 : -1;
+    return 0;
+  }
+
+  const leftSum = leftValues[0] + leftValues[1];
+  const rightSum = rightValues[0] + rightValues[1];
+  if (leftSum !== rightSum) return leftSum > rightSum ? 1 : -1;
+
+  const leftHigh = Math.max(leftValues[0], leftValues[1]);
+  const rightHigh = Math.max(rightValues[0], rightValues[1]);
+  if (leftHigh !== rightHigh) return leftHigh > rightHigh ? 1 : -1;
+
+  const leftLow = Math.min(leftValues[0], leftValues[1]);
+  const rightLow = Math.min(rightValues[0], rightValues[1]);
+  if (leftLow !== rightLow) return leftLow > rightLow ? 1 : -1;
+  return 0;
+}
+
+function resolveDuelOpeningConfig(seatHands = [[], []]) {
+  let bestDouble = null;
+  let bestNonDouble = null;
+
+  for (let seat = 0; seat < 2; seat += 1) {
+    const hand = Array.isArray(seatHands?.[seat]) ? seatHands[seat] : [];
+    for (let slot = 0; slot < hand.length; slot += 1) {
+      const tileId = safeSignedInt(hand[slot], -1);
+      const values = getTileValues(tileId);
+      if (!values) continue;
+      const candidate = { seat, slot, tileId };
+      if (values[0] === values[1]) {
+        if (!bestDouble || compareDuelOpeningTiles(tileId, bestDouble.tileId) > 0) {
+          bestDouble = candidate;
+        }
+      } else if (!bestNonDouble || compareDuelOpeningTiles(tileId, bestNonDouble.tileId) > 0) {
+        bestNonDouble = candidate;
+      }
+    }
+  }
+
+  const selected = bestDouble || bestNonDouble;
+  if (!selected) {
+    return { seat: 0, slot: 0, tileId: 27, reason: "double_six" };
+  }
+
+  let reason = "highest_sum";
+  const values = getTileValues(selected.tileId) || [0, 0];
+  if (values[0] === values[1]) {
+    reason = selected.tileId === 27 ? "double_six" : "highest_double";
+  }
+
+  return {
+    seat: selected.seat,
+    slot: selected.slot,
+    tileId: selected.tileId,
+    reason,
+  };
+}
+
+function getLegalMovesForDuelSeat(state, seat) {
+  const moves = [];
+  const hand = Array.isArray(state?.seatHands?.[seat]) ? state.seatHands[seat] : [];
+  const openingMove = safeSignedInt(state?.appliedActionSeq) < 0;
+  const openingTileId = safeSignedInt(state?.openingTileId, 27);
+
+  for (let slot = 0; slot < hand.length; slot += 1) {
+    const tileId = hand[slot];
+    if (tileId === null) continue;
+    const values = getTileValues(tileId);
+    if (!values) continue;
+
+    if (openingMove) {
+      if (tileId === openingTileId) {
+        moves.push({
+          tileId,
+          slot,
+          side: "center",
+          branch: "centro",
+          tileLeft: values[0],
+          tileRight: values[1],
+        });
+      }
+      continue;
+    }
+
+    if (values[0] === state.leftEnd || values[1] === state.leftEnd) {
+      moves.push({
+        tileId,
+        slot,
+        side: "left",
+        branch: "izquierda",
+        tileLeft: values[0],
+        tileRight: values[1],
+      });
+    }
+    if (values[0] === state.rightEnd || values[1] === state.rightEnd) {
+      moves.push({
+        tileId,
+        slot,
+        side: "right",
+        branch: "derecha",
+        tileLeft: values[0],
+        tileRight: values[1],
+      });
+    }
+  }
+
+  moves.sort((a, b) => {
+    const aValues = getTileValues(a.tileId) || [0, 0];
+    const bValues = getTileValues(b.tileId) || [0, 0];
+    return (bValues[0] + bValues[1]) - (aValues[0] + aValues[1]);
+  });
+  return moves;
+}
+
+function normalizeDuelGameState(raw = {}, room = {}) {
+  const deckOrder = Array.isArray(raw.deckOrder) && raw.deckOrder.length === 28
+    ? raw.deckOrder.slice(0, 28)
+    : (Array.isArray(room.deckOrder) ? room.deckOrder.slice(0, 28) : makeDeckOrder());
+  const seatHands = normalizeDuelSeatHands(raw.seatHands, deckOrder);
+  const stockPile = normalizeDuelStockPile(raw.stockPile, deckOrder);
+  const appliedActionSeq = Number.isFinite(Number(raw.appliedActionSeq)) ? Math.trunc(Number(raw.appliedActionSeq)) : -1;
+  const winnerSeat = Number.isFinite(Number(raw.winnerSeat)) ? Math.trunc(Number(raw.winnerSeat)) : -1;
+  const openingConfig = resolveDuelOpeningConfig(seatHands);
+  const openingSeat = Number.isFinite(Number(raw.openingSeat)) ? Math.trunc(Number(raw.openingSeat)) : openingConfig.seat;
+  const openingTileId = Number.isFinite(Number(raw.openingTileId)) ? Math.trunc(Number(raw.openingTileId)) : openingConfig.tileId;
+  const openingReason = sanitizeText(raw.openingReason || openingConfig.reason || "", 40);
+  const currentPlayer = Number.isFinite(Number(raw.currentPlayer))
+    ? Math.trunc(Number(raw.currentPlayer))
+    : Math.max(0, openingSeat);
+
+  return {
+    deckOrder,
+    seatHands,
+    stockPile,
+    leftEnd: Number.isFinite(Number(raw.leftEnd)) ? Math.trunc(Number(raw.leftEnd)) : null,
+    rightEnd: Number.isFinite(Number(raw.rightEnd)) ? Math.trunc(Number(raw.rightEnd)) : null,
+    passesInRow: safeInt(raw.passesInRow),
+    appliedActionSeq,
+    currentPlayer,
+    openingSeat,
+    openingTileId,
+    openingReason,
+    winnerSeat,
+    winnerUid: String(raw.winnerUid || "").trim(),
+    endedReason: sanitizeText(raw.endedReason || "", 40),
+    idempotencyKeys: raw.idempotencyKeys && typeof raw.idempotencyKeys === "object" ? { ...raw.idempotencyKeys } : {},
+  };
+}
+
+function createInitialDuelGameState(room = {}, deckOrder = []) {
+  const cleanDeckOrder = Array.isArray(deckOrder) && deckOrder.length === 28 ? deckOrder.slice(0, 28) : makeDeckOrder();
+  const seatHands = buildDuelSeatHands(cleanDeckOrder) || [[], []];
+  const openingConfig = resolveDuelOpeningConfig(seatHands);
+  return {
+    deckOrder: cleanDeckOrder,
+    seatHands,
+    stockPile: buildDuelStockPile(cleanDeckOrder),
+    leftEnd: null,
+    rightEnd: null,
+    passesInRow: 0,
+    appliedActionSeq: -1,
+    currentPlayer: Math.max(0, openingConfig.seat),
+    openingSeat: openingConfig.seat,
+    openingTileId: openingConfig.tileId,
+    openingReason: openingConfig.reason,
+    winnerSeat: -1,
+    winnerUid: "",
+    endedReason: "",
+    idempotencyKeys: {},
+  };
+}
+
+function buildOpeningMoveForDuelState(state) {
+  const liveState = normalizeDuelGameState(state);
+  const openingSeat = safeSignedInt(liveState.openingSeat, -1);
+  const openingTileId = safeSignedInt(liveState.openingTileId, -1);
+  if (openingSeat < 0 || openingSeat > 1) {
+    throw new HttpsError("failed-precondition", "Impossible de determiner qui doit commencer le duel.");
+  }
+  const legalMoves = getLegalMovesForDuelSeat(liveState, openingSeat);
+  const openingMove = legalMoves.find((move) => move.tileId === openingTileId) || null;
+  if (!openingMove) {
+    throw new HttpsError("failed-precondition", "La tuile d'ouverture ne peut pas ouvrir le duel.");
+  }
+  return {
+    type: "play",
+    player: openingSeat,
+    tileId: openingMove.tileId,
+    tilePos: openingMove.slot,
+    tileLeft: openingMove.tileLeft,
+    tileRight: openingMove.tileRight,
+    side: openingMove.side,
+    branch: openingMove.branch,
+    slot: openingMove.slot,
+  };
+}
+
+function buildDuelPassMove(seat) {
+  return {
+    type: "pass",
+    player: seat,
+    tileId: null,
+    tilePos: null,
+    tileLeft: null,
+    tileRight: null,
+    side: null,
+    branch: "",
+    slot: -1,
+  };
+}
+
+function buildDuelDrawMove(seat, tileId = null) {
+  return {
+    type: "draw",
+    player: seat,
+    tileId: Number.isFinite(tileId) ? Math.trunc(tileId) : null,
+    tilePos: null,
+    tileLeft: null,
+    tileRight: null,
+    side: null,
+    branch: "",
+    slot: -1,
+  };
+}
+
+function getDuelTurnStartedAtMs(room = {}) {
+  const directMs = safeSignedInt(room?.turnStartedAtMs);
+  if (directMs > 0) return directMs;
+  const tsValue = room?.turnStartedAt;
+  if (tsValue && typeof tsValue.toMillis === "function") {
+    const millis = safeSignedInt(tsValue.toMillis());
+    if (millis > 0) return millis;
+  }
+  if (tsValue && Number.isFinite(Number(tsValue?._seconds))) {
+    return safeSignedInt(Number(tsValue._seconds) * 1000);
+  }
+  return 0;
+}
+
+function resolveDuelTurnDeadlineMs(room = {}, nowMs = Date.now()) {
+  const startedAtMs = getDuelTurnStartedAtMs(room);
+  if (startedAtMs > 0) return startedAtMs + DUEL_TURN_LIMIT_MS;
+  const safeNowMs = safeSignedInt(nowMs) || Date.now();
+  return safeNowMs + DUEL_TURN_LIMIT_MS;
+}
+
+function buildExpiredHumanDuelMove(room, state) {
+  const liveState = normalizeDuelGameState(state, room);
+  const seat = safeSignedInt(liveState.currentPlayer, -1);
+  if (seat < 0 || seat > 1) {
+    throw new HttpsError("failed-precondition", "Impossible de resoudre le tour duel expire.");
+  }
+
+  const legalMoves = getLegalMovesForDuelSeat(liveState, seat);
+  if (legalMoves.length > 0) {
+    return buildPlayMoveFromDuelLegal(seat, legalMoves[0]);
+  }
+
+  if (Array.isArray(liveState.stockPile) && liveState.stockPile.length > 0) {
+    return buildDuelDrawMove(seat, liveState.stockPile[0]);
+  }
+
+  return buildDuelPassMove(seat);
+}
+
+function buildPlayMoveFromDuelLegal(seat, move) {
+  return {
+    type: "play",
+    player: seat,
+    tileId: move.tileId,
+    tilePos: move.slot,
+    tileLeft: move.tileLeft,
+    tileRight: move.tileRight,
+    side: move.side,
+    branch: move.branch,
+    slot: move.slot,
+  };
+}
+
+function resolveRequestedDuelMove(state, seat, rawAction = {}) {
+  const type = String(rawAction?.type || "").trim();
+  if (type !== "play" && type !== "pass" && type !== "draw") {
+    throw new HttpsError("invalid-argument", "Type d'action duel invalide.");
+  }
+
+  const legalMoves = getLegalMovesForDuelSeat(state, seat);
+  const stockCount = Array.isArray(state?.stockPile) ? state.stockPile.length : 0;
+
+  if (type === "pass") {
+    if (legalMoves.length > 0) {
+      throw new HttpsError("failed-precondition", "Pass interdit tant qu'un coup legal existe.");
+    }
+    if (stockCount > 0) {
+      throw new HttpsError("failed-precondition", "Tu dois piocher tant qu'il reste des dominos dans le lot.");
+    }
+    return buildDuelPassMove(seat);
+  }
+
+  if (type === "draw") {
+    if (legalMoves.length > 0) {
+      throw new HttpsError("failed-precondition", "Pioche interdite tant qu'un coup legal existe.");
+    }
+    if (stockCount <= 0) {
+      throw new HttpsError("failed-precondition", "Le lot est vide. Tu dois passer.");
+    }
+    const requestedTileId = Number(rawAction?.tileId);
+    const tileId = Number.isFinite(requestedTileId) ? Math.trunc(requestedTileId) : -1;
+    if (!TILE_VALUES[tileId]) {
+      throw new HttpsError("invalid-argument", "Tuile de pioche duel invalide.");
+    }
+    if (!Array.isArray(state?.stockPile) || !state.stockPile.includes(tileId)) {
+      throw new HttpsError("failed-precondition", "Cette tuile n'est plus disponible dans le lot.");
+    }
+    return buildDuelDrawMove(seat, tileId);
+  }
+
+  const hand = Array.isArray(state?.seatHands?.[seat]) ? state.seatHands[seat] : [];
+  let tileId = Number(rawAction?.tileId);
+  let slot = Number.isFinite(tileId) ? findDuelSeatSlotByTileId(state.seatHands, seat, Math.trunc(tileId)) : -1;
+  tileId = Number.isFinite(tileId) ? Math.trunc(tileId) : -1;
+
+  const tilePosRaw = Number(rawAction?.tilePos);
+  if ((slot < 0 || !TILE_VALUES[tileId]) && Number.isFinite(tilePosRaw)) {
+    const tilePos = Math.trunc(tilePosRaw);
+    if (tilePos < 0 || tilePos >= hand.length) {
+      throw new HttpsError("permission-denied", "Tuile duel invalide.");
+    }
+    const tileAtSlot = hand[tilePos];
+    if (tileAtSlot === null || !TILE_VALUES[tileAtSlot]) {
+      throw new HttpsError("failed-precondition", "Cette tuile n'est plus dans ta main.");
+    }
+    tileId = tileAtSlot;
+    slot = tilePos;
+  }
+
+  if (slot < 0 || !TILE_VALUES[tileId]) {
+    throw new HttpsError("failed-precondition", "Tuile introuvable dans la main duel.");
+  }
+
+  const matchingMoves = legalMoves.filter((move) => move.tileId === tileId && move.slot === slot);
+  if (matchingMoves.length === 0) {
+    throw new HttpsError("failed-precondition", "Coup duel illegal pour cette tuile.");
+  }
+
+  const openingMove = safeSignedInt(state?.appliedActionSeq) < 0;
+  const requestedSide = normalizeRequestedSide(rawAction?.side, rawAction?.branch, openingMove);
+  let selectedMove = null;
+
+  if (requestedSide && requestedSide !== "center") {
+    selectedMove = matchingMoves.find((move) => move.side === requestedSide) || null;
+  } else if (matchingMoves.length === 1 || openingMove) {
+    selectedMove = matchingMoves[0];
+  }
+
+  if (!selectedMove) {
+    throw new HttpsError("failed-precondition", "Precise un cote valide pour jouer cette tuile duel.");
+  }
+
+  if (openingMove) {
+    const requiredOpeningTileId = safeSignedInt(state?.openingTileId, -1);
+    if (requiredOpeningTileId >= 0 && tileId !== requiredOpeningTileId) {
+      throw new HttpsError("failed-precondition", "Cette tuile ne peut pas ouvrir le duel.");
+    }
+  }
+
+  return {
+    type: "play",
+    player: seat,
+    tileId,
+    tilePos: slot,
+    tileLeft: selectedMove.tileLeft,
+    tileRight: selectedMove.tileRight,
+    side: selectedMove.side,
+    branch: selectedMove.branch,
+    slot,
+  };
+}
+
+function applyResolvedDuelMove(state, room, move, actorUid) {
+  const nextState = normalizeDuelGameState(state, room);
+  const seq = safeInt(nextState.appliedActionSeq + 1);
+  const record = {
+    seq,
+    type: move.type,
+    player: move.player,
+    tileId: move.tileId,
+    tilePos: move.tilePos,
+    tileLeft: move.tileLeft,
+    tileRight: move.tileRight,
+    side: move.side,
+    branch: move.branch,
+    resolvedPlacement: move.type === "play" ? move.branch : move.type,
+    drawnTileIds: [],
+    autoPlayedTileId: null,
+    by: String(actorUid || ""),
+  };
+
+  if (move.type === "play") {
+    const hand = Array.isArray(nextState.seatHands?.[move.player]) ? nextState.seatHands[move.player] : [];
+    if (!Array.isArray(hand) || hand[move.slot] !== move.tileId) {
+      throw new HttpsError("failed-precondition", "La tuile duel a deja ete consommee.");
+    }
+    const values = getTileValues(move.tileId);
+    if (!values) {
+      throw new HttpsError("failed-precondition", "Tuile duel inconnue.");
+    }
+
+    hand.splice(move.slot, 1);
+    if (safeSignedInt(nextState.appliedActionSeq) < 0) {
+      if (move.tileId !== safeSignedInt(nextState.openingTileId, -1)) {
+        throw new HttpsError("failed-precondition", "Le duel doit commencer par la tuile d'ouverture choisie.");
+      }
+      nextState.leftEnd = values[0];
+      nextState.rightEnd = values[1];
+    } else if (move.side === "left") {
+      if (values[0] !== nextState.leftEnd && values[1] !== nextState.leftEnd) {
+        throw new HttpsError("failed-precondition", "Placement duel incompatible a gauche.");
+      }
+      nextState.leftEnd = values[0] === nextState.leftEnd ? values[1] : values[0];
+    } else if (move.side === "right") {
+      if (values[0] !== nextState.rightEnd && values[1] !== nextState.rightEnd) {
+        throw new HttpsError("failed-precondition", "Placement duel incompatible a droite.");
+      }
+      nextState.rightEnd = values[0] === nextState.rightEnd ? values[1] : values[0];
+    } else {
+      throw new HttpsError("failed-precondition", "Cote duel invalide.");
+    }
+
+    nextState.passesInRow = 0;
+    if (countRemainingTilesForDuelSeat(nextState.seatHands, move.player) === 0) {
+      nextState.winnerSeat = move.player;
+      nextState.winnerUid = getWinnerUidForSeat(room, move.player);
+      nextState.endedReason = "out";
+    }
+  } else if (move.type === "draw") {
+    const legalMoves = getLegalMovesForDuelSeat(nextState, move.player);
+    if (legalMoves.length > 0) {
+      throw new HttpsError("failed-precondition", "Pioche duel interdite tant qu'un coup legal existe.");
+    }
+    if (!Array.isArray(nextState.stockPile) || nextState.stockPile.length <= 0) {
+      throw new HttpsError("failed-precondition", "Le lot duel est vide.");
+    }
+
+    const requestedTileId = safeSignedInt(move.tileId, -1);
+    const stockIndex = nextState.stockPile.findIndex((tileId) => tileId === requestedTileId);
+    if (stockIndex < 0) {
+      throw new HttpsError("failed-precondition", "La tuile choisie n'est plus disponible dans le lot duel.");
+    }
+
+    const [drawnTileId] = nextState.stockPile.splice(stockIndex, 1);
+    nextState.seatHands[move.player].push(drawnTileId);
+    record.drawnTileIds.push(drawnTileId);
+    nextState.passesInRow = 0;
+  } else {
+    const legalMoves = getLegalMovesForDuelSeat(nextState, move.player);
+    if (legalMoves.length > 0) {
+      throw new HttpsError("failed-precondition", "Pass duel interdit tant qu'un coup legal existe.");
+    }
+    if (Array.isArray(nextState.stockPile) && nextState.stockPile.length > 0) {
+      throw new HttpsError("failed-precondition", "Pass duel interdit tant qu'il reste des dominos a piocher.");
+    }
+    nextState.passesInRow = safeInt(nextState.passesInRow) + 1;
+    if (nextState.passesInRow >= 2) {
+      nextState.winnerSeat = computeBlockedWinnerSeatForDuel(nextState.seatHands);
+      nextState.winnerUid = getWinnerUidForSeat(room, nextState.winnerSeat);
+      nextState.endedReason = "block";
+    }
+  }
+
+  nextState.appliedActionSeq = seq;
+  if (nextState.winnerSeat < 0) {
+    nextState.currentPlayer = (move.type === "draw") ? move.player : ((move.player + 1) % 2);
+  }
+
+  return {
+    state: nextState,
+    record,
+    ended: nextState.winnerSeat >= 0,
+  };
+}
+
+function chooseDuelBotMove(room, state, seat) {
+  const legalMoves = getLegalMovesForDuelSeat(state, seat);
+  if (legalMoves.length > 0) {
+    return buildPlayMoveFromDuelLegal(seat, legalMoves[0]);
+  }
+  if (Array.isArray(state?.stockPile) && state.stockPile.length > 0) {
+    return buildDuelDrawMove(seat);
+  }
+  return buildDuelPassMove(seat);
+}
+
+function resolveDuelBotTurnLockUntilMs(room, state, nowMs = Date.now()) {
+  if (!state || safeSignedInt(state?.winnerSeat) >= 0) return 0;
+  if (room?.startRevealPending === true) return 0;
+
+  const botSeat = safeSignedInt(state?.currentPlayer);
+  if (botSeat < 0 || botSeat > 1 || isSeatHuman(room, botSeat)) {
+    return 0;
+  }
+
+  const safeNowMs = safeSignedInt(nowMs) || Date.now();
+  const currentLockUntilMs = safeSignedInt(room?.turnLockedUntilMs);
+  if (currentLockUntilMs > safeNowMs) {
+    return currentLockUntilMs;
+  }
+
+  const turnDeadlineMs = resolveDuelTurnDeadlineMs(room, safeNowMs);
+  if (turnDeadlineMs <= safeNowMs) return 0;
+
+  const desiredLockUntilMs = safeNowMs + computeBotThinkDelayMs(room, {
+    ...state,
+    seatHands: [state?.seatHands?.[0] || [], state?.seatHands?.[1] || [], [], []],
+  }, botSeat);
+  return Math.min(turnDeadlineMs, desiredLockUntilMs);
+}
+
+function advanceDuelBotsAndCollect(room, state, roomId, firstMove = null, actorUid = "", allowBotAdvance = true) {
+  let liveState = normalizeDuelGameState(state, room);
+  const records = [];
+  let autoBotMoves = 0;
+
+  if (firstMove) {
+    const result = applyResolvedDuelMove(liveState, room, firstMove, actorUid);
+    liveState = result.state;
+    records.push({
+      ...result.record,
+      roomId,
+    });
+  }
+
+  while (allowBotAdvance === true && liveState.winnerSeat < 0 && autoBotMoves < 12) {
+    const botSeat = safeSignedInt(liveState.currentPlayer);
+    if (botSeat < 0 || botSeat > 1 || isSeatHuman(room, botSeat)) {
+      break;
+    }
+
+    const botMove = chooseDuelBotMove(room, liveState, botSeat);
+    const result = applyResolvedDuelMove(liveState, room, botMove, "server:bot");
+    liveState = result.state;
+    records.push({
+      ...result.record,
+      roomId,
+    });
+    autoBotMoves += 1;
+  }
+
+  return {
+    state: liveState,
+    records,
+  };
+}
+
+function applyDuelActionBatchInTransaction(tx, roomRefDoc, room, state, roomId, firstMove = null, actorUid = "", options = {}) {
+  const batchResult = advanceDuelBotsAndCollect(
+    room,
+    state,
+    roomId,
+    firstMove,
+    actorUid,
+    options?.allowBotAdvance !== false
+  );
+  batchResult.records.forEach((record) => {
+    const actionRef = roomRefDoc.collection("actions").doc(String(record.seq));
+    tx.set(actionRef, {
+      ...record,
+      createdAt: admin.firestore.FieldValue.serverTimestamp(),
+    });
+  });
+  return batchResult;
+}
+
+function buildDuelRoomUpdateFromGameState(room, nextState, records = []) {
+  const lastRecord = records.length > 0 ? records[records.length - 1] : null;
+  const playedCountDelta = records.reduce((count, item) => count + (item.type === "play" || item.autoPlayedTileId !== null ? 1 : 0), 0);
+  const nextActionSeq = safeInt(nextState.appliedActionSeq + 1);
+  const nextTurnStartedAtMs = nextState.winnerSeat >= 0 ? 0 : Date.now();
+  const nextTurnRoom = {
+    ...room,
+    turnStartedAtMs: nextTurnStartedAtMs,
+  };
+  const nextTurnLockUntilMs = nextState.winnerSeat >= 0 ? 0 : resolveDuelBotTurnLockUntilMs(nextTurnRoom, nextState, nextTurnStartedAtMs);
+  const update = {
+    nextActionSeq,
+    lastActionSeq: nextState.appliedActionSeq,
+    currentPlayer: nextState.currentPlayer,
+    openingSeat: nextState.openingSeat,
+    openingTileId: nextState.openingTileId,
+    openingReason: nextState.openingReason,
+    turnActual: nextActionSeq,
+    turnStartedAt: nextState.winnerSeat >= 0 ? admin.firestore.FieldValue.delete() : admin.firestore.FieldValue.serverTimestamp(),
+    turnStartedAtMs: nextTurnStartedAtMs,
+    turnDeadlineMs: nextState.winnerSeat >= 0 ? 0 : (nextTurnStartedAtMs + DUEL_TURN_LIMIT_MS),
+    playedCount: safeInt(room.playedCount) + playedCountDelta,
+    updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+    turnLockedUntilMs: nextTurnLockUntilMs,
+    deckOrder: admin.firestore.FieldValue.delete(),
+  };
+
+  if (lastRecord) {
+    update.lastMove = {
+      seq: lastRecord.seq,
+      type: lastRecord.type,
+      player: lastRecord.player,
+      tileId: lastRecord.tileId,
+      tilePos: lastRecord.tilePos,
+      tileLeft: lastRecord.tileLeft,
+      tileRight: lastRecord.tileRight,
+      side: lastRecord.side,
+      branch: lastRecord.branch,
+      drawnTileIds: Array.isArray(lastRecord.drawnTileIds) ? lastRecord.drawnTileIds.slice(0, 14) : [],
+      autoPlayedTileId: lastRecord.autoPlayedTileId ?? null,
+    };
+  }
+
+  if (nextState.winnerSeat >= 0) {
+    update.status = "ended";
+    update.winnerSeat = nextState.winnerSeat;
+    update.winnerUid = nextState.winnerUid;
+    update.endedReason = nextState.endedReason || "out";
+    update.endedAt = admin.firestore.FieldValue.serverTimestamp();
+    update.endedAtMs = Date.now();
+    update.endClicks = {};
+  }
+
+  return update;
+}
+
+function buildDuelGameStateWrite(nextState) {
+  return {
+    deckOrder: nextState.deckOrder,
+    seatHands: serializeDuelSeatHands(nextState.seatHands),
+    stockPile: Array.isArray(nextState.stockPile) ? nextState.stockPile.slice(0, 14) : [],
+    leftEnd: nextState.leftEnd,
+    rightEnd: nextState.rightEnd,
+    passesInRow: nextState.passesInRow,
+    appliedActionSeq: nextState.appliedActionSeq,
+    currentPlayer: nextState.currentPlayer,
+    openingSeat: nextState.openingSeat,
+    openingTileId: nextState.openingTileId,
+    openingReason: nextState.openingReason,
+    winnerSeat: nextState.winnerSeat,
+    winnerUid: nextState.winnerUid,
+    endedReason: nextState.endedReason,
+    idempotencyKeys: trimIdempotencyKeys(nextState.idempotencyKeys),
+    updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+  };
+}
+
+function writeDuelRoomResultIfEndedTx(tx, roomRefDoc, room = {}, roomUpdate = {}) {
+  const nextStatus = String(roomUpdate.status || room.status || "").trim().toLowerCase();
+  if (nextStatus !== "ended") return;
+  const snapshot = buildRoomResultSnapshot(roomRefDoc.id, room, roomUpdate);
+  tx.set(duelRoomResultRef(roomRefDoc.id), {
+    ...snapshot,
+    createdAt: admin.firestore.FieldValue.serverTimestamp(),
+  }, { merge: true });
+}
+
+function cleanupDuelRoom(roomRefDoc) {
+  return Promise.all([
+    deleteCollectionInChunks(roomRefDoc.collection("actions")),
+    deleteCollectionInChunks(roomRefDoc.collection("settlements")),
+    duelGameStateRef(roomRefDoc.id).delete().catch(() => null),
+  ]).then(() => roomRefDoc.delete());
+}
+
+function buildStartedDuelRoomTransaction(tx, roomRefDoc, room = {}, options = {}) {
+  const configuredBotDifficulty = String(options.configuredBotDifficulty || room.botDifficulty || DEFAULT_BOT_DIFFICULTY);
+  const nowMs = safeSignedInt(options.nowMs) || Date.now();
+  const humans = Array.isArray(room.playerUids) ? room.playerUids.filter(Boolean).length : safeInt(room.humanCount);
+  const deckOrder = Array.isArray(room.deckOrder) && room.deckOrder.length === 28 ? room.deckOrder.slice(0, 28) : makeDeckOrder();
+  const roomAtStart = {
+    ...room,
+    botDifficulty: configuredBotDifficulty,
+    deckOrder,
+    humanCount: humans,
+    botCount: Math.max(0, 2 - humans),
+    playedCount: 0,
+  };
+  const initialState = createInitialDuelGameState(roomAtStart, deckOrder);
+  const openingMove = buildOpeningMoveForDuelState(initialState);
+  const batchResult = applyDuelActionBatchInTransaction(
+    tx,
+    roomRefDoc,
+    roomAtStart,
+    initialState,
+    roomRefDoc.id,
+    openingMove,
+    "server:opening",
+    { allowBotAdvance: false }
+  );
+  const finalState = batchResult.state;
+
+  tx.set(duelGameStateRef(roomRefDoc.id), buildDuelGameStateWrite(finalState), { merge: true });
+
+  const updates = {
+    playerUids: Array.isArray(room.playerUids) ? room.playerUids : ["", ""],
+    playerNames: Array.isArray(room.playerNames) ? room.playerNames : ["", ""],
+    seats: getRoomSeats(room),
+    humanCount: humans,
+    status: finalState.winnerSeat >= 0 ? "ended" : "playing",
+    startRevealPending: finalState.winnerSeat < 0,
+    startRevealAckUids: [],
+    startedHumanCount: humans,
+    startedBotCount: Math.max(0, 2 - humans),
+    botCount: Math.max(0, 2 - humans),
+    botDifficulty: configuredBotDifficulty,
+    startedAt: admin.firestore.FieldValue.serverTimestamp(),
+    startedAtMs: nowMs,
+    deckOrder: admin.firestore.FieldValue.delete(),
+    turnLockedUntilMs: 0,
+    endClicks: {},
+    waitingDeadlineMs: admin.firestore.FieldValue.delete(),
+    updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+  };
+
+  Object.assign(updates, buildDuelRoomUpdateFromGameState(roomAtStart, finalState, batchResult.records));
+  if (finalState.winnerSeat < 0) {
+    updates.winnerSeat = admin.firestore.FieldValue.delete();
+    updates.winnerUid = admin.firestore.FieldValue.delete();
+    updates.endedReason = admin.firestore.FieldValue.delete();
+    updates.endedAt = admin.firestore.FieldValue.delete();
+    updates.endedAtMs = admin.firestore.FieldValue.delete();
+    updates.turnLockedUntilMs = 0;
+  }
+
+  tx.update(roomRefDoc, updates);
+  writeDuelRoomResultIfEndedTx(tx, roomRefDoc, roomAtStart, updates);
+
+  return {
+    ok: true,
+    started: true,
+    status: String(updates.status || "playing"),
+    startRevealPending: updates.startRevealPending === true,
+    privateDeckOrder: String(updates.status || "playing") === "playing" ? finalState.deckOrder.slice(0, 28) : [],
+    humanCount: humans,
+    botCount: Math.max(0, 2 - humans),
+    waitingDeadlineMs: 0,
+  };
+}
+
+async function processPendingBotTurnsDuel(roomId) {
+  const safeRoomId = String(roomId || "").trim();
+  if (!safeRoomId) return;
+
+  const roomRefDoc = duelRoomRef(safeRoomId);
+  const stateRef = duelGameStateRef(safeRoomId);
+
+  while (true) {
+    const roomSnap = await roomRefDoc.get();
+    if (!roomSnap.exists) return;
+    const room = roomSnap.data() || {};
+
+    if (String(room.status || "") !== "playing") return;
+    if (room.startRevealPending === true) return;
+    const roomWinnerSeat = Number.isFinite(Number(room.winnerSeat))
+      ? Math.trunc(Number(room.winnerSeat))
+      : -1;
+    if (roomWinnerSeat >= 0) return;
+
+    const outcome = await db.runTransaction(async (tx) => {
+      const [liveRoomSnap, stateSnap] = await Promise.all([
+        tx.get(roomRefDoc),
+        tx.get(stateRef),
+      ]);
+
+      if (!liveRoomSnap.exists) {
+        return { processed: false, stop: true };
+      }
+
+      const liveRoom = liveRoomSnap.data() || {};
+      if (String(liveRoom.status || "") !== "playing" || liveRoom.startRevealPending === true) {
+        return { processed: false, stop: true };
+      }
+
+      const currentState = stateSnap.exists
+        ? normalizeDuelGameState(stateSnap.data(), liveRoom)
+        : createInitialDuelGameState(
+            liveRoom,
+            Array.isArray(liveRoom.deckOrder) && liveRoom.deckOrder.length === 28 ? liveRoom.deckOrder : makeDeckOrder()
+          );
+
+      if (currentState.winnerSeat >= 0) {
+        return { processed: false, stop: true };
+      }
+
+      const safeNowMs = Date.now();
+      const activeSeat = safeSignedInt(liveRoom.currentPlayer, -1);
+      const activeSeatIsHuman = activeSeat >= 0 && activeSeat <= 1 && isSeatHuman(liveRoom, activeSeat);
+      const turnDeadlineMs = resolveDuelTurnDeadlineMs(liveRoom, safeNowMs);
+
+      if (activeSeatIsHuman) {
+        if (turnDeadlineMs > safeNowMs) {
+          return { processed: false, stop: true };
+        }
+
+        const timeoutMove = buildExpiredHumanDuelMove(liveRoom, currentState);
+        const batchResult = applyDuelActionBatchInTransaction(
+          tx,
+          roomRefDoc,
+          liveRoom,
+          currentState,
+          safeRoomId,
+          timeoutMove,
+          "server:timeout",
+          { allowBotAdvance: false }
+        );
+        const nextState = batchResult.state;
+        tx.set(stateRef, buildDuelGameStateWrite(nextState), { merge: true });
+        const roomUpdate = buildDuelRoomUpdateFromGameState(liveRoom, nextState, batchResult.records);
+        tx.update(roomRefDoc, roomUpdate);
+        writeDuelRoomResultIfEndedTx(tx, roomRefDoc, liveRoom, roomUpdate);
+
+        return {
+          processed: true,
+          stop: nextState.winnerSeat >= 0 || isSeatHuman(liveRoom, nextState.currentPlayer),
+        };
+      }
+
+      const botSeat = activeSeat;
+      if (botSeat < 0 || botSeat > 1) {
+        return { processed: false, stop: true };
+      }
+
+      const lockedUntilMs = safeSignedInt(liveRoom.turnLockedUntilMs);
+      if (lockedUntilMs > safeNowMs) {
+        return { processed: false, stop: true };
+      }
+
+      if (lockedUntilMs <= 0) {
+        const scheduledUntilMs = resolveDuelBotTurnLockUntilMs(liveRoom, currentState, safeNowMs);
+        if (scheduledUntilMs > safeNowMs) {
+          tx.update(roomRefDoc, {
+            turnLockedUntilMs: scheduledUntilMs,
+            updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+          });
+          return { processed: false, stop: true };
+        }
+      }
+
+      const botMove = chooseDuelBotMove(liveRoom, currentState, safeSignedInt(liveRoom.currentPlayer));
+      const batchResult = applyDuelActionBatchInTransaction(
+        tx,
+        roomRefDoc,
+        liveRoom,
+        currentState,
+        safeRoomId,
+        botMove,
+        "server:bot",
+        { allowBotAdvance: false }
+      );
+      const nextState = batchResult.state;
+      tx.set(stateRef, buildDuelGameStateWrite(nextState), { merge: true });
+      const roomUpdate = buildDuelRoomUpdateFromGameState(liveRoom, nextState, batchResult.records);
+      tx.update(roomRefDoc, roomUpdate);
+      writeDuelRoomResultIfEndedTx(tx, roomRefDoc, liveRoom, roomUpdate);
+
+      return {
+        processed: true,
+        stop: nextState.winnerSeat >= 0 || isSeatHuman(liveRoom, nextState.currentPlayer),
+      };
+    });
+
+    if (!outcome || !outcome.processed || outcome.stop) {
+      return;
+    }
+  }
 }
 
 async function applyWalletMutationTx(tx, options) {
@@ -7467,6 +8837,742 @@ exports.claimWinReward = publicOnCall("claimWinReward", async (request) => {
   return result;
 });
 
+exports.getPublicDuelStakeOptionsSecure = publicOnCall("getPublicDuelStakeOptionsSecure", async () => {
+  return {
+    ok: true,
+    options: DEFAULT_DUEL_STAKE_OPTIONS.map((item) => ({
+      id: item.id,
+      stakeDoes: item.stakeDoes,
+      rewardDoes: item.rewardDoes,
+      enabled: item.enabled !== false,
+      sortOrder: item.sortOrder,
+    })),
+  };
+}, { invoker: "public" });
+
+exports.joinMatchmakingDuel = publicOnCall("joinMatchmakingDuel", async (request) => {
+  const { uid, email } = assertAuth(request);
+  const payload = request.data && typeof request.data === "object" ? request.data : {};
+  const stakeDoes = safeInt(payload.stakeDoes);
+  const excludedRoomIds = normalizeDuelExcludedRoomIds(payload.excludeRoomIds);
+  const excludedRoomIdSet = new Set(excludedRoomIds);
+  const selectedStakeConfig = getDuelStakeConfigByAmount(stakeDoes);
+  const configuredBotDifficulty = await getConfiguredBotDifficulty();
+
+  if (!selectedStakeConfig) {
+    throw new HttpsError("invalid-argument", "Mise duel non autorisee.");
+  }
+
+  for (const excludedRoomId of excludedRoomIds) {
+    await forceRemoveUserFromDuelRoom(excludedRoomId, uid).catch(() => null);
+  }
+
+  const activeRoom = await findActiveDuelRoomForUser(uid);
+  if (activeRoom) {
+    if (excludedRoomIdSet.has(String(activeRoom.roomId || "").trim())) {
+      await forceRemoveUserFromDuelRoom(activeRoom.roomId, uid).catch(() => null);
+    } else {
+    const privateDeckOrder = activeRoom.status === "playing"
+      ? await readPrivateDeckOrderForDuelRoom(activeRoom.roomId)
+      : [];
+    return {
+      ok: true,
+      resumed: true,
+      charged: false,
+      roomId: activeRoom.roomId,
+      seatIndex: activeRoom.seatIndex,
+      status: activeRoom.status,
+      roomMode: "duel_2p",
+      privateDeckOrder,
+    };
+    }
+  }
+
+  const rewardAmountDoes = selectedStakeConfig.rewardDoes;
+  const poolRef = duelMatchmakingPoolRef(selectedStakeConfig.id, stakeDoes);
+
+  const created = await db.runTransaction(async (tx) => {
+    const nowMs = Date.now();
+    const [poolSnap, walletSnap] = await Promise.all([
+      tx.get(poolRef),
+      tx.get(walletRef(uid)),
+    ]);
+
+    const walletData = walletSnap.exists ? (walletSnap.data() || {}) : {};
+    assertWalletNotFrozen(walletData);
+
+    const beforeDoes = safeInt(walletData.doesBalance);
+    if (beforeDoes < stakeDoes) {
+      throw new HttpsError("failed-precondition", "Solde Does insuffisant.");
+    }
+
+    const existingOpenRoomId = String(poolSnap.exists ? (poolSnap.data() || {}).openRoomId || "" : "").trim();
+    if (existingOpenRoomId) {
+      const openRoomRef = duelRoomRef(existingOpenRoomId);
+      const roomSnap = await tx.get(openRoomRef);
+      if (roomSnap.exists) {
+        const room = roomSnap.data() || {};
+        const status = String(room.status || "");
+        const roomEntryCostDoes = safeInt(room.entryCostDoes || room.stakeDoes);
+        const roomRewardAmountDoes = safeInt(room.rewardAmountDoes || 0);
+        const playerUids = Array.from({ length: 2 }, (_, idx) => String((room.playerUids || [])[idx] || ""));
+        const waitingDeadlineMs = resolveDuelWaitingDeadlineMs(room, nowMs);
+        const humans = playerUids.filter(Boolean).length;
+
+        if (
+          status === "waiting"
+          && !getBlockedRejoinSet(room).has(uid)
+          && roomEntryCostDoes === stakeDoes
+          && roomRewardAmountDoes === rewardAmountDoes
+        ) {
+          if (nowMs >= waitingDeadlineMs) {
+            clearDuelMatchmakingPool(tx, poolRef);
+            return {
+              ok: true,
+              resumed: false,
+              charged: false,
+              roomId: openRoomRef.id,
+              seatIndex: 0,
+              ...buildStartedDuelRoomTransaction(tx, openRoomRef, {
+                ...room,
+                humanCount: humans,
+                botCount: Math.max(0, 2 - humans),
+                waitingDeadlineMs,
+              }, {
+                configuredBotDifficulty,
+                nowMs,
+              }),
+            };
+          }
+
+          const currentSeats = room.seats && typeof room.seats === "object" ? room.seats : {};
+          const usedSeats = new Set(
+            Object.values(currentSeats)
+              .map((seat) => Number(seat))
+              .filter((seat) => Number.isFinite(seat) && seat >= 0 && seat < 2)
+          );
+          const seatIndex = [0, 1].find((seat) => !usedSeats.has(seat));
+          if (typeof seatIndex === "number" && humans < 2) {
+            const walletMutation = await applyWalletMutationTx(tx, {
+              uid,
+              email,
+              type: "game_entry",
+              note: "Participation duel 2 joueurs",
+              amountDoes: stakeDoes,
+              amountGourdes: 0,
+              deltaDoes: -stakeDoes,
+              deltaExchangedGourdes: 0,
+            });
+
+            const nextPlayerUids = playerUids.slice();
+            nextPlayerUids[seatIndex] = uid;
+            const currentNames = Array.from({ length: 2 }, (_, idx) => String((room.playerNames || [])[idx] || ""));
+            const nextPlayerNames = currentNames.slice();
+            nextPlayerNames[seatIndex] = sanitizePlayerLabel(email || uid, seatIndex);
+            const nextSeats = {
+              ...currentSeats,
+              [uid]: seatIndex,
+            };
+            const nextHumans = nextPlayerUids.filter(Boolean).length;
+            const nextPresence = room.roomPresenceMs && typeof room.roomPresenceMs === "object"
+              ? { ...room.roomPresenceMs }
+              : {};
+            nextPresence[uid] = nowMs;
+            const currentEntryFunding = room.entryFundingByUid && typeof room.entryFundingByUid === "object"
+              ? { ...room.entryFundingByUid }
+              : {};
+            currentEntryFunding[uid] = {
+              approvedDoes: safeInt(walletMutation.gameEntryFunding?.approvedDoes),
+              provisionalDoes: safeInt(walletMutation.gameEntryFunding?.provisionalDoes),
+              welcomeDoes: safeInt(walletMutation.gameEntryFunding?.welcomeDoes),
+              provisionalSources: normalizeFundingSources(walletMutation.gameEntryFunding?.provisionalSources),
+            };
+
+            if (nextHumans >= 2) {
+              clearDuelMatchmakingPool(tx, poolRef);
+              return {
+                ok: true,
+                resumed: false,
+                charged: true,
+                roomId: openRoomRef.id,
+                seatIndex,
+                does: walletMutation.afterDoes,
+                ...buildStartedDuelRoomTransaction(tx, openRoomRef, {
+                  ...room,
+                  playerUids: nextPlayerUids,
+                  playerNames: nextPlayerNames,
+                  seats: nextSeats,
+                  entryFundingByUid: currentEntryFunding,
+                  roomPresenceMs: nextPresence,
+                  humanCount: nextHumans,
+                  botCount: 0,
+                  waitingDeadlineMs,
+                }, {
+                  configuredBotDifficulty,
+                  nowMs,
+                }),
+              };
+            }
+          }
+        }
+      }
+    }
+
+    const walletMutation = await applyWalletMutationTx(tx, {
+      uid,
+      email,
+      type: "game_entry",
+      note: "Participation duel 2 joueurs",
+      amountDoes: stakeDoes,
+      amountGourdes: 0,
+      deltaDoes: -stakeDoes,
+      deltaExchangedGourdes: 0,
+    });
+
+    const newRoomRef = duelRoomRef();
+    tx.set(newRoomRef, {
+      status: "waiting",
+      createdAt: admin.firestore.FieldValue.serverTimestamp(),
+      createdAtMs: nowMs,
+      updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      ownerUid: uid,
+      roomMode: "duel_2p",
+      gameMode: "domino-duel",
+      engineVersion: 1,
+      playerUids: [uid, ""],
+      playerNames: [sanitizePlayerLabel(email || uid, 0), ""],
+      entryFundingByUid: {
+        [uid]: {
+          approvedDoes: safeInt(walletMutation.gameEntryFunding?.approvedDoes),
+          provisionalDoes: safeInt(walletMutation.gameEntryFunding?.provisionalDoes),
+          welcomeDoes: safeInt(walletMutation.gameEntryFunding?.welcomeDoes),
+          provisionalSources: normalizeFundingSources(walletMutation.gameEntryFunding?.provisionalSources),
+        },
+      },
+      blockedRejoinUids: [],
+      humanCount: 1,
+      seats: { [uid]: 0 },
+      roomPresenceMs: { [uid]: nowMs },
+      botCount: 1,
+      botDifficulty: configuredBotDifficulty,
+      startRevealPending: false,
+      startRevealAckUids: [],
+      waitingDeadlineMs: nowMs + ROOM_WAIT_MS,
+      startedAt: null,
+      startedAtMs: 0,
+      endedAtMs: 0,
+      turnLockedUntilMs: 0,
+      nextActionSeq: 0,
+      playedCount: 0,
+      stakeDoes,
+      entryCostDoes: stakeDoes,
+      rewardAmountDoes,
+      stakeConfigId: selectedStakeConfig.id,
+    });
+    setDuelMatchmakingPoolOpen(tx, poolRef, newRoomRef.id, selectedStakeConfig.id, stakeDoes);
+
+    return {
+      ok: true,
+      resumed: false,
+      charged: true,
+      roomId: newRoomRef.id,
+      seatIndex: 0,
+      status: "waiting",
+      does: walletMutation.afterDoes,
+      waitingDeadlineMs: nowMs + ROOM_WAIT_MS,
+      humanCount: 1,
+      botCount: 1,
+      privateDeckOrder: [],
+    };
+  });
+
+  if (created?.status === "playing" && created?.startRevealPending !== true) {
+    await processPendingBotTurnsDuel(String(created.roomId || ""));
+  }
+
+  return created;
+}, { invoker: "public" });
+
+exports.ensureRoomReadyDuel = publicOnCall("ensureRoomReadyDuel", async (request) => {
+  const { uid } = assertAuth(request);
+  const payload = request.data && typeof request.data === "object" ? request.data : {};
+  const roomId = String(payload.roomId || "").trim();
+  const configuredBotDifficulty = await getConfiguredBotDifficulty();
+
+  if (!roomId) {
+    throw new HttpsError("invalid-argument", "roomId requis.");
+  }
+
+  const roomRefDoc = duelRoomRef(roomId);
+  const startResult = await db.runTransaction(async (tx) => {
+    const roomSnap = await tx.get(roomRefDoc);
+    if (!roomSnap.exists) {
+      throw new HttpsError("not-found", "Salle duel introuvable.");
+    }
+
+    const room = roomSnap.data() || {};
+    const seatIndex = getSeatForUser(room, uid);
+    if (seatIndex < 0) {
+      throw new HttpsError("permission-denied", "Tu ne fais pas partie de ce duel.");
+    }
+
+    const status = String(room.status || "");
+    if (status !== "waiting") {
+      return {
+        ok: true,
+        started: false,
+        status,
+        startRevealPending: room.startRevealPending === true,
+        waitingDeadlineMs: safeSignedInt(room.waitingDeadlineMs),
+        humanCount: safeInt(room.humanCount),
+        botCount: safeInt(room.botCount),
+        privateDeckOrder: status === "playing" ? [] : [],
+      };
+    }
+
+    const nowMs = Date.now();
+    const humans = Array.isArray(room.playerUids) ? room.playerUids.filter(Boolean).length : safeInt(room.humanCount);
+    const waitingDeadlineMs = resolveDuelWaitingDeadlineMs(room, nowMs);
+    if (safeSignedInt(room.waitingDeadlineMs) !== waitingDeadlineMs) {
+      tx.update(roomRefDoc, {
+        waitingDeadlineMs,
+        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      });
+    }
+
+    if (humans < 2 && nowMs < waitingDeadlineMs) {
+      return {
+        ok: true,
+        started: false,
+        status: "waiting",
+        startRevealPending: false,
+        waitingDeadlineMs,
+        humanCount: humans,
+        botCount: Math.max(0, 2 - humans),
+        privateDeckOrder: [],
+      };
+    }
+
+    clearDuelMatchmakingPool(tx, duelMatchmakingPoolRef(String(room.stakeConfigId || ""), safeInt(room.entryCostDoes || room.stakeDoes)));
+    return buildStartedDuelRoomTransaction(tx, roomRefDoc, {
+      ...room,
+      humanCount: humans,
+      botCount: Math.max(0, 2 - humans),
+      waitingDeadlineMs,
+    }, {
+      configuredBotDifficulty,
+      nowMs,
+    });
+  });
+
+  if (startResult?.status === "playing") {
+    if (!Array.isArray(startResult.privateDeckOrder) || startResult.privateDeckOrder.length !== 28) {
+      startResult.privateDeckOrder = await readPrivateDeckOrderForDuelRoom(roomId);
+    }
+  }
+
+  if (startResult?.status === "playing" && startResult?.startRevealPending !== true) {
+    await processPendingBotTurnsDuel(roomId);
+  }
+
+  return startResult;
+}, { invoker: "public" });
+
+exports.touchRoomPresenceDuel = publicOnCall("touchRoomPresenceDuel", async (request) => {
+  const { uid } = assertAuth(request);
+  const payload = request.data && typeof request.data === "object" ? request.data : {};
+  const roomId = String(payload.roomId || "").trim();
+
+  if (!roomId) {
+    throw new HttpsError("invalid-argument", "roomId requis.");
+  }
+
+  const roomRefDoc = duelRoomRef(roomId);
+  let shouldNudgeBots = false;
+  const result = await db.runTransaction(async (tx) => {
+    const roomSnap = await tx.get(roomRefDoc);
+    if (!roomSnap.exists) {
+      throw new HttpsError("not-found", "Salle duel introuvable.");
+    }
+
+    const room = roomSnap.data() || {};
+    const seatIndex = getSeatForUser(room, uid);
+    if (seatIndex < 0) {
+      throw new HttpsError("permission-denied", "Tu ne fais pas partie de cette salle duel.");
+    }
+
+    const nowMs = Date.now();
+    const presenceResult = buildDuelPresenceUpdates(room, uid, nowMs);
+    shouldNudgeBots = presenceResult.shouldNudgeBots === true;
+    tx.update(roomRefDoc, presenceResult.updates);
+
+    return {
+      ok: true,
+      roomId: roomRefDoc.id,
+      status: String(room.status || ""),
+      currentPlayer: Number.isFinite(Number(room.currentPlayer)) ? Math.trunc(Number(room.currentPlayer)) : -1,
+      takeoverCount: presenceResult.takeoverCount,
+      humanCount: safeInt(presenceResult.updates.humanCount, safeInt(room.humanCount)),
+      botCount: safeInt(presenceResult.updates.botCount, safeInt(room.botCount)),
+    };
+  });
+
+  if (result?.status === "playing" && shouldNudgeBots) {
+    await processPendingBotTurnsDuel(roomId);
+  }
+
+  return result;
+}, { invoker: "public" });
+
+exports.ackRoomStartSeenDuel = publicOnCall("ackRoomStartSeenDuel", async (request) => {
+  const { uid } = assertAuth(request);
+  const payload = request.data && typeof request.data === "object" ? request.data : {};
+  const roomId = String(payload.roomId || "").trim();
+
+  if (!roomId) {
+    throw new HttpsError("invalid-argument", "roomId requis.");
+  }
+
+  const roomRefDoc = duelRoomRef(roomId);
+  const ackResult = await db.runTransaction(async (tx) => {
+    const roomSnap = await tx.get(roomRefDoc);
+    if (!roomSnap.exists) {
+      throw new HttpsError("not-found", "Salle duel introuvable.");
+    }
+
+    const room = roomSnap.data() || {};
+    const humanUids = Array.isArray(room.playerUids)
+      ? room.playerUids.map((item) => String(item || "").trim()).filter(Boolean)
+      : [];
+    const ackUids = Array.isArray(room.startRevealAckUids)
+      ? room.startRevealAckUids.map((item) => String(item || "").trim()).filter(Boolean)
+      : [];
+    const ackSet = new Set(ackUids);
+
+    if (String(room.status || "") !== "playing") {
+      return {
+        ok: true,
+        pending: false,
+        released: false,
+        humanCount: humanUids.length,
+        ackCount: ackSet.size,
+      };
+    }
+
+    const seatIndex = getSeatForUser(room, uid);
+    if (seatIndex < 0) {
+      throw new HttpsError("permission-denied", "Tu ne fais pas partie de cette salle duel.");
+    }
+
+    ackSet.add(uid);
+    if (room.startRevealPending !== true) {
+      return {
+        ok: true,
+        pending: false,
+        released: false,
+        humanCount: humanUids.length,
+        ackCount: ackSet.size,
+      };
+    }
+
+    const nextAckUids = Array.from(ackSet);
+    const ready = humanUids.length > 0 && humanUids.every((humanUid) => ackSet.has(humanUid));
+    tx.update(roomRefDoc, {
+      startRevealAckUids: nextAckUids,
+      startRevealPending: ready ? false : true,
+      updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+    });
+
+    return {
+      ok: true,
+      pending: !ready,
+      released: ready,
+      humanCount: humanUids.length,
+      ackCount: nextAckUids.length,
+    };
+  });
+
+  if (ackResult?.released === true) {
+    await processPendingBotTurnsDuel(roomId);
+  }
+
+  return ackResult;
+}, { invoker: "public" });
+
+exports.leaveRoomDuel = publicOnCall("leaveRoomDuel", async (request) => {
+  const { uid } = assertAuth(request);
+  const payload = request.data && typeof request.data === "object" ? request.data : {};
+  const roomId = String(payload.roomId || "").trim();
+
+  if (!roomId) {
+    throw new HttpsError("invalid-argument", "roomId requis.");
+  }
+
+  const roomRefDoc = duelRoomRef(roomId);
+  const outcome = await db.runTransaction(async (tx) => {
+    const roomSnap = await tx.get(roomRefDoc);
+    if (!roomSnap.exists) {
+      return {
+        result: {
+          ok: true,
+          deleted: true,
+          status: "missing",
+        },
+        shouldCleanup: false,
+        shouldNudgeBots: false,
+      };
+    }
+
+    return applyDuelLeaveForUidTx(tx, roomRefDoc, roomSnap.data() || {}, uid);
+  });
+
+  if (outcome?.shouldNudgeBots) {
+    await processPendingBotTurnsDuel(roomId);
+  }
+
+  if (!outcome?.shouldCleanup) {
+    return outcome?.result || {
+      ok: true,
+      deleted: false,
+      status: "left",
+    };
+  }
+
+  await cleanupDuelRoom(roomRefDoc);
+  return {
+    ok: true,
+    deleted: true,
+    status: "deleted",
+  };
+}, { invoker: "public" });
+
+exports.submitActionDuel = publicOnCall("submitActionDuel", async (request) => {
+  const { uid } = assertAuth(request);
+  const payload = request.data && typeof request.data === "object" ? request.data : {};
+  const roomId = String(payload.roomId || "").trim();
+  const clientActionId = sanitizeText(payload.clientActionId || "", 80);
+  const action = payload.action && typeof payload.action === "object" ? payload.action : null;
+
+  if (!roomId || !action) {
+    throw new HttpsError("invalid-argument", "roomId et action duel sont requis.");
+  }
+  if (!clientActionId) {
+    throw new HttpsError("invalid-argument", "clientActionId requis.");
+  }
+
+  const type = String(action.type || "").trim();
+  if (type !== "play" && type !== "pass" && type !== "draw") {
+    throw new HttpsError("invalid-argument", "Type d'action duel invalide.");
+  }
+
+  const roomRefDoc = duelRoomRef(roomId);
+  const result = await db.runTransaction(async (tx) => {
+    const [roomSnap, stateSnap] = await Promise.all([
+      tx.get(roomRefDoc),
+      tx.get(duelGameStateRef(roomId)),
+    ]);
+    if (!roomSnap.exists) {
+      throw new HttpsError("not-found", "Salle duel introuvable.");
+    }
+
+    const room = roomSnap.data() || {};
+    if (room.status !== "playing") {
+      throw new HttpsError("failed-precondition", "Le duel n'est pas en cours.");
+    }
+    if (room.startRevealPending === true) {
+      throw new HttpsError("failed-precondition", "Le duel se synchronise encore.");
+    }
+    const localSeat = getSeatForUser(room, uid);
+    if (localSeat < 0) {
+      throw new HttpsError("permission-denied", "Tu ne fais pas partie de ce duel.");
+    }
+
+    if (typeof room.currentPlayer === "number" && room.currentPlayer !== localSeat) {
+      throw new HttpsError("failed-precondition", `Hors tour duel. Joueur attendu: ${room.currentPlayer + 1}`);
+    }
+
+    const currentState = stateSnap.exists
+      ? normalizeDuelGameState(stateSnap.data(), room)
+      : createInitialDuelGameState(room, Array.isArray(room.deckOrder) && room.deckOrder.length === 28 ? room.deckOrder : makeDeckOrder());
+
+    if (currentState.winnerSeat >= 0) {
+      throw new HttpsError("failed-precondition", "Le duel est deja termine.");
+    }
+    if (typeof currentState.currentPlayer === "number" && currentState.currentPlayer !== localSeat) {
+      throw new HttpsError("failed-precondition", `Hors tour duel. Joueur attendu: ${currentState.currentPlayer + 1}`);
+    }
+
+    if (currentState.idempotencyKeys[clientActionId] === true) {
+      return {
+        ok: true,
+        duplicate: true,
+        seq: safeSignedInt(currentState.appliedActionSeq),
+        nextPlayer: currentState.currentPlayer,
+        status: room.status,
+      };
+    }
+
+    const resolvedMove = resolveRequestedDuelMove(currentState, localSeat, action);
+    const batchResult = applyDuelActionBatchInTransaction(
+      tx,
+      roomRefDoc,
+      room,
+      currentState,
+      roomId,
+      resolvedMove,
+      uid,
+      { allowBotAdvance: false }
+    );
+    const nextState = batchResult.state;
+    nextState.idempotencyKeys[clientActionId] = true;
+
+    tx.set(duelGameStateRef(roomId), buildDuelGameStateWrite(nextState), { merge: true });
+
+    const roomUpdate = buildDuelRoomUpdateFromGameState(room, nextState, batchResult.records);
+    tx.update(roomRefDoc, roomUpdate);
+    writeDuelRoomResultIfEndedTx(tx, roomRefDoc, room, roomUpdate);
+
+    const lastRecord = batchResult.records.length > 0 ? batchResult.records[batchResult.records.length - 1] : null;
+    return {
+      ok: true,
+      duplicate: false,
+      seq: lastRecord ? lastRecord.seq : safeSignedInt(nextState.appliedActionSeq),
+      nextPlayer: nextState.currentPlayer,
+      status: nextState.winnerSeat >= 0 ? "ended" : "playing",
+      winnerSeat: nextState.winnerSeat,
+      winnerUid: nextState.winnerUid,
+      endedReason: nextState.endedReason,
+      record: lastRecord || null,
+    };
+  });
+
+  if (result?.status === "playing" && typeof result.nextPlayer === "number") {
+    await processPendingBotTurnsDuel(roomId);
+  }
+
+  return result;
+}, { invoker: "public" });
+
+exports.claimWinRewardDuel = publicOnCall("claimWinRewardDuel", async (request) => {
+  const { uid, email } = assertAuth(request);
+  const payload = request.data && typeof request.data === "object" ? request.data : {};
+  const roomId = String(payload.roomId || "").trim();
+
+  if (!roomId) {
+    throw new HttpsError("invalid-argument", "roomId requis.");
+  }
+
+  const roomRefDoc = duelRoomRef(roomId);
+  const settlementRef = roomRefDoc.collection("settlements").doc(uid);
+
+  const result = await db.runTransaction(async (tx) => {
+    const [roomSnap, settlementSnap, stateSnap] = await Promise.all([
+      tx.get(roomRefDoc),
+      tx.get(settlementRef),
+      tx.get(duelGameStateRef(roomId)),
+    ]);
+
+    if (!roomSnap.exists) {
+      throw new HttpsError("not-found", "Salle duel introuvable.");
+    }
+
+    const room = roomSnap.data() || {};
+    const seat = getSeatForUser(room, uid);
+    const state = stateSnap.exists ? normalizeDuelGameState(stateSnap.data(), room) : null;
+    const winnerSeat = typeof room.winnerSeat === "number"
+      ? room.winnerSeat
+      : (state && typeof state.winnerSeat === "number" ? state.winnerSeat : -1);
+    const winnerUid = String(room.winnerUid || state?.winnerUid || "").trim();
+
+    if (winnerUid) {
+      if (winnerUid !== uid) {
+        throw new HttpsError("permission-denied", "Ce compte n'est pas gagnant de ce duel.");
+      }
+    } else if (seat < 0) {
+      throw new HttpsError("permission-denied", "Ce compte ne fait pas partie de ce duel.");
+    } else if (winnerSeat < 0 || seat !== winnerSeat) {
+      throw new HttpsError("permission-denied", "Ce compte n'est pas gagnant de ce duel.");
+    }
+
+    const settlementData = settlementSnap.exists ? (settlementSnap.data() || {}) : {};
+    if (settlementData.rewardPaid === true) {
+      return {
+        ok: true,
+        rewardGranted: false,
+        reason: "already_paid",
+        rewardAmountDoes: safeInt(settlementData.rewardAmountDoes) || safeInt(room.rewardAmountDoes),
+      };
+    }
+
+    const rewardAmountDoes = safeInt(room.rewardAmountDoes);
+    if (rewardAmountDoes <= 0) {
+      throw new HttpsError("failed-precondition", "Gain duel invalide pour cette salle.");
+    }
+
+    const entryFundingRaw = room.entryFundingByUid && typeof room.entryFundingByUid === "object"
+      ? (room.entryFundingByUid[uid] || null)
+      : null;
+    const provisionalSources = normalizeFundingSources(entryFundingRaw?.provisionalSources);
+    const approvedEntryDoes = safeInt(entryFundingRaw?.approvedDoes);
+    const provisionalEntryDoes = safeInt(entryFundingRaw?.provisionalDoes);
+    const welcomeEntryDoes = safeInt(entryFundingRaw?.welcomeDoes);
+    let approvedRewardDoes = rewardAmountDoes;
+    let provisionalRewardDoes = 0;
+    let welcomeRewardDoes = 0;
+
+    if ((provisionalEntryDoes > 0 && provisionalSources.length > 0) || welcomeEntryDoes > 0) {
+      const totalEntryDoes = Math.max(approvedEntryDoes + provisionalEntryDoes + welcomeEntryDoes, provisionalEntryDoes + welcomeEntryDoes);
+      const provisionalRewardPool = Math.min(
+        rewardAmountDoes,
+        Math.round((rewardAmountDoes * provisionalEntryDoes) / Math.max(1, totalEntryDoes))
+      );
+      welcomeRewardDoes = Math.min(
+        rewardAmountDoes - provisionalRewardPool,
+        Math.round((rewardAmountDoes * welcomeEntryDoes) / Math.max(1, totalEntryDoes))
+      );
+      provisionalRewardDoes = provisionalRewardPool;
+      approvedRewardDoes = Math.max(0, rewardAmountDoes - provisionalRewardPool - welcomeRewardDoes) + welcomeRewardDoes;
+    } else if (approvedEntryDoes <= 0 && provisionalEntryDoes > 0) {
+      approvedRewardDoes = 0;
+      provisionalRewardDoes = rewardAmountDoes;
+    }
+
+    const walletMutation = await applyWalletMutationTx(tx, {
+      uid,
+      email,
+      type: "game_reward",
+      note: `Gain de duel (${roomId})`,
+      amountDoes: rewardAmountDoes,
+      approvedRewardDoes,
+      provisionalRewardDoes,
+      welcomeRewardDoes,
+      amountGourdes: 0,
+      deltaDoes: rewardAmountDoes,
+      deltaExchangedGourdes: 0,
+    });
+
+    tx.set(settlementRef, {
+      uid,
+      roomId,
+      rewardPaid: true,
+      rewardAmountDoes,
+      claimedAt: admin.firestore.FieldValue.serverTimestamp(),
+      updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+    }, { merge: true });
+
+    return {
+      ok: true,
+      rewardGranted: true,
+      rewardAmountDoes,
+      does: walletMutation.afterDoes,
+      approvedRewardDoes,
+      provisionalRewardDoes,
+    };
+  });
+
+  return result;
+}, { invoker: "public" });
+
 exports.recordAmbassadorOutcome = publicOnCall("recordAmbassadorOutcome", async (request) => {
   const { uid } = assertAuth(request);
   if (!AMBASSADOR_SYSTEM_ENABLED) {
@@ -8133,6 +10239,52 @@ exports.sweepRoomPresence = onSchedule("every 1 minutes", async () => {
 
   for (const targetRoomId of roomsToNudge) {
     await processPendingBotTurns(targetRoomId);
+  }
+});
+
+exports.sweepDuelRoomPresence = onSchedule("every 1 minutes", async () => {
+  const nowMs = Date.now();
+  const roomsSnap = await db
+    .collection(DUEL_ROOMS_COLLECTION)
+    .where("status", "in", ["waiting", "playing"])
+    .limit(200)
+    .get();
+
+  const roomsToNudge = [];
+
+  for (const docSnap of roomsSnap.docs) {
+    const roomId = docSnap.id;
+    try {
+      const result = await db.runTransaction(async (tx) => {
+        const freshSnap = await tx.get(docSnap.ref);
+        if (!freshSnap.exists) return { changed: false, shouldNudgeBots: false };
+
+        const room = freshSnap.data() || {};
+        const playerUids = Array.from({ length: 2 }, (_, idx) => String((room.playerUids || [])[idx] || ""));
+        if (!playerUids.some(Boolean)) return { changed: false, shouldNudgeBots: false };
+
+        const presenceResult = buildDuelPresenceUpdates(room, "", nowMs);
+        if (!presenceResult.changed) {
+          return { changed: false, shouldNudgeBots: false };
+        }
+
+        tx.update(docSnap.ref, presenceResult.updates);
+        return {
+          changed: true,
+          shouldNudgeBots: presenceResult.shouldNudgeBots === true,
+        };
+      });
+
+      if (result?.shouldNudgeBots === true) {
+        roomsToNudge.push(roomId);
+      }
+    } catch (error) {
+      console.warn("[SWEEP_DUEL_PRESENCE]", roomId, error?.message || error);
+    }
+  }
+
+  for (const targetRoomId of roomsToNudge) {
+    await processPendingBotTurnsDuel(targetRoomId);
   }
 });
 

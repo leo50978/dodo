@@ -506,6 +506,14 @@ DominoThree.prototype = Object.assign( Object.create(ObjetoCanvas.prototype) , {
     },
 
     ObtenerFichaHoverLocal : function() {
+        if (typeof(this.Partida.ObtenerIndicesManoLocal) === "function") {
+            var Indices = this.Partida.ObtenerIndicesManoLocal();
+            for (var h = 0; h < Indices.length; h++) {
+                var idxLocal = Indices[h];
+                if (typeof(this.Partida.Ficha[idxLocal]) !== "undefined" && this.Partida.Ficha[idxLocal].Colocada === false && this.Partida.Ficha[idxLocal].Hover > 0) return idxLocal;
+            }
+            return -1;
+        }
         var Seat = (typeof(this.Partida.LocalSeat) === "number") ? this.Partida.LocalSeat : 0;
         var Ini = Seat * 7;
         for (var i = 0; i < 7; i++) {
@@ -629,15 +637,25 @@ DominoThree.prototype = Object.assign( Object.create(ObjetoCanvas.prototype) , {
         
         this.RayCaster.setFromCamera(this.PosMouse, this.Camara);
         var intersects = this.RayCaster.intersectObjects( this.Escena.children, true );        
-        var Hover = [ 0, 0, 0, 0, 0, 0, 0 ];
         var LocalSeat = (typeof(this.Partida.LocalSeat) === "number") ? this.Partida.LocalSeat : 0;
-        var Ini = LocalSeat * 7;
+        var Indices = [];
+        if (typeof(this.Partida.ObtenerIndicesManoLocal) === "function") {
+            Indices = this.Partida.ObtenerIndicesManoLocal();
+        }
+        else {
+            var Ini = LocalSeat * 7;
+            for (var t = 0; t < 7; t++) Indices.push(Ini + t);
+        }
+        var Hover = [];
+        for (var p = 0; p < Indices.length; p++) Hover.push(0);
+        var HoverStockTileId = -1;
         
         
         // Compruebo si hay que hacer hover en alguna de las fichas del jugador local
         for (var i = 0; i < intersects.length; i++ ) {
-            for (var f = 0; f < 7; f++) {
-                var idx = Ini + f;
+            for (var f = 0; f < Indices.length; f++) {
+                var idx = Indices[f];
+                if (typeof(this.Partida.Ficha[idx]) === "undefined") continue;
                 if (intersects[i].object === this.Partida.Ficha[idx].Cara1 && this.Partida.Ficha[idx].Colocada === false) {
                     Hover[f] = 1;
                 }
@@ -647,16 +665,38 @@ DominoThree.prototype = Object.assign( Object.create(ObjetoCanvas.prototype) , {
                 if (intersects[i].object === this.Partida.Ficha[idx].Bola && this.Partida.Ficha[idx].Colocada === false) {
                     Hover[f] = 3;
                 }                
-            }        
+            }
+
+            if (HoverStockTileId < 0 && typeof(this.Partida.ObtenerIndicesStockInteractivosDuel) === "function") {
+                var StockIndices = this.Partida.ObtenerIndicesStockInteractivosDuel();
+                for (var s = 0; s < StockIndices.length; s++) {
+                    var idxStock = StockIndices[s];
+                    if (typeof(this.Partida.Ficha[idxStock]) === "undefined") continue;
+                    if (this.Partida.Ficha[idxStock].Colocada === true) continue;
+                    if (intersects[i].object === this.Partida.Ficha[idxStock].Cara1 ||
+                        intersects[i].object === this.Partida.Ficha[idxStock].Cara2 ||
+                        intersects[i].object === this.Partida.Ficha[idxStock].Base ||
+                        intersects[i].object === this.Partida.Ficha[idxStock].Bola) {
+                        if (typeof(this.Partida.ObtenerTileIdDesdeIndice) === "function") {
+                            HoverStockTileId = this.Partida.ObtenerTileIdDesdeIndice(idxStock);
+                        }
+                        break;
+                    }
+                }
+            }
         }
         
         // Miro si hay algun cambio respecto los hovers (siempre que sea el turno local)
         if (this.Partida.JugadorActual === LocalSeat) {        
-            for (var f = 0; f < 7; f++) {
-                var idx = Ini + f;
+            for (var f = 0; f < Indices.length; f++) {
+                var idx = Indices[f];
+                if (typeof(this.Partida.Ficha[idx]) === "undefined") continue;
                 if (Hover[f] !== this.Partida.Ficha[idx].Hover) {
                     this.Partida.Ficha[idx].AsignarHover(Hover[f]);
                 }
+            }
+            if (typeof(this.Partida.ActualizarHoverStockDuel) === "function") {
+                this.Partida.ActualizarHoverStockDuel(HoverStockTileId);
             }
         }
     },
