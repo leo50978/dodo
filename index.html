@@ -329,9 +329,13 @@
         inset: 0;
         z-index: 4200;
         display: flex;
-        align-items: center;
+        align-items: flex-end;
         justify-content: center;
-        padding: 24px 16px max(24px, env(safe-area-inset-bottom));
+        padding:
+          max(12px, env(safe-area-inset-top))
+          max(12px, env(safe-area-inset-right))
+          max(12px, env(safe-area-inset-bottom))
+          max(12px, env(safe-area-inset-left));
       }
 
       .welcome-modal.hidden {
@@ -347,13 +351,29 @@
 
       .welcome-modal__card {
         position: relative;
-        width: min(520px, 92vw);
-        border-radius: 24px;
+        width: min(100%, 560px);
+        max-height: min(88dvh, 760px);
+        overflow-y: auto;
+        -webkit-overflow-scrolling: touch;
+        overscroll-behavior: contain;
+        border-radius: 28px;
         border: 1px solid rgba(255, 255, 255, 0.16);
         background: rgba(63, 71, 102, 0.92);
-        padding: 22px 20px 20px;
+        padding:
+          22px
+          18px
+          max(20px, calc(env(safe-area-inset-bottom) + 14px))
+          18px;
         box-shadow: 16px 18px 40px rgba(18, 24, 38, 0.45), -10px -10px 24px rgba(110, 126, 165, 0.16);
         color: #fff;
+      }
+
+      .welcome-modal__card--campaign {
+        background:
+          radial-gradient(circle at top right, rgba(245, 124, 0, 0.2), transparent 34%),
+          linear-gradient(180deg, rgba(56, 31, 18, 0.98), rgba(24, 12, 10, 0.98));
+        border-color: rgba(255, 190, 116, 0.22);
+        box-shadow: 18px 22px 44px rgba(17, 9, 5, 0.5), -10px -10px 22px rgba(133, 88, 55, 0.12);
       }
 
       .welcome-modal__badge {
@@ -373,21 +393,59 @@
 
       .welcome-modal__title {
         margin: 14px 0 8px;
-        font-size: clamp(1.3rem, 4.2vw, 1.8rem);
-        line-height: 1.2;
+        font-size: clamp(1.32rem, 5vw, 1.86rem);
+        line-height: 1.16;
         font-weight: 700;
+        text-wrap: balance;
       }
 
       .welcome-modal__text {
         margin: 0 0 12px;
-        font-size: 0.98rem;
-        line-height: 1.55;
+        font-size: 0.96rem;
+        line-height: 1.58;
         color: rgba(255, 255, 255, 0.88);
       }
 
       .welcome-modal__text strong {
         color: #fff;
         font-weight: 700;
+      }
+
+      .welcome-modal__stack {
+        display: grid;
+        gap: 12px;
+      }
+
+      .welcome-modal__facts {
+        display: grid;
+        gap: 10px;
+        margin: 6px 0 2px;
+      }
+
+      .welcome-modal__fact {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        border-radius: 16px;
+        border: 1px solid rgba(255, 255, 255, 0.12);
+        background: rgba(255, 255, 255, 0.07);
+        padding: 12px 14px;
+        color: rgba(255, 244, 228, 0.94);
+        font-size: 0.92rem;
+        line-height: 1.45;
+      }
+
+      .welcome-modal__fact-icon {
+        display: inline-flex;
+        height: 34px;
+        width: 34px;
+        flex-shrink: 0;
+        align-items: center;
+        justify-content: center;
+        border-radius: 12px;
+        background: rgba(245, 124, 0, 0.16);
+        color: #ffd49f;
+        font-size: 0.95rem;
       }
 
       .welcome-modal__cta {
@@ -397,22 +455,27 @@
         gap: 10px;
       }
 
+      .welcome-modal__cta--campaign {
+        margin-top: 18px;
+      }
+
       .welcome-modal__btn {
         display: inline-flex;
-        min-height: 46px;
+        min-height: 50px;
         align-items: center;
         justify-content: center;
         border-radius: 14px;
         background: #f57c00;
         color: #fff;
         font-weight: 600;
+        text-align: center;
         text-decoration: none;
         box-shadow: 8px 8px 18px rgba(163, 82, 27, 0.4), -6px -6px 14px rgba(255, 175, 102, 0.14);
       }
 
       .welcome-modal__ghost {
         display: inline-flex;
-        min-height: 44px;
+        min-height: 48px;
         align-items: center;
         justify-content: center;
         border-radius: 14px;
@@ -420,14 +483,21 @@
         background: rgba(255, 255, 255, 0.06);
         color: #fff;
         font-weight: 600;
+        text-align: center;
+        text-decoration: none;
+      }
+
+      .welcome-modal__ghost--subtle {
+        color: rgba(255, 255, 255, 0.82);
+        font-size: 0.95rem;
       }
 
       .welcome-modal__close {
         position: absolute;
-        top: 14px;
-        right: 14px;
-        height: 34px;
-        width: 34px;
+        top: 12px;
+        right: 12px;
+        height: 38px;
+        width: 38px;
         border-radius: 50%;
         border: 1px solid rgba(255, 255, 255, 0.24);
         background: rgba(15, 23, 42, 0.35);
@@ -439,6 +509,11 @@
       }
 
       @media (min-width: 720px) {
+        .welcome-modal {
+          align-items: center;
+          padding: 24px 16px max(24px, env(safe-area-inset-bottom));
+        }
+
         .welcome-modal__card {
           padding: 26px 26px 24px;
         }
@@ -450,6 +525,19 @@
         .welcome-modal__btn,
         .welcome-modal__ghost {
           flex: 1;
+        }
+
+        .welcome-modal__facts {
+          grid-template-columns: repeat(3, minmax(0, 1fr));
+        }
+
+        .welcome-modal__cta--campaign {
+          display: grid;
+          grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+        }
+
+        .welcome-modal__cta--campaign .welcome-modal__ghost--subtle {
+          grid-column: 1 / -1;
         }
       }
     </style>
@@ -527,12 +615,61 @@
         </div>
       </div>
     </div>
+    <div id="recruitmentModal" class="welcome-modal hidden" role="dialog" aria-modal="true" aria-hidden="true">
+      <div class="welcome-modal__backdrop" data-recruitment-close></div>
+      <div class="welcome-modal__card welcome-modal__card--campaign" aria-labelledby="recruitmentTitle">
+        <button class="welcome-modal__close" type="button" aria-label="Fermer" data-recruitment-close>×</button>
+        <div class="welcome-modal__badge">Recrutement officiel</div>
+        <h2 id="recruitmentTitle" class="welcome-modal__title">Nous recrutons des ambassadeurs Dominoes Lakay</h2>
+        <div id="recruitmentBody" class="welcome-modal__stack">
+          <p class="welcome-modal__text">
+            Dominoes Lakay ouvre un recrutement special pour les <strong>ambassadeurs</strong>.
+          </p>
+          <div class="welcome-modal__facts" aria-label="Informations recrutement">
+            <div class="welcome-modal__fact">
+              <span class="welcome-modal__fact-icon"><i class="fa-solid fa-users"></i></span>
+              <span>Seulement <strong>10 places</strong> dans chaque departement.</span>
+            </div>
+            <div class="welcome-modal__fact">
+              <span class="welcome-modal__fact-icon"><i class="fa-solid fa-medal"></i></span>
+              <span>Seuls <strong>les meilleurs profils</strong> seront selectionnes.</span>
+            </div>
+            <div class="welcome-modal__fact">
+              <span class="welcome-modal__fact-icon"><i class="fa-solid fa-calendar-day"></i></span>
+              <span>Offre valable jusqu'au <strong>lundi 6 avril 2026</strong>.</span>
+            </div>
+          </div>
+          <p class="welcome-modal__text">
+            Toutes les personnes interessees sont priees de contacter l'assistance ou d'acceder a la page d'inscription pour envoyer leur candidature.
+          </p>
+        </div>
+        <div class="welcome-modal__cta welcome-modal__cta--campaign">
+          <a
+            id="recruitmentSupportBtn"
+            class="welcome-modal__btn"
+            href="https://wa.me/50940507232?text=Bonjour%20assistance%2C%20je%20suis%20interesse%28e%29%20par%20le%20recrutement%20ambassadeurs%20Dominoes%20Lakay."
+            target="_blank"
+            rel="noopener"
+          >
+            Contacter l'assistance
+          </a>
+          <a id="recruitmentVisitBtn" class="welcome-modal__ghost" href="./recrutement.html">
+            Visiter la page d'inscription
+          </a>
+          <button id="recruitmentHideBtn" class="welcome-modal__ghost welcome-modal__ghost--subtle" type="button">
+            Ne plus afficher
+          </button>
+        </div>
+      </div>
+    </div>
     <script src="https://cdn.tailwindcss.com"></script>
     <script type="module" src="./home.js"></script>
     <script>
       (() => {
+        const recruitmentStorageKey = "dl_recruitment_modal_hidden_v1";
         const storageKey = "dl_welcome_deposit_flow_v3";
         const modal = document.getElementById("welcomeDepositModal");
+        const recruitmentModal = document.getElementById("recruitmentModal");
         if (!modal) return;
         const closeButtons = modal.querySelectorAll("[data-close]");
         const badgeEl = document.getElementById("welcomeDepositBadge");
@@ -540,6 +677,10 @@
         const bodyEl = document.getElementById("welcomeDepositBody");
         const primaryBtn = document.getElementById("welcomeDepositPrimary");
         const secondaryBtn = document.getElementById("welcomeDepositSecondary");
+        const recruitmentCloseButtons = recruitmentModal ? recruitmentModal.querySelectorAll("[data-recruitment-close]") : [];
+        const recruitmentHideBtn = document.getElementById("recruitmentHideBtn");
+        const recruitmentVisitBtn = document.getElementById("recruitmentVisitBtn");
+        const recruitmentSupportBtn = document.getElementById("recruitmentSupportBtn");
 
         const steps = [
           {
@@ -614,25 +755,79 @@
           }
           hideModal();
         };
-        let alreadySeen = false;
-        try {
-          alreadySeen = localStorage.getItem(storageKey) === "1";
-        } catch (err) {
-          alreadySeen = false;
-        }
-        if (!alreadySeen) {
+        const showRecruitmentModal = () => {
+          if (!recruitmentModal) return;
+          recruitmentModal.classList.remove("hidden");
+          recruitmentModal.setAttribute("aria-hidden", "false");
+        };
+        const hideRecruitmentModal = () => {
+          if (!recruitmentModal) return;
+          recruitmentModal.classList.add("hidden");
+          recruitmentModal.setAttribute("aria-hidden", "true");
+        };
+        const markRecruitmentHidden = () => {
           try {
-            localStorage.setItem(storageKey, "1");
+            localStorage.setItem(recruitmentStorageKey, "1");
           } catch (err) {
             /* ignore */
           }
-          renderStep();
-          showModal();
+        };
+        const maybeShowWelcomeFlow = () => {
+          let alreadySeen = false;
+          try {
+            alreadySeen = localStorage.getItem(storageKey) === "1";
+          } catch (err) {
+            alreadySeen = false;
+          }
+          if (!alreadySeen) {
+            try {
+              localStorage.setItem(storageKey, "1");
+            } catch (err) {
+              /* ignore */
+            }
+            renderStep();
+            showModal();
+          } else {
+            modal.setAttribute("aria-hidden", "true");
+          }
+        };
+        let recruitmentHidden = false;
+        try {
+          recruitmentHidden = localStorage.getItem(recruitmentStorageKey) === "1";
+        } catch (err) {
+          recruitmentHidden = false;
+        }
+        if (!recruitmentHidden && recruitmentModal) {
+          showRecruitmentModal();
         } else {
-          modal.setAttribute("aria-hidden", "true");
+          hideRecruitmentModal();
+          maybeShowWelcomeFlow();
         }
         closeButtons.forEach((btn) => btn.addEventListener("click", hideModal));
         if (secondaryBtn) secondaryBtn.addEventListener("click", goNext);
+        recruitmentCloseButtons.forEach((btn) =>
+          btn.addEventListener("click", () => {
+            hideRecruitmentModal();
+            maybeShowWelcomeFlow();
+          })
+        );
+        if (recruitmentHideBtn) {
+          recruitmentHideBtn.addEventListener("click", () => {
+            markRecruitmentHidden();
+            hideRecruitmentModal();
+            maybeShowWelcomeFlow();
+          });
+        }
+        if (recruitmentVisitBtn) {
+          recruitmentVisitBtn.addEventListener("click", () => {
+            hideRecruitmentModal();
+          });
+        }
+        if (recruitmentSupportBtn) {
+          recruitmentSupportBtn.addEventListener("click", () => {
+            hideRecruitmentModal();
+          });
+        }
       })();
     </script>
   </body>

@@ -1,0 +1,845 @@
+<!doctype html>
+<html lang="fr">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <meta name="description" content="Candidature ambassadeurs Dominoes Lakay." />
+    <meta name="theme-color" content="#2f3448" />
+    <meta name="firebase-app-check-site-key" content="6Lc80IAsAAAAAD1dmys7iHV4bu8DeWdbYeM86y8D" />
+    <title>Recrutement Dominoes Lakay</title>
+    <link rel="icon" type="image/png" href="/favicon-96x96.png" sizes="96x96" />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <link rel="shortcut icon" href="/favicon.ico" />
+    <link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700;800&display=swap"
+      rel="stylesheet"
+    />
+    <link
+      rel="stylesheet"
+      href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.2/css/all.min.css"
+    />
+    <style>
+      :root {
+        color-scheme: dark;
+        --bg: #272d3f;
+        --panel: rgba(43, 49, 70, 0.88);
+        --panel-strong: rgba(31, 35, 52, 0.95);
+        --line: rgba(255, 255, 255, 0.11);
+        --text: rgba(255, 255, 255, 0.94);
+        --muted: rgba(255, 255, 255, 0.72);
+        --brand: #f57c00;
+        --brand-soft: rgba(245, 124, 0, 0.18);
+        --success: #25b46b;
+        --danger: #ff8d8d;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      html,
+      body {
+        margin: 0;
+        min-height: 100%;
+        background:
+          radial-gradient(circle at top, rgba(245, 124, 0, 0.12), transparent 26%),
+          linear-gradient(180deg, #323951 0%, #232839 100%);
+        color: var(--text);
+        font-family: "Poppins", system-ui, sans-serif;
+      }
+
+      body {
+        padding:
+          max(14px, env(safe-area-inset-top))
+          max(14px, env(safe-area-inset-right))
+          max(24px, env(safe-area-inset-bottom))
+          max(14px, env(safe-area-inset-left));
+      }
+
+      a {
+        color: inherit;
+      }
+
+      .recruit-page {
+        max-width: 1120px;
+        margin: 0 auto;
+        display: grid;
+        gap: 18px;
+      }
+
+      .recruit-topbar {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+      }
+
+      .recruit-logo {
+        width: min(132px, 34vw);
+        height: auto;
+        display: block;
+      }
+
+      .recruit-topbar__link {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        min-height: 42px;
+        padding: 0 14px;
+        border-radius: 14px;
+        border: 1px solid var(--line);
+        background: rgba(255, 255, 255, 0.06);
+        text-decoration: none;
+        font-size: 0.9rem;
+        font-weight: 600;
+      }
+
+      .recruit-hero,
+      .recruit-card {
+        border: 1px solid var(--line);
+        border-radius: 26px;
+        background: var(--panel);
+        backdrop-filter: blur(14px);
+        box-shadow: 14px 18px 40px rgba(13, 17, 27, 0.35), -10px -10px 24px rgba(93, 107, 147, 0.09);
+      }
+
+      .recruit-hero {
+        padding: 22px 18px;
+        overflow: hidden;
+      }
+
+      .recruit-kicker {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        border-radius: 999px;
+        border: 1px solid rgba(245, 124, 0, 0.34);
+        background: rgba(245, 124, 0, 0.12);
+        padding: 7px 12px;
+        color: #ffd4a1;
+        font-size: 0.74rem;
+        font-weight: 700;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+      }
+
+      .recruit-hero h1 {
+        margin: 14px 0 10px;
+        font-size: clamp(1.8rem, 8vw, 3rem);
+        line-height: 0.98;
+        text-wrap: balance;
+      }
+
+      .recruit-hero p {
+        margin: 0;
+        color: var(--muted);
+        font-size: 0.98rem;
+        line-height: 1.62;
+      }
+
+      .recruit-hero__chips {
+        display: grid;
+        gap: 10px;
+        margin-top: 18px;
+      }
+
+      .recruit-chip {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        padding: 12px 14px;
+        border-radius: 18px;
+        border: 1px solid rgba(255, 255, 255, 0.1);
+        background: rgba(255, 255, 255, 0.06);
+        font-size: 0.92rem;
+        color: rgba(255, 245, 231, 0.92);
+      }
+
+      .recruit-chip i {
+        color: #ffd39d;
+      }
+
+      .recruit-grid {
+        display: grid;
+        gap: 18px;
+      }
+
+      .recruit-card {
+        padding: 18px;
+      }
+
+      .recruit-progress__header {
+        display: grid;
+        gap: 12px;
+      }
+
+      .recruit-progress__eyebrow {
+        color: #ffd5a5;
+        font-size: 0.75rem;
+        font-weight: 700;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+      }
+
+      .recruit-progress__count {
+        margin-top: 8px;
+        font-size: clamp(2rem, 9vw, 3.2rem);
+        line-height: 0.96;
+        font-weight: 800;
+      }
+
+      .recruit-progress__meta {
+        margin-top: 8px;
+        color: var(--muted);
+        font-size: 0.92rem;
+        line-height: 1.5;
+      }
+
+      .recruit-progress__deadline {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        gap: 8px;
+        width: 100%;
+        max-width: 100%;
+        padding: 10px 12px;
+        border-radius: 16px;
+        border: 1px solid rgba(255, 255, 255, 0.11);
+        background: rgba(255, 255, 255, 0.05);
+        color: #ffd9ad;
+        font-size: 0.84rem;
+        font-weight: 600;
+        text-align: center;
+        flex-wrap: wrap;
+      }
+
+      .recruit-progress__deadline span {
+        overflow-wrap: anywhere;
+      }
+
+      .recruit-progress__track {
+        position: relative;
+        height: 16px;
+        margin-top: 18px;
+        border-radius: 999px;
+        overflow: hidden;
+        background: rgba(255, 255, 255, 0.08);
+        border: 1px solid rgba(255, 255, 255, 0.09);
+      }
+
+      .recruit-progress__fill {
+        position: absolute;
+        inset: 0 auto 0 0;
+        width: 8%;
+        border-radius: inherit;
+        background:
+          linear-gradient(90deg, rgba(245, 124, 0, 0.9), rgba(255, 190, 87, 0.98));
+        box-shadow: 0 0 18px rgba(245, 124, 0, 0.35);
+        transition: width 850ms cubic-bezier(0.22, 1, 0.36, 1);
+      }
+
+      .recruit-progress__fill::after {
+        content: "";
+        position: absolute;
+        inset: 0;
+        background:
+          linear-gradient(
+            120deg,
+            rgba(255, 255, 255, 0) 15%,
+            rgba(255, 255, 255, 0.34) 35%,
+            rgba(255, 255, 255, 0) 55%
+          );
+        transform: translateX(-120%);
+        animation: recruitShimmer 2.2s linear infinite;
+      }
+
+      .recruit-progress__footer {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 10px;
+        margin-top: 12px;
+        color: var(--muted);
+        font-size: 0.88rem;
+      }
+
+      .recruit-progress__pulse {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        color: #ffd8b0;
+      }
+
+      .recruit-progress__pulse::before {
+        content: "";
+        width: 9px;
+        height: 9px;
+        border-radius: 999px;
+        background: #ffb45d;
+        box-shadow: 0 0 0 0 rgba(255, 180, 93, 0.6);
+        animation: recruitPulse 1.6s ease-out infinite;
+      }
+
+      .recruit-form__header {
+        margin-bottom: 16px;
+      }
+
+      .recruit-form__header h2 {
+        margin: 0 0 6px;
+        font-size: 1.25rem;
+      }
+
+      .recruit-form__header p {
+        margin: 0;
+        color: var(--muted);
+        font-size: 0.92rem;
+        line-height: 1.55;
+      }
+
+      .recruit-status {
+        display: none;
+        margin-bottom: 14px;
+        padding: 14px;
+        border-radius: 18px;
+        font-size: 0.92rem;
+        line-height: 1.55;
+      }
+
+      .recruit-status.is-visible {
+        display: block;
+      }
+
+      .recruit-status.is-success {
+        border: 1px solid rgba(37, 180, 107, 0.26);
+        background: rgba(37, 180, 107, 0.12);
+        color: #dcffe9;
+      }
+
+      .recruit-status.is-error {
+        border: 1px solid rgba(255, 141, 141, 0.24);
+        background: rgba(255, 141, 141, 0.12);
+        color: #ffd4d4;
+      }
+
+      .recruit-form {
+        display: grid;
+        gap: 14px;
+      }
+
+      .recruit-fields {
+        display: grid;
+        gap: 12px;
+      }
+
+      .recruit-field label {
+        display: block;
+        margin-bottom: 7px;
+        font-size: 0.86rem;
+        font-weight: 600;
+        color: rgba(255, 255, 255, 0.86);
+      }
+
+      .recruit-input,
+      .recruit-select,
+      .recruit-textarea {
+        width: 100%;
+        border: 1px solid rgba(255, 255, 255, 0.12);
+        border-radius: 16px;
+        background: rgba(11, 15, 24, 0.22);
+        color: var(--text);
+        padding: 14px 15px;
+        font: inherit;
+        outline: none;
+        transition: border-color 180ms ease, box-shadow 180ms ease, background 180ms ease;
+      }
+
+      .recruit-input:focus,
+      .recruit-select:focus,
+      .recruit-textarea:focus {
+        border-color: rgba(245, 124, 0, 0.48);
+        box-shadow: 0 0 0 4px rgba(245, 124, 0, 0.12);
+        background: rgba(11, 15, 24, 0.28);
+      }
+
+      .recruit-textarea {
+        min-height: 158px;
+        resize: vertical;
+      }
+
+      .recruit-field__hint {
+        margin-top: 6px;
+        color: rgba(255, 255, 255, 0.62);
+        font-size: 0.82rem;
+        line-height: 1.45;
+      }
+
+      .recruit-motivation__meta {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+        margin-top: 7px;
+        color: rgba(255, 255, 255, 0.62);
+        font-size: 0.8rem;
+      }
+
+      .recruit-actions {
+        display: grid;
+        gap: 10px;
+        margin-top: 6px;
+      }
+
+      .recruit-contract-note {
+        margin-top: 6px;
+        color: rgba(255, 255, 255, 0.66);
+        font-size: 0.82rem;
+        line-height: 1.5;
+      }
+
+      .recruit-submit,
+      .recruit-secondary {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        min-height: 52px;
+        border-radius: 16px;
+        border: 0;
+        font: inherit;
+        font-weight: 700;
+        text-decoration: none;
+        cursor: pointer;
+      }
+
+      .recruit-submit {
+        background: linear-gradient(135deg, #f57c00, #ffb257);
+        color: white;
+        box-shadow: 10px 14px 24px rgba(164, 84, 26, 0.32);
+      }
+
+      .recruit-submit:disabled {
+        opacity: 0.7;
+        cursor: wait;
+      }
+
+      .recruit-secondary {
+        border: 1px solid rgba(255, 255, 255, 0.12);
+        background: rgba(255, 255, 255, 0.06);
+        color: white;
+      }
+
+      .recruit-modal {
+        position: fixed;
+        inset: 0;
+        z-index: 40;
+        display: none;
+        align-items: flex-end;
+        justify-content: center;
+        padding:
+          max(14px, env(safe-area-inset-top))
+          max(14px, env(safe-area-inset-right))
+          max(14px, env(safe-area-inset-bottom))
+          max(14px, env(safe-area-inset-left));
+        background: rgba(8, 11, 18, 0.72);
+        backdrop-filter: blur(10px);
+      }
+
+      .recruit-modal.is-open {
+        display: flex;
+      }
+
+      .recruit-modal__dialog {
+        width: min(100%, 560px);
+        border: 1px solid rgba(255, 255, 255, 0.1);
+        border-radius: 28px;
+        background:
+          radial-gradient(circle at top, rgba(245, 124, 0, 0.16), transparent 30%),
+          rgba(26, 31, 45, 0.98);
+        box-shadow: 16px 18px 42px rgba(8, 11, 18, 0.42);
+        padding: 20px 18px 18px;
+      }
+
+      .recruit-modal__eyebrow {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        border-radius: 999px;
+        padding: 7px 12px;
+        border: 1px solid rgba(245, 124, 0, 0.26);
+        background: rgba(245, 124, 0, 0.12);
+        color: #ffd7aa;
+        font-size: 0.75rem;
+        font-weight: 700;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+      }
+
+      .recruit-modal__title {
+        margin: 14px 0 8px;
+        font-size: 1.35rem;
+        line-height: 1.1;
+      }
+
+      .recruit-modal__text {
+        margin: 0;
+        color: var(--muted);
+        font-size: 0.95rem;
+        line-height: 1.65;
+      }
+
+      .recruit-modal__list {
+        margin: 16px 0 0;
+        padding: 0;
+        list-style: none;
+        display: grid;
+        gap: 10px;
+      }
+
+      .recruit-modal__list li {
+        display: flex;
+        align-items: flex-start;
+        gap: 10px;
+        padding: 12px 13px;
+        border-radius: 18px;
+        border: 1px solid rgba(255, 255, 255, 0.08);
+        background: rgba(255, 255, 255, 0.05);
+        color: rgba(255, 248, 236, 0.9);
+        font-size: 0.9rem;
+        line-height: 1.5;
+      }
+
+      .recruit-modal__list i {
+        margin-top: 2px;
+        color: #ffca8c;
+      }
+
+      .recruit-modal__actions {
+        display: grid;
+        gap: 10px;
+        margin-top: 18px;
+      }
+
+      .recruit-modal__primary,
+      .recruit-modal__secondary {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        min-height: 52px;
+        border-radius: 16px;
+        border: 0;
+        font: inherit;
+        font-weight: 700;
+        text-decoration: none;
+        cursor: pointer;
+      }
+
+      .recruit-modal__primary {
+        background: linear-gradient(135deg, #f57c00, #ffb257);
+        color: #fff;
+      }
+
+      .recruit-modal__secondary {
+        border: 1px solid rgba(255, 255, 255, 0.12);
+        background: rgba(255, 255, 255, 0.05);
+        color: #fff;
+      }
+
+      .recruit-sidecard {
+        display: grid;
+        gap: 14px;
+      }
+
+      .recruit-sidecard h3 {
+        margin: 0;
+        font-size: 1.08rem;
+      }
+
+      .recruit-sidecard p,
+      .recruit-sidecard li {
+        margin: 0;
+        color: var(--muted);
+        font-size: 0.91rem;
+        line-height: 1.58;
+      }
+
+      .recruit-sidecard ul {
+        margin: 0;
+        padding-left: 18px;
+        display: grid;
+        gap: 8px;
+      }
+
+      .recruit-sidecard__box {
+        padding: 14px;
+        border-radius: 18px;
+        border: 1px solid rgba(255, 255, 255, 0.09);
+        background: rgba(255, 255, 255, 0.05);
+      }
+
+      @keyframes recruitShimmer {
+        100% {
+          transform: translateX(120%);
+        }
+      }
+
+      @keyframes recruitPulse {
+        0% {
+          box-shadow: 0 0 0 0 rgba(255, 180, 93, 0.52);
+        }
+        70% {
+          box-shadow: 0 0 0 10px rgba(255, 180, 93, 0);
+        }
+        100% {
+          box-shadow: 0 0 0 0 rgba(255, 180, 93, 0);
+        }
+      }
+
+      @media (min-width: 760px) {
+        .recruit-hero {
+          padding: 28px 28px 26px;
+        }
+
+        .recruit-hero__chips {
+          grid-template-columns: repeat(3, minmax(0, 1fr));
+        }
+
+        .recruit-card {
+          padding: 22px;
+        }
+
+        .recruit-progress__header {
+          display: flex;
+          align-items: flex-start;
+          justify-content: space-between;
+        }
+
+        .recruit-progress__deadline {
+          width: auto;
+          justify-content: flex-start;
+          text-align: left;
+        }
+
+        .recruit-fields {
+          grid-template-columns: repeat(2, minmax(0, 1fr));
+        }
+
+        .recruit-field--full,
+        .recruit-motivation,
+        .recruit-actions {
+          grid-column: 1 / -1;
+        }
+
+        .recruit-modal {
+          align-items: center;
+        }
+
+        .recruit-modal__dialog {
+          padding: 24px 24px 22px;
+        }
+
+        .recruit-modal__actions {
+          grid-template-columns: repeat(2, minmax(0, 1fr));
+        }
+      }
+
+      @media (min-width: 980px) {
+        .recruit-grid {
+          grid-template-columns: minmax(0, 1.5fr) minmax(320px, 0.82fr);
+          align-items: start;
+        }
+
+        .recruit-sticky {
+          position: sticky;
+          top: max(18px, env(safe-area-inset-top));
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <main class="recruit-page">
+      <div class="recruit-topbar">
+        <a href="./index.html" aria-label="Retour accueil Dominoes Lakay">
+          <img class="recruit-logo" src="/logo.png" alt="Dominoes Lakay" width="500" height="500" />
+        </a>
+        <a class="recruit-topbar__link" href="./index.html">Retour accueil</a>
+      </div>
+
+      <section class="recruit-hero">
+        <span class="recruit-kicker"><i class="fa-solid fa-bolt"></i> Campagne ouverte</span>
+        <h1>Deviens ambassadeur Dominoes Lakay</h1>
+        <p>
+          Nous recrutons des profils solides, rapides et capables de mobiliser leur réseau. Les places sont limitées et la
+          campagne se ferme le <strong>lundi 6 avril 2026</strong>.
+        </p>
+        <div class="recruit-hero__chips">
+          <div class="recruit-chip"><i class="fa-solid fa-location-dot"></i> 10 profils retenus par departement</div>
+          <div class="recruit-chip"><i class="fa-solid fa-trophy"></i> Seuls les meilleurs dossiers seront selectionnes</div>
+          <div class="recruit-chip"><i class="fa-solid fa-clock"></i> Cloture proche de la campagne</div>
+        </div>
+      </section>
+
+      <section class="recruit-grid">
+        <div class="recruit-card">
+          <div class="recruit-form__header">
+            <h2>Envoyer une candidature</h2>
+            <p>
+              Remplis ce formulaire avec precision. Nous utiliserons ces informations pour analyser ton profil et te recontacter.
+            </p>
+          </div>
+
+          <div id="recruitmentStatus" class="recruit-status" aria-live="polite"></div>
+
+          <form id="recruitmentForm" class="recruit-form" novalidate>
+            <div class="recruit-fields">
+              <div class="recruit-field">
+                <label for="firstName">Nom</label>
+                <input id="firstName" name="firstName" class="recruit-input" type="text" autocomplete="given-name" required />
+              </div>
+
+              <div class="recruit-field">
+                <label for="lastName">Prenom</label>
+                <input id="lastName" name="lastName" class="recruit-input" type="text" autocomplete="family-name" required />
+              </div>
+
+              <div class="recruit-field">
+                <label for="sex">Sexe</label>
+                <select id="sex" name="sex" class="recruit-select" required>
+                  <option value="">Choisir</option>
+                  <option value="homme">Homme</option>
+                  <option value="femme">Femme</option>
+                  <option value="autre">Autre</option>
+                </select>
+              </div>
+
+              <div class="recruit-field">
+                <label for="phone">Numero de telephone</label>
+                <input id="phone" name="phone" class="recruit-input" type="tel" inputmode="tel" autocomplete="tel" placeholder="Ex: 50940507232" required />
+              </div>
+
+              <div class="recruit-field recruit-field--full">
+                <label for="fullAddress">Adresse complete</label>
+                <input id="fullAddress" name="fullAddress" class="recruit-input" type="text" autocomplete="street-address" placeholder="Commune, quartier, rue, repere" required />
+              </div>
+
+              <div class="recruit-field">
+                <label for="currentPosition">Poste actuel ou sans emploi</label>
+                <input id="currentPosition" name="currentPosition" class="recruit-input" type="text" placeholder="Ex: commerçant / etudiant / sans emploi" required />
+              </div>
+
+              <div class="recruit-field">
+                <label for="networkReach">Quantite de reseau</label>
+                <input id="networkReach" name="networkReach" class="recruit-input" type="number" min="1" step="1" inputmode="numeric" placeholder="Ex: 500" required />
+                <div class="recruit-field__hint">Combien de personnes peux-tu toucher rapidement avec un message ?</div>
+              </div>
+
+              <div class="recruit-motivation">
+                <label for="motivationLetter">Lettre de motivation</label>
+                <textarea
+                  id="motivationLetter"
+                  name="motivationLetter"
+                  class="recruit-textarea"
+                  minlength="40"
+                  maxlength="2500"
+                  placeholder="Explique pourquoi tu veux rejoindre Dominoes Lakay, ce que tu peux apporter, et pourquoi nous devrions te choisir."
+                  required
+                ></textarea>
+                <div class="recruit-motivation__meta">
+                  <span>Montre ta seriete, ton influence et ta disponibilite.</span>
+                  <span id="motivationCount">0 / 2500</span>
+                </div>
+              </div>
+
+              <div class="recruit-actions">
+                <button id="recruitmentSubmitBtn" class="recruit-submit" type="submit">Envoyer ma candidature</button>
+                <a
+                  class="recruit-secondary"
+                  href="./contrat.html"
+                  target="_blank"
+                  rel="noopener"
+                >
+                  Voir le contrat
+                </a>
+                <a
+                  class="recruit-secondary"
+                  href="https://wa.me/50940507232?text=Bonjour%20assistance%2C%20je%20veux%20plus%20d'informations%20sur%20le%20recrutement%20Dominoes%20Lakay."
+                  target="_blank"
+                  rel="noopener"
+                >
+                  Contacter l'assistance
+                </a>
+              </div>
+              <div class="recruit-contract-note">
+                Avant l'envoi, une confirmation te demandera si tu as lu le contrat et compris les termes.
+              </div>
+            </div>
+          </form>
+        </div>
+
+        <div class="recruit-sticky">
+          <div class="recruit-card recruit-progress">
+            <div class="recruit-progress__header">
+              <div>
+                <div class="recruit-progress__eyebrow">Candidatures en cours</div>
+                <div id="recruitmentCountValue" class="recruit-progress__count">Presque complet</div>
+                <div id="recruitmentProgressMeta" class="recruit-progress__meta">Les places restantes diminuent vite.</div>
+              </div>
+              <div id="recruitmentDeadlinePill" class="recruit-progress__deadline">
+                <i class="fa-solid fa-hourglass-half"></i>
+                <span>Cloture imminente</span>
+              </div>
+            </div>
+
+            <div class="recruit-progress__track" aria-hidden="true">
+              <div id="recruitmentProgressFill" class="recruit-progress__fill"></div>
+            </div>
+
+            <div class="recruit-progress__footer">
+              <span id="recruitmentUrgencyText" class="recruit-progress__pulse">Selection presque complete</span>
+              <span id="recruitmentProgressFootnote">La campagne entre dans sa phase finale.</span>
+            </div>
+          </div>
+
+          <div class="recruit-card recruit-sidecard">
+            <div class="recruit-sidecard__box">
+              <h3>Conseils pour etre retenu</h3>
+              <ul>
+                <li>Donne une adresse complete et un numero joignable.</li>
+                <li>Explique concretement ce que tu peux apporter au projet.</li>
+                <li>Sois precis sur la taille de ton reseau et ta disponibilite.</li>
+              </ul>
+            </div>
+
+            <div class="recruit-sidecard__box">
+              <h3>Apres l'envoi</h3>
+              <p>
+                Ton dossier entre en attente de verification. Si ton profil est retenu pour la suite, l'equipe pourra te recontacter.
+              </p>
+            </div>
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <div id="contractConfirmModal" class="recruit-modal" aria-hidden="true" role="dialog" aria-modal="true" aria-labelledby="contractConfirmTitle">
+      <div class="recruit-modal__dialog">
+        <span class="recruit-modal__eyebrow"><i class="fa-solid fa-file-signature"></i> Verification contrat</span>
+        <h2 id="contractConfirmTitle" class="recruit-modal__title">As-tu lu le contrat et compris les termes ?</h2>
+        <p class="recruit-modal__text">
+          Avant d'envoyer ta candidature ambassadeur, confirme que tu as pris connaissance des conditions de collaboration.
+        </p>
+        <ul class="recruit-modal__list">
+          <li><i class="fa-solid fa-circle-check"></i><span>Le contrat explique le cadre de collaboration, la duree et les engagements attendus.</span></li>
+          <li><i class="fa-solid fa-circle-check"></i><span>Tu peux le consulter maintenant avant de valider ta demande.</span></li>
+        </ul>
+        <div class="recruit-modal__actions">
+          <button id="contractConfirmYes" type="button" class="recruit-modal__primary">Oui, envoyer ma candidature</button>
+          <a id="contractConfirmView" class="recruit-modal__secondary" href="./contrat.html" target="_blank" rel="noopener">Voir le contrat</a>
+        </div>
+      </div>
+    </div>
+
+    <script type="module" src="./recrutement.js"></script>
+  </body>
+</html>

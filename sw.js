@@ -1,4 +1,4 @@
-const CACHE_VERSION = "domino-static-v2";
+const CACHE_VERSION = "domino-static-v4";
 const PAGE_CACHE = `${CACHE_VERSION}-pages`;
 const ASSET_CACHE = `${CACHE_VERSION}-assets`;
 const MEDIA_CACHE = `${CACHE_VERSION}-media`;
@@ -8,6 +8,8 @@ const CORE_PRECACHE = [
   "/index.html",
   "/home.html",
   "/auth.html",
+  "/recrutement.html",
+  "/contrat.html",
   "/jeu.html",
   "/jeu-duel.html",
   "/site.webmanifest",
@@ -72,6 +74,8 @@ async function networkFirst(request, cacheName) {
       const fallbackCandidates = [
         url.pathname,
         `${url.pathname.replace(/\/+$/, "") || "/"}/index.html`,
+        "/contrat.html",
+        "/recrutement.html",
         "/jeu-duel.html",
         "/jeu.html",
         "/index.html",

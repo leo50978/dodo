@@ -47,6 +47,8 @@ const ANALYTICS_PRESENCE_DAILY_COLLECTION = "analyticsPresenceDaily";
 const ANALYTICS_PRESENCE_MONTHLY_COLLECTION = "analyticsPresenceMonthly";
 const ANALYTICS_PRESENCE_HOUR_COLLECTION = "analyticsPresenceHours";
 const ANALYTICS_PRESENCE_WEEKDAY_COLLECTION = "analyticsPresenceWeekdays";
+const RECRUITMENT_APPLICATIONS_COLLECTION = "recruitmentApplications";
+const RECRUITMENT_CAMPAIGN_DOC = "recruitmentCampaign";
 
 const RATE_HTG_TO_DOES = 20;
 const DEFAULT_STAKE_REWARD_MULTIPLIER = 3;
@@ -84,6 +86,8 @@ const WELCOME_BONUS_HTG_AMOUNT = 25;
 const DPAYMENT_ADMIN_BOOTSTRAP_DOC = "dpayment_admin_bootstrap";
 const APP_PUBLIC_SETTINGS_DOC = "public_app_settings";
 const DASHBOARD_DEFAULT_NOTIFICATION_URL = "./Dpayment.html";
+const RECRUITMENT_TARGET_COUNT = 100;
+const RECRUITMENT_DEADLINE_MS = Date.parse("2026-04-07T03:59:59.999Z");
 const DEFAULT_GAME_STAKE_OPTIONS = Object.freeze([
   Object.freeze({ stakeDoes: 100, enabled: true, sortOrder: 10 }),
   Object.freeze({ stakeDoes: 500, enabled: false, sortOrder: 20 }),
@@ -1035,6 +1039,42 @@ function sanitizePhone(value, maxLength = 40) {
 
 function phoneDigits(value = "") {
   return String(value || "").replace(/\D/g, "");
+}
+
+function hashText(value = "") {
+  return crypto.createHash("sha256").update(String(value || "")).digest("hex");
+}
+
+function normalizeRecruitmentRole(value = "") {
+  const normalized = sanitizeText(value || "", 20).toLowerCase();
+  if (!normalized) return "ambassador";
+  if (normalized === "agent" || normalized === "ambassador" || normalized === "both") {
+    return normalized;
+  }
+  return "ambassador";
+}
+
+function normalizeRecruitmentSex(value = "") {
+  const normalized = sanitizeText(value || "", 16).toLowerCase();
+  if (normalized === "homme" || normalized === "femme" || normalized === "autre") {
+    return normalized;
+  }
+  return "";
+}
+
+function buildRecruitmentCampaignSnapshot(data = {}) {
+  const applicationsCount = safeInt(data?.applicationsCount);
+  const targetCount = Math.max(1, safeInt(data?.targetCount) || RECRUITMENT_TARGET_COUNT);
+  const deadlineMs = safeInt(data?.deadlineMs) || RECRUITMENT_DEADLINE_MS;
+  const nowMs = Date.now();
+  return {
+    applicationsCount,
+    targetCount,
+    deadlineMs,
+    remainingMs: Math.max(0, deadlineMs - nowMs),
+    progressRatio: Math.min(1, applicationsCount / targetCount),
+    updatedAtMs: safeInt(data?.updatedAtMs),
+  };
 }
 
 function normalizeSearchText(value = "") {
@@ -11273,6 +11313,162 @@ exports.getPublicRuntimeConfigSecure = publicOnCall("getPublicRuntimeConfigSecur
   };
 }, { minInstances: 1 });
 
+exports.getRecruitmentCampaignSnapshotSecure = publicOnCall("getRecruitmentCampaignSnapshotSecure", async () => {
+  const snap = await db.collection(ANALYTICS_META_COLLECTION).doc(RECRUITMENT_CAMPAIGN_DOC).get();
+  const data = snap.exists ? (snap.data() || {}) : {};
+  return {
+    ok: true,
+    snapshot: buildRecruitmentCampaignSnapshot(data),
+  };
+});
+
+exports.recordRecruitmentVisitSecure = publicOnCall("recordRecruitmentVisitSecure", async (request) => {
+  const payload = request.data && typeof request.data === "object" ? request.data : {};
+  const sessionId = sanitizeText(payload.sessionId || "", 120);
+  const nowMs = Date.now();
+  const nowIso = new Date(nowMs).toISOString();
+  const campaignRef = db.collection(ANALYTICS_META_COLLECTION).doc(RECRUITMENT_CAMPAIGN_DOC);
+
+  const snapshot = await db.runTransaction(async (tx) => {
+    const campaignSnap = await tx.get(campaignRef);
+    const campaignData = campaignSnap.exists ? (campaignSnap.data() || {}) : {};
+    const knownSessions = Array.isArray(campaignData.recentVisitSessions)
+      ? campaignData.recentVisitSessions.filter((item) => typeof item === "string")
+      : [];
+    const nextSessions = sessionId
+      ? [sessionId, ...knownSessions.filter((item) => item !== sessionId)].slice(0, 40)
+      : knownSessions.slice(0, 40);
+    const hasSession = sessionId && knownSessions.includes(sessionId);
+    const nextVisitCount = safeInt(campaignData.pageVisitCount) + (hasSession ? 0 : 1);
+
+    tx.set(campaignRef, {
+      pageVisitCount: nextVisitCount,
+      targetCount: safeInt(campaignData.targetCount) || RECRUITMENT_TARGET_COUNT,
+      deadlineMs: safeInt(campaignData.deadlineMs) || RECRUITMENT_DEADLINE_MS,
+      recentVisitSessions: nextSessions,
+      lastVisitAtMs: nowMs,
+      lastVisitAt: nowIso,
+      updatedAtMs: nowMs,
+      updatedAt: nowIso,
+    }, { merge: true });
+
+    return {
+      ...campaignData,
+      pageVisitCount: nextVisitCount,
+      targetCount: safeInt(campaignData.targetCount) || RECRUITMENT_TARGET_COUNT,
+      deadlineMs: safeInt(campaignData.deadlineMs) || RECRUITMENT_DEADLINE_MS,
+      updatedAtMs: nowMs,
+      lastVisitAtMs: nowMs,
+    };
+  });
+
+  return {
+    ok: true,
+    snapshot: buildRecruitmentCampaignSnapshot(snapshot),
+  };
+});
+
+exports.submitRecruitmentApplicationSecure = publicOnCall("submitRecruitmentApplicationSecure", async (request) => {
+  const payload = request.data && typeof request.data === "object" ? request.data : {};
+  const firstName = sanitizeText(payload.firstName || "", 80);
+  const lastName = sanitizeText(payload.lastName || "", 80);
+  const sex = normalizeRecruitmentSex(payload.sex || "");
+  const phone = sanitizePhone(payload.phone || "", 40);
+  const phoneKey = phoneDigits(phone);
+  const fullAddress = sanitizeText(payload.fullAddress || "", 220);
+  const currentPosition = sanitizeText(payload.currentPosition || "", 120);
+  const networkReach = safeInt(payload.networkReach);
+  const motivationLetter = sanitizeText(payload.motivationLetter || "", 2500);
+  const role = normalizeRecruitmentRole(payload.role || "");
+
+  if (!firstName || !lastName || !sex || !phoneKey || !fullAddress || !currentPosition) {
+    throw new HttpsError("invalid-argument", "Informations de candidature incomplètes.");
+  }
+
+  if (phoneKey.length < 8) {
+    throw new HttpsError("invalid-argument", "Numéro de téléphone invalide.");
+  }
+
+  if (networkReach <= 0) {
+    throw new HttpsError("invalid-argument", "Quantité de réseau invalide.");
+  }
+
+  if (motivationLetter.length < 40) {
+    throw new HttpsError("invalid-argument", "Lettre de motivation trop courte.");
+  }
+
+  const authUid = sanitizeText(request.auth?.uid || "", 128);
+  const authEmail = sanitizeEmail(request.auth?.token?.email || "", 160);
+  const applicationRef = db.collection(RECRUITMENT_APPLICATIONS_COLLECTION).doc(hashText(phoneKey));
+  const campaignRef = db.collection(ANALYTICS_META_COLLECTION).doc(RECRUITMENT_CAMPAIGN_DOC);
+  const applicationCode = `REC-${randomCode(8)}`;
+  const nowMs = Date.now();
+  const nowIso = new Date(nowMs).toISOString();
+
+  const snapshot = await db.runTransaction(async (tx) => {
+    const [applicationSnap, campaignSnap] = await Promise.all([
+      tx.get(applicationRef),
+      tx.get(campaignRef),
+    ]);
+
+    if (applicationSnap.exists) {
+      throw new HttpsError("already-exists", "Une candidature existe déjà pour ce numéro.", {
+        code: "recruitment-application-exists",
+      });
+    }
+
+    const campaignData = campaignSnap.exists ? (campaignSnap.data() || {}) : {};
+    const nextCount = safeInt(campaignData.applicationsCount) + 1;
+
+    tx.set(applicationRef, {
+      applicationCode,
+      firstName,
+      lastName,
+      fullName: `${firstName} ${lastName}`.trim(),
+      sex,
+      phone,
+      phoneDigits: phoneKey,
+      phoneHash: hashText(phoneKey),
+      fullAddress,
+      currentPosition,
+      networkReach,
+      motivationLetter,
+      role,
+      status: "pending",
+      source: "public_form",
+      authUid,
+      authEmail,
+      createdAt: nowIso,
+      createdAtMs: nowMs,
+      updatedAt: nowIso,
+      updatedAtMs: nowMs,
+    }, { merge: true });
+
+    tx.set(campaignRef, {
+      applicationsCount: nextCount,
+      pageVisitCount: safeInt(campaignData.pageVisitCount),
+      targetCount: safeInt(campaignData.targetCount) || RECRUITMENT_TARGET_COUNT,
+      deadlineMs: safeInt(campaignData.deadlineMs) || RECRUITMENT_DEADLINE_MS,
+      updatedAtMs: nowMs,
+      updatedAt: nowIso,
+    }, { merge: true });
+
+    return buildRecruitmentCampaignSnapshot({
+      ...campaignData,
+      applicationsCount: nextCount,
+      targetCount: safeInt(campaignData.targetCount) || RECRUITMENT_TARGET_COUNT,
+      deadlineMs: safeInt(campaignData.deadlineMs) || RECRUITMENT_DEADLINE_MS,
+      updatedAtMs: nowMs,
+    });
+  });
+
+  return {
+    ok: true,
+    applicationCode,
+    snapshot,
+  };
+});
+
 exports.getShareSitePromoStatus = publicOnCall("getShareSitePromoStatus", async (request) => {
   const { uid } = assertAuth(request);
   const [snap, walletSnap] = await Promise.all([
@@ -11551,6 +11747,55 @@ exports.getDuelAnalyticsSnapshot = publicOnCall(
     memory: "1GiB",
   }
 );
+
+exports.getRecruitmentAnalyticsSnapshot = publicOnCall("getRecruitmentAnalyticsSnapshot", async (request) => {
+  assertFinanceAdmin(request);
+
+  const [campaignSnap, applicationsSnap] = await Promise.all([
+    db.collection(ANALYTICS_META_COLLECTION).doc(RECRUITMENT_CAMPAIGN_DOC).get(),
+    db.collection(RECRUITMENT_APPLICATIONS_COLLECTION)
+      .orderBy("createdAtMs", "desc")
+      .limit(100)
+      .get(),
+  ]);
+
+  const campaignData = campaignSnap.exists ? (campaignSnap.data() || {}) : {};
+  const campaign = buildRecruitmentCampaignSnapshot(campaignData);
+  const pageVisitCount = safeInt(campaignData.pageVisitCount);
+  const recentApplications = applicationsSnap.docs.map((docSnap) => {
+    const data = docSnap.data() || {};
+    return {
+      id: docSnap.id,
+      applicationCode: sanitizeText(data.applicationCode || "", 40),
+      fullName: sanitizeText(data.fullName || "", 180),
+      sex: normalizeRecruitmentSex(data.sex || ""),
+      phone: sanitizePhone(data.phone || "", 40),
+      fullAddress: sanitizeText(data.fullAddress || "", 220),
+      currentPosition: sanitizeText(data.currentPosition || "", 120),
+      networkReach: safeInt(data.networkReach),
+      motivationLetter: sanitizeText(data.motivationLetter || "", 2500),
+      status: sanitizeText(data.status || "", 24).toLowerCase() || "pending",
+      createdAtMs: safeInt(data.createdAtMs),
+    };
+  });
+
+  const applicationsCount = safeInt(campaign.applicationsCount);
+  return {
+    ok: true,
+    snapshot: {
+      summary: {
+        pageVisitCount,
+        applicationsCount,
+        conversionRatePct: pageVisitCount > 0 ? applicationsCount / pageVisitCount : 0,
+        targetCount: campaign.targetCount,
+        deadlineMs: campaign.deadlineMs,
+        remainingMs: campaign.remainingMs,
+        generatedAtMs: Date.now(),
+      },
+      recentApplications: recentApplications.slice(0, 40),
+    },
+  };
+});
 
 exports.getClientAcquisitionSnapshot = publicOnCall("getClientAcquisitionSnapshot", async (request) => {
   assertFinanceAdmin(request);

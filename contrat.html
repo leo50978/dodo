@@ -1,0 +1,576 @@
+<!doctype html>
+<html lang="fr">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <meta
+      name="description"
+      content="Programme ambassadeur Dominoes Lakay. Presentation officielle, conditions, remuneration et modalites d'adhesion."
+    />
+    <meta name="theme-color" content="#f4efe7" />
+    <title>Programme Ambassadeur | Dominoes Lakay</title>
+    <link rel="icon" type="image/png" href="/favicon-96x96.png" sizes="96x96" />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <link rel="shortcut icon" href="/favicon.ico" />
+    <link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&family=Fraunces:wght@600;700&display=swap"
+      rel="stylesheet"
+    />
+    <style>
+      :root {
+        --bg: #f4efe7;
+        --surface: rgba(255, 252, 246, 0.94);
+        --surface-strong: #fffaf2;
+        --line: rgba(48, 39, 27, 0.12);
+        --text: #1e1b17;
+        --muted: #665d52;
+        --accent: #c66a17;
+        --accent-soft: rgba(198, 106, 23, 0.1);
+        --accent-strong: #9c4f0d;
+        --shadow: 0 18px 40px rgba(59, 42, 18, 0.09);
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      html,
+      body {
+        margin: 0;
+        min-height: 100%;
+        background:
+          radial-gradient(circle at top, rgba(198, 106, 23, 0.08), transparent 28%),
+          linear-gradient(180deg, #f8f3eb 0%, #efe7dc 100%);
+        color: var(--text);
+        font-family: "Manrope", system-ui, sans-serif;
+      }
+
+      body {
+        padding:
+          max(14px, env(safe-area-inset-top))
+          max(14px, env(safe-area-inset-right))
+          max(28px, env(safe-area-inset-bottom))
+          max(14px, env(safe-area-inset-left));
+      }
+
+      a {
+        color: inherit;
+      }
+
+      .contract-page {
+        max-width: 1160px;
+        margin: 0 auto;
+        display: grid;
+        gap: 18px;
+      }
+
+      .contract-topbar {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+      }
+
+      .contract-logo {
+        width: min(140px, 34vw);
+        height: auto;
+        display: block;
+      }
+
+      .contract-back {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        min-height: 42px;
+        padding: 0 14px;
+        border-radius: 14px;
+        border: 1px solid var(--line);
+        background: rgba(255, 255, 255, 0.62);
+        box-shadow: 0 8px 20px rgba(59, 42, 18, 0.05);
+        text-decoration: none;
+        font-size: 0.9rem;
+        font-weight: 700;
+      }
+
+      .hero,
+      .section,
+      .aside-card {
+        border: 1px solid var(--line);
+        border-radius: 28px;
+        background: var(--surface);
+        box-shadow: var(--shadow);
+        backdrop-filter: blur(10px);
+      }
+
+      .hero {
+        padding: 24px 18px;
+        overflow: hidden;
+      }
+
+      .hero__eyebrow {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        padding: 8px 12px;
+        border-radius: 999px;
+        background: var(--accent-soft);
+        border: 1px solid rgba(198, 106, 23, 0.16);
+        color: var(--accent-strong);
+        font-size: 0.75rem;
+        font-weight: 800;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+      }
+
+      .hero h1 {
+        margin: 16px 0 10px;
+        font-family: "Fraunces", Georgia, serif;
+        font-size: clamp(2rem, 8.8vw, 4rem);
+        line-height: 0.98;
+        letter-spacing: -0.02em;
+      }
+
+      .hero__lede {
+        margin: 0;
+        max-width: 52rem;
+        color: var(--muted);
+        font-size: 1rem;
+        line-height: 1.76;
+      }
+
+      .hero__meta {
+        display: grid;
+        gap: 10px;
+        margin-top: 18px;
+      }
+
+      .hero__chip {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        padding: 12px 14px;
+        border-radius: 18px;
+        border: 1px solid rgba(48, 39, 27, 0.08);
+        background: rgba(255, 255, 255, 0.7);
+        color: #443b31;
+        font-size: 0.92rem;
+      }
+
+      .hero__chip strong {
+        color: var(--text);
+      }
+
+      .layout {
+        display: grid;
+        gap: 18px;
+      }
+
+      .main {
+        display: grid;
+        gap: 18px;
+      }
+
+      .section {
+        padding: 18px;
+      }
+
+      .section__eyebrow {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        color: var(--accent-strong);
+        font-size: 0.74rem;
+        font-weight: 800;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+      }
+
+      .section h2 {
+        margin: 12px 0 10px;
+        font-family: "Fraunces", Georgia, serif;
+        font-size: 1.45rem;
+        line-height: 1.08;
+        letter-spacing: -0.02em;
+      }
+
+      .section p {
+        margin: 0;
+        color: var(--muted);
+        font-size: 0.97rem;
+        line-height: 1.78;
+      }
+
+      .list {
+        margin: 16px 0 0;
+        padding: 0;
+        list-style: none;
+        display: grid;
+        gap: 10px;
+      }
+
+      .list li {
+        padding: 13px 14px;
+        border-radius: 18px;
+        border: 1px solid rgba(48, 39, 27, 0.08);
+        background: rgba(255, 255, 255, 0.6);
+        color: #4d4439;
+        font-size: 0.93rem;
+        line-height: 1.64;
+      }
+
+      .list li strong {
+        color: var(--text);
+      }
+
+      .grid {
+        display: grid;
+        gap: 12px;
+        margin-top: 16px;
+      }
+
+      .tile {
+        padding: 14px;
+        border-radius: 20px;
+        border: 1px solid rgba(48, 39, 27, 0.08);
+        background: rgba(255, 255, 255, 0.65);
+      }
+
+      .tile strong {
+        display: block;
+        margin: 0 0 6px;
+        color: var(--text);
+        font-size: 0.98rem;
+      }
+
+      .tile p {
+        margin: 0;
+        color: var(--muted);
+        font-size: 0.92rem;
+        line-height: 1.65;
+      }
+
+      .aside {
+        display: grid;
+        gap: 18px;
+      }
+
+      .aside-card {
+        padding: 18px;
+      }
+
+      .aside-card h3 {
+        margin: 0 0 10px;
+        font-family: "Fraunces", Georgia, serif;
+        font-size: 1.18rem;
+        line-height: 1.12;
+      }
+
+      .aside-card p {
+        margin: 0;
+        color: var(--muted);
+        font-size: 0.93rem;
+        line-height: 1.68;
+      }
+
+      .summary {
+        display: grid;
+        gap: 10px;
+        margin-top: 14px;
+      }
+
+      .summary__row {
+        display: flex;
+        align-items: flex-start;
+        justify-content: space-between;
+        gap: 12px;
+        padding: 12px 13px;
+        border-radius: 16px;
+        background: rgba(255, 255, 255, 0.64);
+        border: 1px solid rgba(48, 39, 27, 0.08);
+        color: #4f4539;
+        font-size: 0.9rem;
+      }
+
+      .summary__row strong {
+        color: var(--text);
+      }
+
+      .cta-stack {
+        display: grid;
+        gap: 10px;
+        margin-top: 16px;
+      }
+
+      .cta-primary,
+      .cta-secondary {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        min-height: 52px;
+        padding: 0 16px;
+        border-radius: 16px;
+        text-decoration: none;
+        font-weight: 800;
+      }
+
+      .cta-primary {
+        background: linear-gradient(135deg, #c66a17, #df8c39);
+        color: #fff;
+        box-shadow: 0 16px 28px rgba(198, 106, 23, 0.18);
+      }
+
+      .cta-secondary {
+        background: rgba(255, 255, 255, 0.62);
+        border: 1px solid rgba(48, 39, 27, 0.1);
+      }
+
+      .footer-note {
+        padding: 15px;
+        border-radius: 18px;
+        background: rgba(198, 106, 23, 0.08);
+        border: 1px solid rgba(198, 106, 23, 0.12);
+        color: #5e4d3d;
+        font-size: 0.9rem;
+        line-height: 1.65;
+      }
+
+      @media (min-width: 760px) {
+        .hero {
+          padding: 30px 28px;
+        }
+
+        .hero__meta,
+        .grid {
+          grid-template-columns: repeat(2, minmax(0, 1fr));
+        }
+      }
+
+      @media (min-width: 1024px) {
+        .layout {
+          grid-template-columns: minmax(0, 1.55fr) minmax(320px, 0.82fr);
+          align-items: start;
+        }
+
+        .aside {
+          position: sticky;
+          top: max(18px, env(safe-area-inset-top));
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <main class="contract-page">
+      <div class="contract-topbar">
+        <a href="./index.html" aria-label="Retour accueil Dominoes Lakay">
+          <img class="contract-logo" src="/logo.png" alt="Dominoes Lakay" width="500" height="500" />
+        </a>
+        <a class="contract-back" href="./recrutement.html">Retour au formulaire</a>
+      </div>
+
+      <section class="hero">
+        <span class="hero__eyebrow">Programme ambassadeur</span>
+        <h1>Contenu officiel du programme ambassadeur Dominoes Lakay</h1>
+        <p class="hero__lede">
+          Dominoes Lakay met en place un programme ambassadeur destine aux personnes souhaitant s'impliquer activement
+          dans le developpement de sa communaute. Ce programme offre l'opportunite de collaborer avec une plateforme de
+          jeu en ligne en pleine croissance, tout en generant des revenus bases sur la performance de son reseau.
+        </p>
+        <div class="hero__meta">
+          <div class="hero__chip"><strong>Duree</strong><span>Contrat d'un an, renouvelable selon l'engagement et les performances.</span></div>
+          <div class="hero__chip"><strong>Adhesion</strong><span>Frais d'inscription unique de 10 000 GDES.</span></div>
+          <div class="hero__chip"><strong>Modele</strong><span>Revenus bases sur l'activite et la taille du reseau developpe.</span></div>
+          <div class="hero__chip"><strong>Portee</strong><span>Programme pense pour accompagner une croissance internationale.</span></div>
+        </div>
+      </section>
+
+      <section class="layout">
+        <div class="main">
+          <section class="section">
+            <span class="section__eyebrow">Presentation du programme</span>
+            <h2>Une collaboration structuree autour du developpement de la communaute</h2>
+            <p>
+              Dominoes Lakay construit ce programme afin d'integrer des profils capables d'accompagner l'expansion de la
+              plateforme. Le programme s'adresse aux personnes qui souhaitent contribuer au developpement d'un projet
+              serieux, evolutif et organise autour de la performance du reseau.
+            </p>
+          </section>
+
+          <section class="section">
+            <span class="section__eyebrow">Role de l'ambassadeur</span>
+            <h2>Mission et positionnement</h2>
+            <p>
+              En tant qu'ambassadeur Dominoes Lakay, vous intervenez comme partenaire independant. Votre role consiste a
+              soutenir la croissance de la plateforme en developpant, structurant et animant votre propre reseau de joueurs.
+            </p>
+            <ul class="list">
+              <li>Promouvoir la plateforme aupres de nouveaux utilisateurs.</li>
+              <li>Inviter des joueurs a rejoindre le systeme.</li>
+              <li>Developper et animer votre propre reseau de joueurs.</li>
+              <li>Contribuer activement a l'expansion de la plateforme de maniere professionnelle.</li>
+            </ul>
+          </section>
+
+          <section class="section">
+            <span class="section__eyebrow">Systeme de remuneration</span>
+            <h2>Un modele simple et transparent</h2>
+            <p>
+              Le programme repose sur un modele de partage de revenus clair. L'ambassadeur beneficie de 50 % de benefice
+              genere par les joueurs qu'il a invites. Les revenus sont produits a chaque match remporte par les joueurs
+              affilies et evoluent selon l'activite ainsi que la taille du reseau developpe.
+            </p>
+            <div class="grid">
+              <div class="tile">
+                <strong>50 % de benefice</strong>
+                <p>L'ambassadeur beneficie d'une part definie sur les performances du reseau qu'il a constitue.</p>
+              </div>
+              <div class="tile">
+                <strong>Revenus lies aux victoires</strong>
+                <p>Les gains sont generes a chaque match remporte par les joueurs invites.</p>
+              </div>
+              <div class="tile">
+                <strong>Evolution proportionnelle</strong>
+                <p>Le revenu progresse en fonction de l'engagement et de l'activite du reseau.</p>
+              </div>
+              <div class="tile">
+                <strong>Performance mesurable</strong>
+                <p>Le systeme permet a chacun de construire un revenu proportionnel a son implication.</p>
+              </div>
+            </div>
+          </section>
+
+          <section class="section">
+            <span class="section__eyebrow">Expansion et vision</span>
+            <h2>Un projet inscrit dans une dynamique internationale</h2>
+            <p>
+              Dominoes Lakay s'inscrit dans une croissance progressive a l'international. La plateforme est actuellement
+              presente dans plusieurs pays, notamment le Benin, le Bresil et le Venezuela. L'objectif est d'etendre sa
+              presence a l'ensemble du continent africain ainsi qu'en Amerique latine.
+            </p>
+            <div class="grid">
+              <div class="tile">
+                <strong>Presence actuelle</strong>
+                <p>Benin, Bresil et Venezuela.</p>
+              </div>
+              <div class="tile">
+                <strong>Objectif</strong>
+                <p>Developper progressivement Dominoes Lakay sur le continent africain et en Amerique latine.</p>
+              </div>
+              <div class="tile">
+                <strong>Produits en preparation</strong>
+                <p>Lancement d'un jeu de morpion en ligne et d'autres produits pour enrichir l'ecosysteme.</p>
+              </div>
+              <div class="tile">
+                <strong>Impact pour l'ambassadeur</strong>
+                <p>Chaque phase d'expansion cree de nouvelles opportunites de reseau et de croissance.</p>
+              </div>
+            </div>
+          </section>
+
+          <section class="section">
+            <span class="section__eyebrow">Avantages du programme</span>
+            <h2>Des avantages concrets et evolutifs</h2>
+            <ul class="list">
+              <li>Une opportunite de revenus evolutive.</li>
+              <li>Une activite flexible, accessible a distance.</li>
+              <li>La possibilite de developper un reseau personnel.</li>
+              <li>Une participation a un projet en croissance internationale.</li>
+            </ul>
+          </section>
+
+          <section class="section">
+            <span class="section__eyebrow">Duree et conditions du contrat</span>
+            <h2>Cadre contractuel</h2>
+            <ul class="list">
+              <li>Le contrat ambassadeur est etabli pour une duree de un (1) an.</li>
+              <li>Il est renouvelable en fonction des performances et de l'engagement de l'ambassadeur.</li>
+              <li>L'ambassadeur s'engage a respecter les regles et conditions definies par la plateforme.</li>
+            </ul>
+          </section>
+
+          <section class="section">
+            <span class="section__eyebrow">Conditions d'adhesion</span>
+            <h2>Acces au programme</h2>
+            <p>
+              L'acces au programme ambassadeur est soumis a un frais d'inscription unique de 10 000 GDES. Ce montant permet
+              l'activation du statut d'ambassadeur, l'integration officielle au programme et l'acces aux opportunites ainsi
+              qu'au systeme de remuneration.
+            </p>
+          </section>
+
+          <section class="section">
+            <span class="section__eyebrow">Engagement et responsabilite</span>
+            <h2>Une collaboration basee sur le serieux</h2>
+            <p>
+              Dominoes Lakay valorise une collaboration fondee sur le serieux, la transparence et l'engagement. Chaque
+              ambassadeur est invite a representer la plateforme de maniere professionnelle et responsable.
+            </p>
+          </section>
+
+          <section class="section">
+            <span class="section__eyebrow">Rejoindre le programme</span>
+            <h2>Soumettre une demande d'integration</h2>
+            <p>
+              Les personnes interessees peuvent soumettre leur demande d'integration au programme ambassadeur. Apres
+              validation, les instructions necessaires a l'activation du compte ambassadeur seront communiquees.
+            </p>
+          </section>
+
+          <section class="section">
+            <span class="section__eyebrow">Conclusion</span>
+            <h2>Une opportunite de collaboration structuree</h2>
+            <p>
+              Le programme ambassadeur Dominoes Lakay constitue une opportunite de collaboration structuree au sein d'un
+              projet en developpement. Il s'adresse aux personnes souhaitant s'impliquer dans un modele base sur la
+              performance, le reseau et la croissance.
+            </p>
+          </section>
+        </div>
+
+        <aside class="aside">
+          <div class="aside-card">
+            <h3>Resume contractuel</h3>
+            <p>Voici les points essentiels a retenir avant de valider votre candidature ambassadeur.</p>
+            <div class="summary">
+              <div class="summary__row"><span>Duree du contrat</span><strong>1 an</strong></div>
+              <div class="summary__row"><span>Renouvellement</span><strong>Selon performance et engagement</strong></div>
+              <div class="summary__row"><span>Frais d'inscription</span><strong>10 000 GDES</strong></div>
+              <div class="summary__row"><span>Modele de gain</span><strong>50 % de benefice genere par le reseau invite</strong></div>
+            </div>
+          </div>
+
+          <div class="aside-card">
+            <h3>Soumettre votre demande</h3>
+            <p>
+              Si vous avez lu et compris les termes du programme, vous pouvez revenir au formulaire pour envoyer votre
+              candidature.
+            </p>
+            <div class="cta-stack">
+              <a class="cta-primary" href="./recrutement.html">Retourner au formulaire</a>
+              <a
+                class="cta-secondary"
+                href="https://wa.me/50940507232?text=Bonjour%20assistance%2C%20je%20souhaite%20des%20precisions%20sur%20le%20programme%20ambassadeur%20Dominoes%20Lakay."
+                target="_blank"
+                rel="noopener"
+              >
+                Contacter l'assistance
+              </a>
+            </div>
+          </div>
+
+          <div class="footer-note">
+            La lecture de cette page confirme votre prise de connaissance du cadre du programme ambassadeur Dominoes Lakay.
+          </div>
+        </aside>
+      </section>
+    </main>
+
+    <script>
+      try {
+        window.localStorage.setItem("dl_recruitment_contract_seen_v1", String(Date.now()));
+      } catch (_) {}
+    </script>
+  </body>
+</html>

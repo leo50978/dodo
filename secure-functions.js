@@ -164,6 +164,18 @@ export async function claimWinRewardDuelSecure(payload = {}) {
   return invokeCallable("claimWinRewardDuel", payload, "Impossible de valider le gain duel.");
 }
 
+export async function getRecruitmentCampaignSnapshotSecure(payload = {}) {
+  return invokeCallable("getRecruitmentCampaignSnapshotSecure", payload, "Impossible de charger la campagne de recrutement.");
+}
+
+export async function recordRecruitmentVisitSecure(payload = {}) {
+  return invokeCallable("recordRecruitmentVisitSecure", payload, "Impossible d'enregistrer la visite recrutement.");
+}
+
+export async function submitRecruitmentApplicationSecure(payload = {}) {
+  return invokeCallable("submitRecruitmentApplicationSecure", payload, "Impossible d'envoyer la candidature.");
+}
+
 export async function getShareSitePromoStatusSecure(payload = {}) {
   return invokeCallable("getShareSitePromoStatus", payload, "Impossible de charger le bonus de partage.");
 }
