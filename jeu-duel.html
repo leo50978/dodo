@@ -112,10 +112,74 @@
             body.game-hud-minimal #FullscreenToggleBtn,
             body.game-hud-minimal #FullscreenHint,
             body.game-hud-minimal #PlayerLightsToggleBtn,
-            body.game-hud-minimal #LotModalOpenBtn,
             body.game-hud-minimal #OnlineUsersHud,
             body.game-hud-minimal #LocalTurnDoesWrap {
                 display: none !important;
+            }
+
+            @keyframes duelLotPulse {
+                0%, 100% {
+                    transform: translateY(0) scale(1);
+                    box-shadow:
+                        10px 10px 24px rgba(16, 23, 40, 0.45),
+                        -8px -8px 18px rgba(112, 126, 165, 0.18),
+                        0 0 0 rgba(245, 124, 0, 0);
+                }
+                50% {
+                    transform: translateY(-1px) scale(1.035);
+                    box-shadow:
+                        10px 12px 26px rgba(16, 23, 40, 0.48),
+                        -8px -8px 18px rgba(112, 126, 165, 0.16),
+                        0 0 22px rgba(245, 124, 0, 0.34);
+                }
+            }
+
+            @keyframes duelLotArrowNudge {
+                0%, 100% {
+                    transform: translateX(0);
+                    opacity: 0.86;
+                }
+                50% {
+                    transform: translateX(10px);
+                    opacity: 1;
+                }
+            }
+
+            #LotModalOpenBtn.duel-lot-cta {
+                border-color: rgba(255, 207, 159, 0.64);
+                background: linear-gradient(180deg, rgba(245, 124, 0, 0.34), rgba(63, 71, 102, 0.88));
+                animation: duelLotPulse 1.15s ease-in-out infinite;
+            }
+
+            #LotModalOpenBtn.duel-lot-cta #LotModalCount {
+                border-color: rgba(255, 228, 196, 0.42);
+                background: rgba(255, 255, 255, 0.16);
+            }
+
+            #LotModalCallout {
+                filter: drop-shadow(0 8px 18px rgba(0, 0, 0, 0.34));
+            }
+
+            #LotModalCallout.duel-lot-cta-visible {
+                display: inline-flex !important;
+                animation: duelLotArrowNudge 1.05s ease-in-out infinite;
+            }
+
+            .duel-lot-callout-line {
+                width: 2.55rem;
+                height: 0.28rem;
+                border-radius: 999px;
+                background: linear-gradient(90deg, rgba(255, 212, 171, 0.08), rgba(255, 212, 171, 0.96));
+            }
+
+            .duel-lot-callout-head {
+                width: 0.9rem;
+                height: 0.9rem;
+                margin-left: -0.28rem;
+                border-top: 0.28rem solid rgba(255, 212, 171, 0.96);
+                border-right: 0.28rem solid rgba(255, 212, 171, 0.96);
+                transform: rotate(45deg);
+                border-radius: 0.1rem;
             }
 
             #DuelLotViewportWrap {
@@ -462,6 +526,11 @@
         <button id="PlayerLightsToggleBtn" type="button" class="fixed bottom-4 left-3 z-[2465] inline-flex h-10 items-center gap-2 rounded-2xl border border-white/20 bg-[#3F4766]/70 px-3 text-xs font-semibold tracking-wide text-white shadow-[10px_10px_24px_rgba(16,23,40,0.45),-8px_-8px_18px_rgba(112,126,165,0.18)] backdrop-blur-xl transition hover:bg-[#4a5376]/80" aria-label="Activer ou couper les lumières des joueurs" title="Activer ou couper les lumières des joueurs">
             <span id="PlayerLightsToggleText">Lumieres ON</span>
         </button>
+
+        <div id="LotModalCallout" class="pointer-events-none fixed bottom-[4.38rem] right-[4.92rem] z-[2468] hidden items-center" aria-hidden="true">
+            <span class="duel-lot-callout-line"></span>
+            <span class="duel-lot-callout-head"></span>
+        </div>
 
         <button id="LotModalOpenBtn" type="button" class="fixed bottom-[3.65rem] right-3 z-[2466] inline-flex h-10 items-center gap-2 rounded-2xl border border-white/20 bg-[#3F4766]/72 px-3 text-xs font-semibold tracking-wide text-white shadow-[10px_10px_24px_rgba(16,23,40,0.45),-8px_-8px_18px_rgba(112,126,165,0.18)] backdrop-blur-xl transition hover:bg-[#4a5376]/82" aria-label="Ouvrir le lot">
             <span>Lot</span>

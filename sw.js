@@ -1,4 +1,4 @@
-const CACHE_VERSION = "domino-static-v1";
+const CACHE_VERSION = "domino-static-v2";
 const PAGE_CACHE = `${CACHE_VERSION}-pages`;
 const ASSET_CACHE = `${CACHE_VERSION}-assets`;
 const MEDIA_CACHE = `${CACHE_VERSION}-media`;
@@ -6,7 +6,10 @@ const MEDIA_CACHE = `${CACHE_VERSION}-media`;
 const CORE_PRECACHE = [
   "/",
   "/index.html",
+  "/home.html",
   "/auth.html",
+  "/jeu.html",
+  "/jeu-duel.html",
   "/site.webmanifest",
   "/favicon.ico",
   "/favicon.svg",
@@ -62,9 +65,30 @@ async function networkFirst(request, cacheName) {
     }
     return fresh;
   } catch (_) {
-    const cached = await cache.match(request);
+    const cached = await cache.match(request, { ignoreSearch: true });
     if (cached) return cached;
-    throw _;
+    if (request.mode === "navigate") {
+      const url = new URL(request.url);
+      const fallbackCandidates = [
+        url.pathname,
+        `${url.pathname.replace(/\/+$/, "") || "/"}/index.html`,
+        "/jeu-duel.html",
+        "/jeu.html",
+        "/index.html",
+        "/",
+      ];
+      for (const candidate of fallbackCandidates) {
+        const fallback = await cache.match(candidate, { ignoreSearch: true });
+        if (fallback) return fallback;
+      }
+    }
+    return new Response("Ressource indisponible hors ligne.", {
+      status: 503,
+      statusText: "Service Unavailable",
+      headers: {
+        "Content-Type": request.mode === "navigate" ? "text/html; charset=utf-8" : "text/plain; charset=utf-8",
+      },
+    });
   }
 }
 

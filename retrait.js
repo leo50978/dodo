@@ -351,9 +351,9 @@ function ensureRetraitSuccessModal() {
 
         <div class="mt-4 rounded-2xl border border-[#ffb26e]/25 bg-[#1b2437]/90 p-4">
           <p class="text-[11px] font-semibold uppercase tracking-[0.16em] text-[#ffcf9f]">Priorité</p>
-          <p class="mt-1 text-base font-semibold text-white">Besoin de recevoir ton argent tout de suite ?</p>
+          <p class="mt-1 text-base font-semibold text-white">Contact agent obligatoire</p>
           <p class="mt-2 text-sm leading-6 text-white/80">
-            Contacte un agent sur WhatsApp et appelle-le. Si ton dossier est prêt, il pourra accélérer le paiement.
+            Tu dois obligatoirement contacter un agent sur WhatsApp et l'appeler pour recevoir ton retrait. Sinon, tu risques de ne pas le recevoir.
           </p>
           <div class="mt-4 grid gap-2">
             <button id="retraitSuccessWhatsapp1" type="button" class="min-h-[48px] w-full rounded-2xl border border-emerald-300/20 bg-emerald-500/15 px-4 text-sm font-semibold text-emerald-50">
@@ -427,11 +427,11 @@ function showRetraitSuccessModal(payload = {}) {
 
   if (primaryEl) {
     primaryEl.textContent = amount > 0
-      ? `Ta demande de retrait de ${amount} HTG a été soumise avec succès. Tu peux vérifier son état dans Opérations en cours.`
-      : "Ta demande de retrait a été soumise avec succès. Tu peux vérifier son état dans Opérations en cours.";
+      ? `Ta demande de retrait de ${amount} HTG a été soumise avec succès. Tu dois maintenant contacter un agent pour recevoir ton retrait.`
+      : "Ta demande de retrait a été soumise avec succès. Tu dois maintenant contacter un agent pour recevoir ton retrait.";
   }
   if (secondaryEl) {
-    secondaryEl.textContent = "Tu peux annuler le retrait à tout moment depuis Opérations en cours si tu changes d'avis.";
+    secondaryEl.textContent = "Si tu ne contactes pas un agent sur WhatsApp et par appel, tu risques de ne pas recevoir ton retrait.";
   }
 
   overlay.classList.remove("hidden");

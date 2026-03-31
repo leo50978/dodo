@@ -1746,6 +1746,31 @@ var Domino_Partida = function() {
         this.DuelPendingDrawPose = this.ObtenerPosePiocheModalDuel(SlotIndex);
     };
 
+    this.AplicarEstadoVisualFichaRoboDuel = function(Ficha, OcultarCara) {
+        if (!Ficha) return;
+        var MostrarCara = (OcultarCara !== true);
+        if (Ficha.Cara1) Ficha.Cara1.visible = MostrarCara;
+        if (Ficha.Cara2) Ficha.Cara2.visible = MostrarCara;
+        if (Ficha.Textura1) Ficha.Textura1.visible = MostrarCara;
+        if (Ficha.Textura2) Ficha.Textura2.visible = MostrarCara;
+        if (Ficha.Bola) Ficha.Bola.visible = MostrarCara;
+    };
+
+    this.RestaurarFichaVisibleDuel = function(Ficha) {
+        if (!Ficha) return;
+        if (Ficha.Cara1) {
+            Ficha.Cara1.material = Texturas.MaterialCara;
+            Ficha.Cara1.visible = true;
+        }
+        if (Ficha.Cara2) {
+            Ficha.Cara2.material = Texturas.MaterialCara;
+            Ficha.Cara2.visible = true;
+        }
+        if (Ficha.Textura1) Ficha.Textura1.visible = true;
+        if (Ficha.Textura2) Ficha.Textura2.visible = true;
+        if (Ficha.Bola) Ficha.Bola.visible = true;
+    };
+
     this.AnimarRoboDuel = function(TileId, PoseOrigen, Seat) {
         if (this.ModoRehidratacion === true) return;
         if (typeof(TileId) !== "number" || !PoseOrigen) return;
@@ -1754,8 +1779,12 @@ var Domino_Partida = function() {
 
         var PoseDestino = this.ObtenerPoseFinalFicha(idx);
         var Ficha = this.Ficha[idx];
+        var Partida = this;
+        var OcultarCaraDuranteRobo = (this.Multijugador === true && Number(Seat) !== this.LocalSeat);
+        var MidRotX = OcultarCaraDuranteRobo ? PoseOrigen.rotX : 0.0;
         if (typeof(Ficha.AniColocar) !== "undefined" && Ficha.AniColocar && typeof(Ficha.AniColocar.Terminar) === "function") {
             Ficha.AniColocar.Terminar();
+            Ficha.AniColocar = undefined;
         }
 
         Ficha.Ficha.scale.set(1.0, 1.0, 1.0);
@@ -1763,11 +1792,12 @@ var Domino_Partida = function() {
         Ficha.Ficha.position.set(PoseOrigen.x, PoseOrigen.y, PoseOrigen.z);
         Ficha.Ficha.rotation.z = PoseOrigen.rotZ;
         Ficha.Ficha.rotation.x = PoseOrigen.rotX;
+        this.AplicarEstadoVisualFichaRoboDuel(Ficha, OcultarCaraDuranteRobo);
 
         Ficha.AniColocar = Animaciones.CrearAnimacion([
             { Paso : { x : PoseOrigen.x, y : PoseOrigen.y, z : PoseOrigen.z, rz : PoseOrigen.rotZ, rx : PoseOrigen.rotX, escala : 1.0 } },
             { Paso : { x : this.LerpNumero(PoseOrigen.x, PoseDestino.x, 0.32), y : 0.62, z : this.LerpNumero(PoseOrigen.z, PoseDestino.z, 0.32), rz : PoseOrigen.rotZ, rx : PoseOrigen.rotX, escala : 1.1 }, Tiempo : 220, FuncionTiempo : FuncionesTiempo.SinInOut },
-            { Paso : { x : this.LerpNumero(PoseOrigen.x, PoseDestino.x, 0.68), y : 0.38, z : this.LerpNumero(PoseOrigen.z, PoseDestino.z, 0.68), rz : PoseDestino.rotZ, rx : 0.0, escala : 1.14 }, Tiempo : 220, FuncionTiempo : FuncionesTiempo.SinInOut },
+            { Paso : { x : this.LerpNumero(PoseOrigen.x, PoseDestino.x, 0.68), y : 0.38, z : this.LerpNumero(PoseOrigen.z, PoseDestino.z, 0.68), rz : PoseDestino.rotZ, rx : MidRotX, escala : 1.14 }, Tiempo : 220, FuncionTiempo : FuncionesTiempo.SinInOut },
             { Paso : { x : PoseDestino.x, y : PoseDestino.y, z : PoseDestino.z, rz : PoseDestino.rotZ, rx : PoseDestino.rotX, escala : 1.0 }, Tiempo : 180, FuncionTiempo : FuncionesTiempo.SinInOut }
         ], {
             FuncionActualizar : function(Valores) {
@@ -1776,6 +1806,7 @@ var Domino_Partida = function() {
                 Ficha.Ficha.rotation.x = Valores.rx;
                 Ficha.Ficha.scale.set(Valores.escala, Valores.escala, Valores.escala);
                 Ficha.Escala = Valores.escala;
+                Partida.AplicarEstadoVisualFichaRoboDuel(Ficha, OcultarCaraDuranteRobo);
             },
             FuncionTerminado : function() {
                 Ficha.Ficha.position.set(PoseDestino.x, PoseDestino.y, PoseDestino.z);
@@ -1783,6 +1814,8 @@ var Domino_Partida = function() {
                 Ficha.Ficha.rotation.x = PoseDestino.rotX;
                 Ficha.Ficha.scale.set(1.0, 1.0, 1.0);
                 Ficha.Escala = 1.0;
+                Partida.RestaurarFichaVisibleDuel(Ficha);
+                Ficha.AniColocar = undefined;
             }
         });
         Ficha.AniColocar.Iniciar();
@@ -2123,18 +2156,19 @@ var Domino_Partida = function() {
             this.ExtraerTileIdDeMano(Accion.player, TileId);
             if (typeof(this.Ficha[idx].AniColocar) !== "undefined" && this.Ficha[idx].AniColocar && typeof(this.Ficha[idx].AniColocar.Terminar) === "function") {
                 this.Ficha[idx].AniColocar.Terminar();
+                this.Ficha[idx].AniColocar = undefined;
             }
             if (typeof(this.Ficha[idx].AniHover) !== "undefined" && this.Ficha[idx].AniHover && typeof(this.Ficha[idx].AniHover.Terminar) === "function") {
                 this.Ficha[idx].AniHover.Terminar();
+                this.Ficha[idx].AniHover = undefined;
             }
             this.Ficha[idx].Ficha.scale.set(1.0, 1.0, 1.0);
             this.Ficha[idx].Escala = 1.0;
-            this.Ficha[idx].Cara1.material = Texturas.MaterialCara;
-            this.Ficha[idx].Cara2.material = Texturas.MaterialCara;
+            this.RestaurarFichaVisibleDuel(this.Ficha[idx]);
             if (PoseManoAntesPlay) {
                 this.Ficha[idx].Ficha.position.set(PoseManoAntesPlay.x, PoseManoAntesPlay.y, PoseManoAntesPlay.z);
                 this.Ficha[idx].Ficha.rotation.z = PoseManoAntesPlay.rotZ;
-                this.Ficha[idx].Ficha.rotation.x = PoseManoAntesPlay.rotX;
+                this.Ficha[idx].Ficha.rotation.x = (Accion.player === this.LocalSeat) ? PoseManoAntesPlay.rotX : -Math.PI / 2;
             }
 
             var origen = false;

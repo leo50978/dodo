@@ -16,7 +16,9 @@ const SOLDE_BUILD_TAG = "welcome-bonus-debug-2026-03-21-v2";
 const DEPOSIT_INFO_DISMISSED_KEY = "domino_deposit_info_hidden_v1";
 const REJECTED_ORDER_ALERT_SEEN_KEY = "domino_rejected_order_alert_seen_v1";
 const REJECTED_ORDER_SUPPORT_PHONE = "50940507232";
+const AGENT_DEPOSIT_SUPPORT_PHONE = "50941752992";
 const WELCOME_BONUS_HTG = 25;
+const AGENT_REQUIRED_DEPOSIT_THRESHOLD_HTG = 500;
 
 let cachedOrders = [];
 let cachedWithdrawals = [];
@@ -195,6 +197,90 @@ function openRejectedOrderSupport() {
   if (!popup) {
     window.location.href = url;
   }
+}
+
+function ensureLargeDepositAgentModal() {
+  const existing = document.getElementById("largeDepositAgentModalOverlay");
+  if (existing) return existing;
+
+  const overlay = document.createElement("div");
+  overlay.id = "largeDepositAgentModalOverlay";
+  overlay.className = "fixed inset-0 z-[3200] hidden items-end justify-center bg-[#12050b]/78 px-[max(12px,env(safe-area-inset-left))] pb-[max(12px,env(safe-area-inset-bottom))] pt-[max(12px,env(safe-area-inset-top))] backdrop-blur-md sm:items-center sm:px-4 sm:py-4";
+  overlay.innerHTML = `
+    <div id="largeDepositAgentModalPanel" class="w-full max-w-lg max-h-full overflow-y-auto rounded-[28px] border border-[#f3bf78]/24 bg-[linear-gradient(180deg,rgba(63,29,14,0.98),rgba(25,10,6,0.98))] p-4 text-white shadow-[0_-18px_42px_rgba(27,9,4,0.52)] sm:max-h-[min(88vh,760px)] sm:rounded-[32px] sm:p-6">
+      <div class="flex items-start gap-3">
+        <div class="grid h-12 w-12 shrink-0 place-items-center rounded-2xl border border-[#f8d39d]/26 bg-white/10 text-[#ffe1b4]">
+          <i class="fa-solid fa-user-tie text-lg"></i>
+        </div>
+        <div class="min-w-0">
+          <div class="inline-flex items-center gap-2 rounded-full border border-[#f8d39d]/18 bg-white/8 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.18em] text-[#ffe1b4]">
+            <i class="fa-solid fa-shield-halved text-[12px]"></i>
+            Verification manuelle
+          </div>
+          <h3 class="mt-3 text-xl font-bold text-white sm:text-2xl">Depot via agent requis</h3>
+        </div>
+      </div>
+
+      <div class="mt-5 rounded-[24px] border border-[#f7cf98]/16 bg-white/8 p-4 sm:p-5">
+        <p id="largeDepositAgentMessage" class="text-sm leading-7 text-white/92">
+          Pour ce montant, veuillez contacter un agent pour faire votre depot. Votre demande sera traitee directement avec assistance.
+        </p>
+        <div class="mt-4 rounded-2xl border border-white/10 bg-black/10 px-4 py-3 text-sm font-semibold text-[#ffe0bb]">
+          Agent WhatsApp: +${AGENT_DEPOSIT_SUPPORT_PHONE}
+        </div>
+      </div>
+
+      <div class="mt-5 grid gap-3 sm:grid-cols-2">
+        <button id="largeDepositAgentClose" type="button" class="h-12 rounded-2xl border border-white/15 bg-white/10 text-sm font-semibold text-white">
+          Fermer
+        </button>
+        <button id="largeDepositAgentContact" type="button" class="h-12 rounded-2xl border border-[#34d399]/22 bg-[#139c55] text-sm font-semibold text-white shadow-[10px_12px_22px_rgba(8,61,34,0.34)]">
+          Contacter un agent
+        </button>
+      </div>
+    </div>
+  `;
+
+  document.body.appendChild(overlay);
+
+  const panel = overlay.querySelector("#largeDepositAgentModalPanel");
+  const closeBtn = overlay.querySelector("#largeDepositAgentClose");
+  const contactBtn = overlay.querySelector("#largeDepositAgentContact");
+  const messageEl = overlay.querySelector("#largeDepositAgentMessage");
+
+  const close = () => {
+    overlay.classList.add("hidden");
+    overlay.classList.remove("flex");
+    document.body.classList.remove("overflow-hidden");
+  };
+
+  const open = ({ amount } = {}) => {
+    if (messageEl) {
+      messageEl.textContent = "Veuillez contacter un agent pour recevoir l'argent automatiquement et rapidement.";
+    }
+    overlay.classList.remove("hidden");
+    overlay.classList.add("flex");
+    document.body.classList.add("overflow-hidden");
+  };
+
+  overlay.addEventListener("click", (ev) => {
+    if (ev.target === overlay) close();
+  });
+  if (panel) panel.addEventListener("click", (ev) => ev.stopPropagation());
+  if (closeBtn) closeBtn.addEventListener("click", close);
+  if (contactBtn) {
+    contactBtn.addEventListener("click", () => {
+      const text = encodeURIComponent("Bonjour agent, je veux faire un depot superieur a 500 GDes.");
+      const url = `https://wa.me/${AGENT_DEPOSIT_SUPPORT_PHONE}?text=${text}`;
+      const popup = window.open(url, "_blank", "noopener,noreferrer");
+      if (!popup) {
+        window.location.href = url;
+      }
+    });
+  }
+
+  overlay.__openLargeDepositAgentModal = open;
+  return overlay;
 }
 
 async function getWelcomeBonusEntryStatus() {
@@ -1221,6 +1307,15 @@ function ensureSoldeModal() {
       const amount = Number(amountInput?.value || 0);
       if (amount < MIN_DEPOSIT_HTG) {
         if (errorEl) errorEl.textContent = `Le montant minimum est ${MIN_DEPOSIT_HTG} HTG.`;
+        return;
+      }
+
+      if (amount > AGENT_REQUIRED_DEPOSIT_THRESHOLD_HTG) {
+        if (errorEl) errorEl.textContent = "";
+        const agentModal = ensureLargeDepositAgentModal();
+        if (typeof agentModal.__openLargeDepositAgentModal === "function") {
+          agentModal.__openLargeDepositAgentModal({ amount });
+        }
         return;
       }
 

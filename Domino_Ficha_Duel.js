@@ -148,6 +148,20 @@ var Domino_Ficha = function() {
     this.RotarH = function() {
         this.Ficha.rotation.z = 0.0;
     };
+
+    this.MostrarFrente = function() {
+        if (this.Cara1) {
+            this.Cara1.material = Texturas.MaterialCara;
+            this.Cara1.visible = true;
+        }
+        if (this.Cara2) {
+            this.Cara2.material = Texturas.MaterialCara;
+            this.Cara2.visible = true;
+        }
+        if (this.Textura1) this.Textura1.visible = true;
+        if (this.Textura2) this.Textura2.visible = true;
+        if (this.Bola) this.Bola.visible = true;
+    };
        
     this.AsignarHover = function(Hover) {
         if (typeof(this.AniHover) !== "undefined") {
@@ -348,8 +362,18 @@ var Domino_Ficha = function() {
         
         
         // Termino las posibles animaciones en curso
-        if (typeof(this.AniHover) !== "undefined")    this.AniHover.Terminar();        
-        if (typeof(this.AniColocar) !== "undefined")  this.AniColocar.Terminar();
+        if (typeof(this.AniHover) !== "undefined" && this.AniHover && typeof(this.AniHover.Terminar) === "function") {
+            this.AniHover.Terminar();
+            this.AniHover = undefined;
+        }
+        if (typeof(this.AniColocar) !== "undefined" && this.AniColocar && typeof(this.AniColocar.Terminar) === "function") {
+            this.AniColocar.Terminar();
+            this.AniColocar = undefined;
+        }
+
+        // Toute fiche posee sur la table doit repartir dans un etat visuel normal.
+        this.MostrarFrente();
+        this.RotarBocaArriba();
         
         
         this.Colocada = true;
@@ -391,6 +415,7 @@ var Domino_Ficha = function() {
                 console.log("[DOMINO_FICHA_DEBUG] Colocar:instant " + JSON.stringify(PayloadInstant), PayloadInstant);
             } catch (_) {
             }
+            this.AniColocar = undefined;
             return;
         }
         
@@ -452,6 +477,7 @@ var Domino_Ficha = function() {
                     console.log("[DOMINO_FICHA_DEBUG] Colocar:done " + JSON.stringify(PayloadDone), PayloadDone);
                 } catch (_) {
                 }
+                this.AniColocar = undefined;
                 
             }.bind(this)
             

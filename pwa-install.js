@@ -241,7 +241,25 @@ async function registerServiceWorker() {
     pwaDebug("sw:unsupported");
     return;
   }
-  if (!(window.isSecureContext || window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1")) {
+  const hostname = String(window.location?.hostname || "").trim().toLowerCase();
+  const isLocalDevHost = hostname === "localhost" || hostname === "127.0.0.1" || hostname === "::1" || hostname.endsWith(".local");
+
+  if (isLocalDevHost) {
+    try {
+      const registrations = await navigator.serviceWorker.getRegistrations();
+      await Promise.all(registrations.map((registration) => registration.unregister().catch(() => false)));
+      pwaDebug("sw:disabledLocalDev", {
+        registrations: registrations.length,
+      });
+    } catch (error) {
+      pwaDebug("sw:localDevCleanupError", {
+        message: String(error?.message || error),
+      });
+    }
+    return;
+  }
+
+  if (!window.isSecureContext) {
     pwaDebug("sw:insecureContext");
     return;
   }

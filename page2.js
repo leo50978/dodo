@@ -13,6 +13,8 @@ import {
   recordShareSitePromoSecure,
   createFriendRoomSecure,
   joinFriendRoomByCodeSecure,
+  createFriendDuelRoomSecure,
+  joinFriendDuelRoomByCodeSecure,
   getActiveSurveyForUserSecure,
   submitSurveyResponseSecure,
   ackClientFinanceNoticeSecure,
@@ -36,8 +38,6 @@ const PAGE2_BOOTSTRAP_MIN_MS = 650;
 const PAGE2_BOOTSTRAP_TIMEOUT_MS = 2600;
 const PAGE2_HERO_IMAGES = Object.freeze(["hero.jpg", "hero1.jpg", "hero2.jpg"]);
 const PAGE2_HERO_ROTATION_MS = 10000;
-const DUEL_RELEASE_DATE_LABEL = "1er avril 2026";
-const TEMPORARILY_LOCKED_DUEL_STAKES = new Set([500, 1000]);
 const SHARE_SITE_PROMO_TARGET = 5;
 const SHARE_SITE_PROMO_REWARD_DOES = 100;
 const SHARE_SITE_PROMO_LINK = "https://dominoeslakay.com";
@@ -167,6 +167,16 @@ function buildFriendGameUrl(roomId, seatIndex, stakeDoes) {
 function buildDuelGameUrl(stakeDoes = 100) {
   const params = new URLSearchParams();
   params.set("stake", String(Math.max(1, Number.parseInt(String(stakeDoes || 0), 10) || 100)));
+  return `./jeu-duel.html?${params.toString()}`;
+}
+
+function buildFriendDuelGameUrl(roomId, seatIndex, stakeDoes) {
+  const params = new URLSearchParams();
+  params.set("autostart", "1");
+  params.set("stake", String(Math.max(1, Number.parseInt(String(stakeDoes || 0), 10) || 100)));
+  params.set("friendDuelRoomId", String(roomId || "").trim());
+  params.set("seat", String(Math.max(0, Number.parseInt(String(seatIndex || 0), 10) || 0)));
+  params.set("roomMode", "duel_friends");
   return `./jeu-duel.html?${params.toString()}`;
 }
 
@@ -676,6 +686,10 @@ function isPage2BlockingOverlayOpen() {
     "stakeSelectionOverlay",
     "duelIntroOverlay",
     "duelStakeOverlay",
+    "duelFriendModeOverlay",
+    "duelFriendCreateOverlay",
+    "duelFriendJoinOverlay",
+    "duelFriendCodeOverlay",
     "friendModeOverlay",
     "friendCreateOverlay",
     "friendJoinOverlay",
@@ -1532,6 +1546,116 @@ export function renderPage2(user, options = {}) {
               Chargement des mises du duel...
             </div>
           </div>
+          <button id="duelFriendModeOpenBtn" type="button" class="mt-4 flex h-12 w-full items-center justify-center gap-2 rounded-2xl border border-white/20 bg-white/10 text-sm font-semibold text-white transition hover:-translate-y-0.5 hover:bg-white/15">
+            <i class="fa-solid fa-user-group text-[#ffd8b5]"></i>
+            <span>Jouer avec un ami</span>
+          </button>
+        </div>
+      </div>
+    </div>
+  `);
+
+  pageShell.insertAdjacentHTML("beforeend", `
+    <div id="duelFriendModeOverlay" class="fixed inset-0 z-[3462] hidden items-center justify-center bg-black/55 p-4 backdrop-blur-sm">
+      <div id="duelFriendModePanel" class="w-full max-w-md rounded-3xl border border-white/20 bg-[#3F4766]/82 p-5 text-white shadow-[14px_14px_34px_rgba(16,23,40,0.5),-10px_-10px_24px_rgba(112,126,165,0.2)] backdrop-blur-xl sm:p-6">
+        <div class="flex items-center justify-between gap-3">
+          <div>
+            <p class="text-xs font-semibold uppercase tracking-[0.2em] text-[#ffd4ab]/80">Duel entre amis</p>
+            <h3 class="mt-2 text-xl font-bold">Choisis une option</h3>
+          </div>
+          <button id="duelFriendModeClose" type="button" class="grid h-10 w-10 place-items-center rounded-full border border-white/20 bg-white/10 text-white">
+            <i class="fa-solid fa-xmark"></i>
+          </button>
+        </div>
+        <div class="mt-5 space-y-3">
+          <button id="duelFriendJoinOpenBtn" type="button" class="flex min-h-[58px] w-full items-center justify-between gap-3 rounded-2xl border border-white/18 bg-white/10 px-4 py-3 text-left transition hover:bg-white/15">
+            <span>
+              <span class="block text-sm font-semibold text-white">J'ai ete invite</span>
+              <span class="mt-1 block text-xs text-white/66">Entre un code recu pour rejoindre directement le duel.</span>
+            </span>
+            <i class="fa-solid fa-arrow-right text-white/70"></i>
+          </button>
+          <button id="duelFriendCreateOpenBtn" type="button" class="flex min-h-[58px] w-full items-center justify-between gap-3 rounded-2xl border border-[#ffb26e]/35 bg-[#F57C00]/14 px-4 py-3 text-left transition hover:bg-[#F57C00]/18">
+            <span>
+              <span class="block text-sm font-semibold text-white">Creer un duel</span>
+              <span class="mt-1 block text-xs text-white/70">Choisis la mise, genere un code et invite ton ami.</span>
+            </span>
+            <i class="fa-solid fa-plus text-[#ffd8b5]"></i>
+          </button>
+        </div>
+      </div>
+    </div>
+  `);
+
+  pageShell.insertAdjacentHTML("beforeend", `
+    <div id="duelFriendCreateOverlay" class="fixed inset-0 z-[3463] hidden items-center justify-center bg-black/55 p-4 backdrop-blur-sm">
+      <div id="duelFriendCreatePanel" class="w-full max-w-lg rounded-3xl border border-white/20 bg-[#3F4766]/82 p-5 text-white shadow-[14px_14px_34px_rgba(16,23,40,0.5),-10px_-10px_24px_rgba(112,126,165,0.2)] backdrop-blur-xl sm:p-6">
+        <div class="flex items-center justify-between gap-3">
+          <div>
+            <p class="text-xs font-semibold uppercase tracking-[0.2em] text-[#ffd4ab]/80">Creer un duel prive</p>
+            <h3 class="mt-2 text-xl font-bold">Choisis la mise obligatoire</h3>
+          </div>
+          <button id="duelFriendCreateClose" type="button" class="grid h-10 w-10 place-items-center rounded-full border border-white/20 bg-white/10 text-white">
+            <i class="fa-solid fa-xmark"></i>
+          </button>
+        </div>
+        <p class="mt-3 text-sm leading-6 text-white/84">La meme mise sera prelevee quand les 2 joueurs seront prets a demarrer.</p>
+        <div id="duelFriendCreateStakeGrid" class="mt-5 grid grid-cols-2 gap-3">
+          <div class="col-span-2 rounded-2xl border border-white/15 bg-white/5 px-4 py-4 text-sm text-white/70">
+            Chargement des mises du duel...
+          </div>
+        </div>
+      </div>
+    </div>
+  `);
+
+  pageShell.insertAdjacentHTML("beforeend", `
+    <div id="duelFriendJoinOverlay" class="fixed inset-0 z-[3464] hidden items-center justify-center bg-black/55 p-4 backdrop-blur-sm">
+      <div id="duelFriendJoinPanel" class="w-full max-w-md rounded-3xl border border-white/20 bg-[#3F4766]/82 p-5 text-white shadow-[14px_14px_34px_rgba(16,23,40,0.5),-10px_-10px_24px_rgba(112,126,165,0.2)] backdrop-blur-xl sm:p-6">
+        <div class="flex items-center justify-between gap-3">
+          <div>
+            <p class="text-xs font-semibold uppercase tracking-[0.2em] text-[#ffd4ab]/80">Rejoindre un duel</p>
+            <h3 class="mt-2 text-xl font-bold">Entre le code d'invitation</h3>
+          </div>
+          <button id="duelFriendJoinClose" type="button" class="grid h-10 w-10 place-items-center rounded-full border border-white/20 bg-white/10 text-white">
+            <i class="fa-solid fa-xmark"></i>
+          </button>
+        </div>
+        <p class="mt-3 text-sm leading-6 text-white/84">Le code est fourni par ton ami createur du duel.</p>
+        <label for="duelFriendJoinCodeInput" class="mt-4 block text-xs font-semibold uppercase tracking-[0.16em] text-white/58">Code du duel</label>
+        <input id="duelFriendJoinCodeInput" type="text" inputmode="text" autocomplete="off" autocapitalize="characters" maxlength="12" class="mt-2 h-12 w-full rounded-2xl border border-white/18 bg-white/10 px-4 text-base font-semibold tracking-[0.3em] text-white outline-none placeholder:text-white/38 focus:border-[#ffb26e]/45 focus:bg-white/12" placeholder="ABC123" />
+        <p id="duelFriendJoinHint" class="mt-2 min-h-[1.2rem] text-xs text-white/62">Entre le code exactement comme il t'a ete envoye.</p>
+        <button id="duelFriendJoinSubmitBtn" type="button" class="mt-5 h-12 w-full rounded-[18px] border border-[#ffb26e] bg-[#F57C00] text-sm font-semibold text-white shadow-[9px_9px_20px_rgba(155,78,25,0.45),-7px_-7px_16px_rgba(255,173,96,0.2)] transition hover:-translate-y-0.5">
+          Rejoindre maintenant
+        </button>
+      </div>
+    </div>
+  `);
+
+  pageShell.insertAdjacentHTML("beforeend", `
+    <div id="duelFriendCodeOverlay" class="fixed inset-0 z-[3465] hidden items-center justify-center bg-black/55 p-4 backdrop-blur-sm">
+      <div id="duelFriendCodePanel" class="w-full max-w-md rounded-3xl border border-white/20 bg-[#3F4766]/82 p-5 text-white shadow-[14px_14px_34px_rgba(16,23,40,0.5),-10px_-10px_24px_rgba(112,126,165,0.2)] backdrop-blur-xl sm:p-6">
+        <div class="flex items-center justify-between gap-3">
+          <div>
+            <p class="text-xs font-semibold uppercase tracking-[0.2em] text-[#ffd4ab]/80">Code du duel</p>
+            <h3 class="mt-2 text-xl font-bold">Code de duel genere</h3>
+          </div>
+          <button id="duelFriendCodeCloseBtn" type="button" class="grid h-10 w-10 place-items-center rounded-full border border-white/20 bg-white/10 text-white">
+            <i class="fa-solid fa-xmark"></i>
+          </button>
+        </div>
+        <p class="mt-3 text-center text-sm leading-6 text-white/86">Copie le code et envoie-le a ton ami pour qu'il accede directement au duel.</p>
+        <div class="mt-5 rounded-[24px] border border-white/15 bg-white/8 px-4 py-5 text-center">
+          <p id="duelFriendCodeValue" class="text-[2rem] font-black tracking-[0.36em] text-white sm:text-[2.4rem]">------</p>
+          <p id="duelFriendCodeStakeMeta" class="mt-3 text-xs uppercase tracking-[0.18em] text-white/58">500 Does obligatoires pour 2 joueurs.</p>
+        </div>
+        <div class="mt-5 grid grid-cols-1 gap-3 sm:grid-cols-2">
+          <button id="duelFriendCodeCopyBtn" type="button" class="h-12 rounded-[18px] border border-white/18 bg-white/10 text-sm font-semibold text-white transition hover:bg-white/15">
+            Copier le code
+          </button>
+          <button id="duelFriendCodeContinueBtn" type="button" class="h-12 rounded-[18px] border border-[#ffb26e] bg-[#F57C00] text-sm font-semibold text-white shadow-[9px_9px_20px_rgba(155,78,25,0.45),-7px_-7px_16px_rgba(255,173,96,0.2)] transition hover:-translate-y-0.5">
+            Continuer
+          </button>
         </div>
       </div>
     </div>
@@ -1716,6 +1840,29 @@ export function renderPage2(user, options = {}) {
   const duelStakePanel = document.getElementById("duelStakePanel");
   const duelStakeClose = document.getElementById("duelStakeClose");
   const duelStakeOptionsGrid = document.getElementById("duelStakeOptionsGrid");
+  const duelFriendModeOpenBtn = document.getElementById("duelFriendModeOpenBtn");
+  const duelFriendModeOverlay = document.getElementById("duelFriendModeOverlay");
+  const duelFriendModePanel = document.getElementById("duelFriendModePanel");
+  const duelFriendModeClose = document.getElementById("duelFriendModeClose");
+  const duelFriendJoinOpenBtn = document.getElementById("duelFriendJoinOpenBtn");
+  const duelFriendCreateOpenBtn = document.getElementById("duelFriendCreateOpenBtn");
+  const duelFriendCreateOverlay = document.getElementById("duelFriendCreateOverlay");
+  const duelFriendCreatePanel = document.getElementById("duelFriendCreatePanel");
+  const duelFriendCreateClose = document.getElementById("duelFriendCreateClose");
+  const duelFriendCreateStakeGrid = document.getElementById("duelFriendCreateStakeGrid");
+  const duelFriendJoinOverlay = document.getElementById("duelFriendJoinOverlay");
+  const duelFriendJoinPanel = document.getElementById("duelFriendJoinPanel");
+  const duelFriendJoinClose = document.getElementById("duelFriendJoinClose");
+  const duelFriendJoinCodeInput = document.getElementById("duelFriendJoinCodeInput");
+  const duelFriendJoinHint = document.getElementById("duelFriendJoinHint");
+  const duelFriendJoinSubmitBtn = document.getElementById("duelFriendJoinSubmitBtn");
+  const duelFriendCodeOverlay = document.getElementById("duelFriendCodeOverlay");
+  const duelFriendCodePanel = document.getElementById("duelFriendCodePanel");
+  const duelFriendCodeValue = document.getElementById("duelFriendCodeValue");
+  const duelFriendCodeStakeMeta = document.getElementById("duelFriendCodeStakeMeta");
+  const duelFriendCodeCopyBtn = document.getElementById("duelFriendCodeCopyBtn");
+  const duelFriendCodeContinueBtn = document.getElementById("duelFriendCodeContinueBtn");
+  const duelFriendCodeCloseBtn = document.getElementById("duelFriendCodeCloseBtn");
   const playWithFriendsBtn = document.getElementById("playWithFriendsBtn");
   const friendModeOverlay = document.getElementById("friendModeOverlay");
   const friendModePanel = document.getElementById("friendModePanel");
@@ -2591,6 +2738,10 @@ export function renderPage2(user, options = {}) {
       && stakeSelectionOverlay?.classList.contains("hidden")
       && duelIntroOverlay?.classList.contains("hidden")
       && duelStakeOverlay?.classList.contains("hidden")
+      && duelFriendModeOverlay?.classList.contains("hidden")
+      && duelFriendCreateOverlay?.classList.contains("hidden")
+      && duelFriendJoinOverlay?.classList.contains("hidden")
+      && duelFriendCodeOverlay?.classList.contains("hidden")
       && friendModeOverlay?.classList.contains("hidden")
       && friendCreateOverlay?.classList.contains("hidden")
       && friendJoinOverlay?.classList.contains("hidden")
@@ -2827,6 +2978,13 @@ export function renderPage2(user, options = {}) {
     inviteCode: "",
   };
 
+  const duelFriendRoomDraft = {
+    roomId: "",
+    seatIndex: 0,
+    stakeDoes: 0,
+    inviteCode: "",
+  };
+
   const navigateToFriendRoom = (roomData = {}) => {
     const nextRoomId = String(roomData?.roomId || friendRoomDraft.roomId || "").trim();
     const nextSeatIndex = Number.parseInt(String(roomData?.seatIndex ?? friendRoomDraft.seatIndex ?? 0), 10) || 0;
@@ -2836,6 +2994,73 @@ export function renderPage2(user, options = {}) {
     }
     showGlobalLoading("Connexion des joueurs en cours...");
     window.location.href = buildFriendGameUrl(nextRoomId, nextSeatIndex, nextStakeDoes);
+  };
+
+  const navigateToFriendDuelRoom = (roomData = {}) => {
+    const nextRoomId = String(roomData?.roomId || duelFriendRoomDraft.roomId || "").trim();
+    const nextSeatIndex = Number.parseInt(String(roomData?.seatIndex ?? duelFriendRoomDraft.seatIndex ?? 0), 10) || 0;
+    const nextStakeDoes = Number.parseInt(String(roomData?.stakeDoes || duelFriendRoomDraft.stakeDoes || 0), 10) || 500;
+    if (!nextRoomId) {
+      throw new Error("Salle duel privee introuvable.");
+    }
+    showGlobalLoading("Connexion du duel prive en cours...");
+    window.location.href = buildFriendDuelGameUrl(nextRoomId, nextSeatIndex, nextStakeDoes);
+  };
+
+  const openDuelFriendMode = () => {
+    if (!duelFriendModeOverlay) return;
+    duelFriendModeOverlay.classList.remove("hidden");
+    duelFriendModeOverlay.classList.add("flex");
+    document.body.classList.add("overflow-hidden");
+  };
+
+  const closeDuelFriendMode = () => {
+    if (!duelFriendModeOverlay) return;
+    duelFriendModeOverlay.classList.add("hidden");
+    duelFriendModeOverlay.classList.remove("flex");
+    document.body.classList.remove("overflow-hidden");
+  };
+
+  const openDuelFriendCreate = () => {
+    if (!duelFriendCreateOverlay) return;
+    duelFriendCreateOverlay.classList.remove("hidden");
+    duelFriendCreateOverlay.classList.add("flex");
+    document.body.classList.add("overflow-hidden");
+  };
+
+  const closeDuelFriendCreate = () => {
+    if (!duelFriendCreateOverlay) return;
+    duelFriendCreateOverlay.classList.add("hidden");
+    duelFriendCreateOverlay.classList.remove("flex");
+    document.body.classList.remove("overflow-hidden");
+  };
+
+  const openDuelFriendJoin = () => {
+    if (!duelFriendJoinOverlay) return;
+    duelFriendJoinOverlay.classList.remove("hidden");
+    duelFriendJoinOverlay.classList.add("flex");
+    document.body.classList.add("overflow-hidden");
+  };
+
+  const closeDuelFriendJoin = () => {
+    if (!duelFriendJoinOverlay) return;
+    duelFriendJoinOverlay.classList.add("hidden");
+    duelFriendJoinOverlay.classList.remove("flex");
+    document.body.classList.remove("overflow-hidden");
+  };
+
+  const openDuelFriendCode = () => {
+    if (!duelFriendCodeOverlay) return;
+    duelFriendCodeOverlay.classList.remove("hidden");
+    duelFriendCodeOverlay.classList.add("flex");
+    document.body.classList.add("overflow-hidden");
+  };
+
+  const closeDuelFriendCode = () => {
+    if (!duelFriendCodeOverlay) return;
+    duelFriendCodeOverlay.classList.add("hidden");
+    duelFriendCodeOverlay.classList.remove("flex");
+    document.body.classList.remove("overflow-hidden");
   };
 
   const openFriendMode = () => {
@@ -2986,12 +3211,39 @@ export function renderPage2(user, options = {}) {
 
   const renderDuelStakeOptions = (options = []) => {
     currentDuelStakeOptions = normalizeDuelStakeOptions(options);
-    if (!duelStakeOptionsGrid) return;
-    duelStakeOptionsGrid.innerHTML = currentDuelStakeOptions.map((option) => {
+    if (duelStakeOptionsGrid) {
+      duelStakeOptionsGrid.innerHTML = currentDuelStakeOptions.map((option) => {
+        const enabled = option.enabled === true;
+        const classes = enabled
+          ? "duel-stake-option-btn h-14 rounded-2xl border border-[#ffb26e] bg-[#F57C00] text-sm font-semibold text-white shadow-[8px_8px_18px_rgba(163,82,27,0.45),-6px_-6px_14px_rgba(255,175,102,0.22)] transition hover:-translate-y-0.5"
+          : "duel-stake-option-btn h-14 rounded-2xl border border-white/20 bg-white/10 text-sm font-semibold text-white/65 opacity-55 cursor-not-allowed";
+        const badge = enabled
+          ? `<span class="text-[11px] font-medium text-white/75">Gain ${option.rewardDoes} Does</span>`
+          : `<span class="text-[11px] font-medium text-white/55">Indisponible</span>`;
+        return `
+          <button
+            data-stake="${option.stakeDoes}"
+            data-available="${enabled ? "1" : "0"}"
+            type="button"
+            class="${classes}"
+          >
+            <span class="block">${option.stakeDoes} Does</span>
+            ${badge}
+          </button>
+        `;
+      }).join("");
+    }
+    renderDuelFriendCreateStakeOptions(currentDuelStakeOptions);
+  };
+
+  const renderDuelFriendCreateStakeOptions = (options = []) => {
+    const normalized = normalizeDuelStakeOptions(options);
+    if (!duelFriendCreateStakeGrid) return;
+    duelFriendCreateStakeGrid.innerHTML = normalized.map((option) => {
       const enabled = option.enabled === true;
       const classes = enabled
-        ? "duel-stake-option-btn h-14 rounded-2xl border border-[#ffb26e] bg-[#F57C00] text-sm font-semibold text-white shadow-[8px_8px_18px_rgba(163,82,27,0.45),-6px_-6px_14px_rgba(255,175,102,0.22)] transition hover:-translate-y-0.5"
-        : "duel-stake-option-btn h-14 rounded-2xl border border-white/20 bg-white/10 text-sm font-semibold text-white/65 opacity-55 cursor-not-allowed";
+        ? "duel-friend-create-stake-btn h-14 rounded-2xl border border-[#ffb26e] bg-[#F57C00] text-sm font-semibold text-white shadow-[8px_8px_18px_rgba(163,82,27,0.45),-6px_-6px_14px_rgba(255,175,102,0.22)] transition hover:-translate-y-0.5"
+        : "duel-friend-create-stake-btn h-14 rounded-2xl border border-white/20 bg-white/10 text-sm font-semibold text-white/65 opacity-55 cursor-not-allowed";
       const badge = enabled
         ? `<span class="text-[11px] font-medium text-white/75">Gain ${option.rewardDoes} Does</span>`
         : `<span class="text-[11px] font-medium text-white/55">Indisponible</span>`;
@@ -3011,14 +3263,6 @@ export function renderPage2(user, options = {}) {
 
   const continueToDuel = async (stakeAmount = 100) => {
     const normalizedStakeAmount = Math.max(1, Number.parseInt(String(stakeAmount || 0), 10) || 0);
-    if (TEMPORARILY_LOCKED_DUEL_STAKES.has(normalizedStakeAmount)) {
-      closeDuelStakeSelection();
-      openUnavailable({
-        title: "Duel bientot disponible",
-        message: `Cette fonctionnalite sera disponible le ${DUEL_RELEASE_DATE_LABEL}.`,
-      });
-      return;
-    }
     const xchangeMod = await loadXchangeModule().catch(() => null);
     const state = xchangeMod?.getXchangeState?.() || {};
     const doesApprovedBalance = Math.max(0, Number(state?.doesApprovedBalance) || 0);
@@ -3057,6 +3301,7 @@ export function renderPage2(user, options = {}) {
 
   renderStakeOptions(currentStakeOptions);
   renderDuelStakeOptions(currentDuelStakeOptions);
+  renderDuelFriendCreateStakeOptions(currentDuelStakeOptions);
   renderFriendCreateStakeOptions(currentStakeOptions);
 
   if (startGameBtn) {
@@ -3103,6 +3348,32 @@ export function renderPage2(user, options = {}) {
     openDuelIntro();
   });
 
+  duelFriendModeOpenBtn?.addEventListener("click", () => {
+    if (page2AccountFrozen) return;
+    closeDuelStakeSelection();
+    renderDuelFriendCreateStakeOptions(currentDuelStakeOptions);
+    openDuelFriendMode();
+  });
+
+  duelFriendCreateOpenBtn?.addEventListener("click", () => {
+    if (page2AccountFrozen) return;
+    closeDuelFriendMode();
+    renderDuelFriendCreateStakeOptions(currentDuelStakeOptions);
+    openDuelFriendCreate();
+  });
+
+  duelFriendJoinOpenBtn?.addEventListener("click", () => {
+    if (page2AccountFrozen) return;
+    closeDuelFriendMode();
+    if (duelFriendJoinCodeInput) {
+      duelFriendJoinCodeInput.value = "";
+    }
+    if (duelFriendJoinHint) {
+      duelFriendJoinHint.textContent = "Entre le code exactement comme il t'a ete envoye.";
+    }
+    openDuelFriendJoin();
+  });
+
   playWithFriendsBtn?.addEventListener("click", async () => {
     if (page2AccountFrozen) return;
     if (!isAuthenticated) {
@@ -3139,6 +3410,153 @@ export function renderPage2(user, options = {}) {
       friendJoinHint.textContent = "Entre le code exactement comme il t'a ete envoye.";
     }
     openFriendJoin();
+  });
+
+  duelFriendCreateStakeGrid?.addEventListener("click", async (event) => {
+    const origin = event.target instanceof HTMLElement ? event.target : null;
+    const btn = origin ? origin.closest(".duel-friend-create-stake-btn") : null;
+    if (!(btn instanceof HTMLElement) || !duelFriendCreateStakeGrid.contains(btn)) return;
+    if (btn.getAttribute("data-available") !== "1") {
+      openUnavailable();
+      return;
+    }
+    const stakeAmount = Math.max(1, Number.parseInt(String(btn.getAttribute("data-stake") || 0), 10) || 500);
+    try {
+      await withButtonLoading(btn, async () => {
+        const xchangeMod = await loadXchangeModule().catch(() => null);
+        const state = xchangeMod?.getXchangeState?.() || {};
+        const doesApprovedBalance = Math.max(0, Number(state?.doesApprovedBalance) || 0);
+        if (doesApprovedBalance < stakeAmount) {
+          closeDuelFriendCreate();
+          if (doesRequiredOverlay) {
+            doesRequiredOverlay.classList.remove("hidden");
+            doesRequiredOverlay.classList.add("flex");
+            document.body.classList.add("overflow-hidden");
+          }
+          return;
+        }
+
+        const result = await createFriendDuelRoomSecure({ stakeDoes: stakeAmount });
+        duelFriendRoomDraft.roomId = String(result?.roomId || "");
+        duelFriendRoomDraft.seatIndex = Number.parseInt(String(result?.seatIndex || 0), 10) || 0;
+        duelFriendRoomDraft.stakeDoes = Number.parseInt(String(result?.stakeDoes || stakeAmount), 10) || stakeAmount;
+        duelFriendRoomDraft.inviteCode = String(result?.inviteCode || "").trim();
+
+        if (duelFriendCodeValue) {
+          duelFriendCodeValue.textContent = duelFriendRoomDraft.inviteCode || "------";
+        }
+        if (duelFriendCodeStakeMeta) {
+          duelFriendCodeStakeMeta.textContent = `${duelFriendRoomDraft.stakeDoes} Does obligatoires pour 2 joueurs.`;
+        }
+        if (duelFriendCodeCopyBtn) {
+          duelFriendCodeCopyBtn.textContent = "Copier le code";
+        }
+
+        closeDuelFriendCreate();
+        openDuelFriendCode();
+      }, { loadingLabel: "Creation..." });
+    } catch (error) {
+      console.error("[DUEL_FRIEND_ROOM] create failed", error);
+      if (
+        String(error?.code || "") === "active-room-exists"
+        && error?.roomId
+      ) {
+        const roomMode = String(error?.roomMode || "");
+        const nextStake = Number.parseInt(String(error?.stakeDoes || stakeAmount), 10) || stakeAmount;
+        closeDuelFriendCreate();
+        if (roomMode === "duel_friends") {
+          duelFriendRoomDraft.roomId = String(error.roomId || "");
+          duelFriendRoomDraft.seatIndex = Number.parseInt(String(error?.seatIndex || 0), 10) || 0;
+          duelFriendRoomDraft.stakeDoes = nextStake;
+          navigateToFriendDuelRoom(duelFriendRoomDraft);
+          return;
+        }
+        showGlobalLoading("Connexion des joueurs en cours...");
+        window.location.href = buildDuelGameUrl(nextStake);
+      }
+    }
+  });
+
+  duelFriendCodeCopyBtn?.addEventListener("click", async () => {
+    const codeToCopy = String(duelFriendRoomDraft.inviteCode || "").trim();
+    if (!codeToCopy) return;
+    try {
+      await navigator.clipboard.writeText(codeToCopy);
+      duelFriendCodeCopyBtn.textContent = "Code copie";
+    } catch (_) {
+      duelFriendCodeCopyBtn.textContent = "Copie impossible";
+    }
+  });
+
+  duelFriendCodeContinueBtn?.addEventListener("click", () => {
+    closeDuelFriendCode();
+    navigateToFriendDuelRoom(duelFriendRoomDraft);
+  });
+
+  duelFriendJoinCodeInput?.addEventListener("input", () => {
+    duelFriendJoinCodeInput.value = normalizeInviteCode(duelFriendJoinCodeInput.value);
+  });
+
+  duelFriendJoinCodeInput?.addEventListener("keydown", (event) => {
+    if (event.key === "Enter") {
+      event.preventDefault();
+      duelFriendJoinSubmitBtn?.click();
+    }
+  });
+
+  duelFriendJoinSubmitBtn?.addEventListener("click", async () => {
+    const inviteCode = normalizeInviteCode(duelFriendJoinCodeInput?.value || "");
+    if (!inviteCode) {
+      if (duelFriendJoinHint) {
+        duelFriendJoinHint.textContent = "Entre le code de ton ami pour continuer.";
+      }
+      duelFriendJoinCodeInput?.focus();
+      return;
+    }
+
+    try {
+      await withButtonLoading(duelFriendJoinSubmitBtn, async () => {
+        const result = await joinFriendDuelRoomByCodeSecure({ inviteCode });
+        duelFriendRoomDraft.roomId = String(result?.roomId || "");
+        duelFriendRoomDraft.seatIndex = Number.parseInt(String(result?.seatIndex || 0), 10) || 0;
+        duelFriendRoomDraft.stakeDoes = Number.parseInt(String(result?.stakeDoes || 0), 10) || 500;
+        duelFriendRoomDraft.inviteCode = String(result?.inviteCode || inviteCode).trim();
+        closeDuelFriendJoin();
+        navigateToFriendDuelRoom(duelFriendRoomDraft);
+      }, { loadingLabel: "Connexion..." });
+    } catch (error) {
+      console.error("[DUEL_FRIEND_ROOM] join failed", error);
+      if (
+        String(error?.code || "") === "active-room-exists"
+        && error?.roomId
+      ) {
+        const roomMode = String(error?.roomMode || "");
+        const nextStake = Number.parseInt(String(error?.stakeDoes || duelFriendRoomDraft.stakeDoes || 500), 10) || 500;
+        closeDuelFriendJoin();
+        if (roomMode === "duel_friends") {
+          duelFriendRoomDraft.roomId = String(error.roomId || "");
+          duelFriendRoomDraft.seatIndex = Number.parseInt(String(error?.seatIndex || 0), 10) || 0;
+          duelFriendRoomDraft.stakeDoes = nextStake;
+          navigateToFriendDuelRoom(duelFriendRoomDraft);
+          return;
+        }
+        showGlobalLoading("Connexion des joueurs en cours...");
+        window.location.href = buildDuelGameUrl(nextStake);
+        return;
+      }
+      if (String(error?.message || "").toLowerCase().includes("solde does insuffisant")) {
+        closeDuelFriendJoin();
+        if (doesRequiredOverlay) {
+          doesRequiredOverlay.classList.remove("hidden");
+          doesRequiredOverlay.classList.add("flex");
+          document.body.classList.add("overflow-hidden");
+        }
+        return;
+      }
+      if (duelFriendJoinHint) {
+        duelFriendJoinHint.textContent = error?.message || "Impossible de rejoindre ce duel pour le moment.";
+      }
+    }
   });
 
   friendCreateStakeGrid?.addEventListener("click", async (event) => {
@@ -3315,6 +3733,26 @@ export function renderPage2(user, options = {}) {
       await continueToDuel(stakeAmount);
     }, { loadingLabel: "Verification..." });
   });
+  if (duelFriendModeClose) duelFriendModeClose.addEventListener("click", closeDuelFriendMode);
+  duelFriendModeOverlay?.addEventListener("click", (ev) => {
+    if (ev.target === duelFriendModeOverlay) closeDuelFriendMode();
+  });
+  duelFriendModePanel?.addEventListener("click", (ev) => ev.stopPropagation());
+  if (duelFriendCreateClose) duelFriendCreateClose.addEventListener("click", closeDuelFriendCreate);
+  duelFriendCreateOverlay?.addEventListener("click", (ev) => {
+    if (ev.target === duelFriendCreateOverlay) closeDuelFriendCreate();
+  });
+  duelFriendCreatePanel?.addEventListener("click", (ev) => ev.stopPropagation());
+  if (duelFriendJoinClose) duelFriendJoinClose.addEventListener("click", closeDuelFriendJoin);
+  duelFriendJoinOverlay?.addEventListener("click", (ev) => {
+    if (ev.target === duelFriendJoinOverlay) closeDuelFriendJoin();
+  });
+  duelFriendJoinPanel?.addEventListener("click", (ev) => ev.stopPropagation());
+  if (duelFriendCodeCloseBtn) duelFriendCodeCloseBtn.addEventListener("click", closeDuelFriendCode);
+  duelFriendCodeOverlay?.addEventListener("click", (ev) => {
+    if (ev.target === duelFriendCodeOverlay) closeDuelFriendCode();
+  });
+  duelFriendCodePanel?.addEventListener("click", (ev) => ev.stopPropagation());
   if (friendModeClose) friendModeClose.addEventListener("click", closeFriendMode);
   friendModeOverlay?.addEventListener("click", (ev) => {
     if (ev.target === friendModeOverlay) closeFriendMode();

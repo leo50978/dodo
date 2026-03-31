@@ -74,7 +74,6 @@ let onlineUsersTick = null;
 let onlineUsersBucket = -1;
 let lotModalOpen = false;
 let lotActionSending = false;
-let lotAutoOpenShownKey = "";
 let openingRuleNoticeMessage = "";
 let openingRuleNoticeTimer = null;
 let openingRuleNoticeDelayTimer = null;
@@ -165,6 +164,14 @@ function safeInt(value, fallback = 0) {
 function safeSignedInt(value, fallback = 0) {
   const parsed = Number(value);
   return Number.isFinite(parsed) ? Math.trunc(parsed) : fallback;
+}
+
+function getFriendDuelRoomIdFromUrl() {
+  return String(URL_PARAMS.get("friendDuelRoomId") || "").trim();
+}
+
+function isFriendDuelFlowFromUrl() {
+  return getFriendDuelRoomIdFromUrl().length > 0 || String(URL_PARAMS.get("roomMode") || "").trim() === "duel_friends";
 }
 
 function setMatchLoading(visible, text) {
@@ -1029,6 +1036,27 @@ function getSeatLabel(seat) {
   return "Bot";
 }
 
+function getStableAnonymousSeatId(seat) {
+  const seed = `${String(currentRoomId || "duel")}:${safeSignedInt(seat, 0)}:seat`;
+  let hash = 0;
+  for (let i = 0; i < seed.length; i += 1) {
+    hash = ((hash << 5) - hash) + seed.charCodeAt(i);
+    hash |= 0;
+  }
+  return `ID-${Math.abs(hash).toString(36).slice(0, 6).toUpperCase().padEnd(6, "0")}`;
+}
+
+function getSeatWinnerLabel(seat) {
+  if (seat === currentSeatIndex) return "Toi";
+  const room = currentRoomData || {};
+  const playerUids = Array.isArray(room.playerUids) ? room.playerUids : ["", ""];
+  const playerNames = Array.isArray(room.playerNames) ? room.playerNames : ["", ""];
+  const uid = String(playerUids[seat] || "").trim();
+  const name = String(playerNames[seat] || "").trim();
+  if (uid) return name || `Joueur ${seat + 1}`;
+  return `Joueur ${getStableAnonymousSeatId(seat)}`;
+}
+
 function getOpponentSeat() {
   return currentSeatIndex === 0 ? 1 : 0;
 }
@@ -1056,33 +1084,6 @@ function canOpenLotModal() {
   if (!currentRoomData || String(currentRoomData.status || "") !== "playing") return false;
   const state = getReplayState();
   return !!state && Array.isArray(state.stockPile);
-}
-
-function getLotAutoOpenKey() {
-  if (!currentRoomId || !currentRoomData || String(currentRoomData.status || "") !== "playing") return "";
-  if (currentRoomData.startRevealPending === true || actionsReady !== true) return "";
-  if (safeSignedInt(currentRoomData.currentPlayer, -1) !== currentSeatIndex) return "";
-  if (!canCurrentPlayerDrawFromLot()) return "";
-  const state = getReplayState();
-  const stockCount = Array.isArray(state?.stockPile) ? state.stockPile.length : 0;
-  if (stockCount <= 0) return "";
-  const turnStartedAtMs = safeSignedInt(currentRoomData.turnStartedAtMs, 0) || safeSignedInt(currentRoomData.startedAtMs, 0);
-  const lastActionSeq = safeSignedInt(currentRoomData.lastActionSeq, -1);
-  return [
-    currentRoomId,
-    currentSeatIndex,
-    safeSignedInt(currentRoomData.currentPlayer, -1),
-    turnStartedAtMs,
-    lastActionSeq,
-    stockCount,
-  ].join(":");
-}
-
-function maybeAutoOpenLotModal() {
-  const autoOpenKey = getLotAutoOpenKey();
-  if (!autoOpenKey || lotAutoOpenShownKey === autoOpenKey) return;
-  lotAutoOpenShownKey = autoOpenKey;
-  lotModalOpen = true;
 }
 
 function setLotModalOpen(open) {
@@ -1263,18 +1264,24 @@ function syncLotScene() {
 
 function syncLotUi() {
   const btn = document.getElementById("LotModalOpenBtn");
+  const callout = document.getElementById("LotModalCallout");
   const countEl = document.getElementById("LotModalCount");
   const overlay = document.getElementById("DuelLotModal");
   const hint = document.getElementById("DuelLotHint");
-  maybeAutoOpenLotModal();
   const drawAllowed = canCurrentPlayerDrawFromLot();
   const stockCount = getLotStockCount();
   const canOpen = canOpenLotModal();
+  const shouldGuideToLot = drawAllowed && canOpen && !lotModalOpen;
 
   if (btn) {
     btn.disabled = !canOpen;
     btn.classList.toggle("opacity-50", btn.disabled);
     btn.classList.toggle("pointer-events-none", btn.disabled);
+    btn.classList.toggle("duel-lot-cta", shouldGuideToLot);
+  }
+  if (callout) {
+    callout.classList.toggle("hidden", !shouldGuideToLot);
+    callout.classList.toggle("duel-lot-cta-visible", shouldGuideToLot);
   }
   if (countEl) {
     countEl.textContent = String(stockCount);
@@ -1361,7 +1368,6 @@ function resetRoomState() {
   teardownLotScene();
   clearOpeningRuleNotice();
   openingRuleNoticeShownKey = "";
-  lotAutoOpenShownKey = "";
   currentRoomId = "";
   currentSeatIndex = -1;
   currentRoomData = null;
@@ -1587,8 +1593,32 @@ async function joinSelectedDuel() {
   }
 }
 
+async function resumeFriendDuelFromUrl() {
+  const friendRoomId = getFriendDuelRoomIdFromUrl();
+  if (!currentUser?.uid || joining || currentRoomId || !friendRoomId) return;
+  joining = true;
+  pendingSideChooser = null;
+  setMatchLoading(true, "Connexion du duel prive en cours.");
+  renderApp();
+  try {
+    await refreshWalletState();
+    currentRoomId = friendRoomId;
+    forgetAbandonedDuelRoom(currentRoomId);
+    currentSeatIndex = safeInt(URL_PARAMS.get("seat"), 0);
+    setStatus(`Salle duel privee. Position ${currentSeatIndex + 1}/2.`);
+    watchRoom(currentRoomId);
+  } catch (error) {
+    console.error("[DUEL] resumeFriendDuelFromUrl failed", error);
+    setMatchLoading(false);
+    setStatus(error?.message || "Impossible de rejoindre ce duel prive.");
+  } finally {
+    joining = false;
+    renderApp();
+  }
+}
+
 function maybeAutoJoinSelectedDuel() {
-  if (!currentUser?.uid || currentRoomId || joining || duelJoinAutoStarted) return;
+  if (!currentUser?.uid || currentRoomId || joining || duelJoinAutoStarted || isFriendDuelFlowFromUrl()) return;
   duelJoinAutoStarted = true;
   setMatchLoading(true, "Connexion des joueurs en cours.");
   void joinSelectedDuel();
@@ -1918,7 +1948,7 @@ function showEndedOverlay() {
   const goBtn = document.getElementById("GameEndGoBtn");
   if (!overlay || !currentRoomData) return;
   const winnerSeat = safeSignedInt(currentRoomData.winnerSeat, -1);
-  const winnerName = winnerSeat >= 0 ? getSeatLabel(winnerSeat) : "La partie";
+  const winnerName = winnerSeat >= 0 ? getSeatWinnerLabel(winnerSeat) : "La partie";
   if (winnerEl) winnerEl.textContent = `${winnerName} a gagne`;
   if (infoEl) {
     infoEl.textContent = isCurrentUserWinner()
@@ -2228,6 +2258,10 @@ async function bootstrap() {
 
     await refreshWalletState();
     renderApp();
+    if (isFriendDuelFlowFromUrl()) {
+      void resumeFriendDuelFromUrl();
+      return;
+    }
     maybeAutoJoinSelectedDuel();
   });
 

@@ -106,6 +106,46 @@ function extractPhoneDigits(value) {
   return String(value || "").replace(/\D/g, "");
 }
 
+function normalizeOcrSearchText(value) {
+  return String(value || "")
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toUpperCase();
+}
+
+function isLikelyDepositIdToken(value) {
+  const token = String(value || '')
+    .trim()
+    .replace(/^[^A-Z0-9]+|[^A-Z0-9]+$/g, '');
+  if (!token) return false;
+  if (/^\d{5,}$/.test(token)) return true;
+  if (!/^[A-Z0-9-]{5,}$/.test(token)) return false;
+  return /[A-Z]/.test(token) || /\d{4,}/.test(token);
+}
+
+function extractDepositIdFromOcrText(value) {
+  const text = normalizeOcrSearchText(value);
+  if (!text) return '';
+
+  const patterns = [
+    /(?:TRANSACTION|TRANS|REFERENCE|REF|IDENTIFIANT|IDENTIFIANT DE TRANSACTION|ID)\s*(?:NO|N0|NUMERO|NUM|NUMBER|#|:|-)?\s*([A-Z0-9-]{5,})/g,
+    /(?:NO|N0|NUMERO|NUM|NUMBER|#)\s*(?:DE\s+)?(?:TRANSACTION|TRANS|REFERENCE|REF|IDENTIFIANT|ID)\s*[:\-]?\s*([A-Z0-9-]{5,})/g,
+    /(?:ID|REF)[\s:.-]*([A-Z0-9-]{5,})/g,
+  ];
+
+  for (const pattern of patterns) {
+    let match;
+    while ((match = pattern.exec(text)) !== null) {
+      const candidate = String(match[1] || '').trim();
+      if (isLikelyDepositIdToken(candidate)) {
+        return candidate;
+      }
+    }
+  }
+
+  return '';
+}
+
 function sanitizeAsset(value) {
   const out = String(value || '').trim();
   if (!out) return '';
@@ -127,6 +167,15 @@ function getPaymentFriendlyErrorMessage(error) {
     return message;
   }
   return 'Une erreur est survenue. Veuillez réessayer.';
+}
+
+function isDepositProofSecurityError(error) {
+  const code = String(error?.code || '').trim().toLowerCase();
+  const message = String(error?.message || '').trim().toLowerCase();
+  return code === 'deposit-proof-security-check-failed'
+    || message.includes('mesures de securite')
+    || message.includes('contacter un agent')
+    || message.includes('aucun id de transaction');
 }
 
 class PaymentModal {
@@ -157,6 +206,7 @@ class PaymentModal {
     this.proofImageFile = null;
     this.extractedText = '';
     this.extractedTextStatus = 'pending';
+    this.extractedProofId = '';
     this.isSubmitted = false;
     this.confirmationMessage = "";
     this.isCompleted = false;
@@ -519,6 +569,107 @@ class PaymentModal {
 
       modal.querySelector('[data-agent-deposit="cancel"]')?.addEventListener('click', () => cleanup(false));
       modal.querySelector('[data-agent-deposit="continue"]')?.addEventListener('click', () => cleanup(true));
+
+      overlay.appendChild(modal);
+      document.body.appendChild(overlay);
+    });
+  }
+
+  async openMissingDepositIdSupportModal() {
+    return new Promise((resolve) => {
+      const overlay = document.createElement('div');
+      overlay.style.cssText = `
+        position: fixed;
+        inset: 0;
+        z-index: 2147483647;
+        background: rgba(15, 23, 42, 0.76);
+        backdrop-filter: blur(4px);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        padding: 1rem;
+      `;
+
+      const modal = document.createElement('div');
+      modal.style.cssText = `
+        width: min(100%, 480px);
+        background: linear-gradient(180deg, #FFF7ED 0%, #FFEDD5 100%);
+        border: 1px solid rgba(194, 65, 12, 0.16);
+        border-radius: 24px;
+        box-shadow: 0 28px 80px rgba(15, 23, 42, 0.28);
+        padding: 1.4rem;
+        color: #7C2D12;
+      `;
+
+      modal.innerHTML = `
+        <div style="display:flex;align-items:flex-start;gap:0.85rem;">
+          <div style="
+            width:44px;
+            height:44px;
+            border-radius:999px;
+            background: rgba(194, 65, 12, 0.12);
+            color:#C2410C;
+            display:flex;
+            align-items:center;
+            justify-content:center;
+            font-size:1.15rem;
+            flex-shrink:0;
+          "><i class="fas fa-headset"></i></div>
+          <div style="min-width:0;">
+            <div style="font-size:1.08rem;font-weight:800;margin-bottom:0.35rem;">
+              Verification de securite requise
+            </div>
+            <div style="font-size:0.95rem;line-height:1.55;color:#9A3412;">
+              L'image envoyee ne passe pas nos mesures de securite pour cette demande de depot.
+            </div>
+            <div style="margin-top:0.7rem;font-size:0.9rem;line-height:1.55;color:#7C2D12;font-weight:700;">
+              Veuillez contacter un agent pour continuer.
+            </div>
+          </div>
+        </div>
+        <div style="display:flex;flex-wrap:wrap;gap:0.65rem;margin-top:1.25rem;">
+          <button type="button" data-missing-id="close" style="
+            flex:1 1 140px;
+            min-height:46px;
+            border:none;
+            border-radius:14px;
+            background:#E5E7EB;
+            color:#374151;
+            font-weight:700;
+            cursor:pointer;
+            padding:0.85rem 1rem;
+          ">Fermer</button>
+          <a href="https://wa.me/${SUPPORT_WHATSAPP_DIGITS}" target="_blank" rel="noopener noreferrer" data-missing-id="support" style="
+            flex:1 1 200px;
+            min-height:46px;
+            border-radius:14px;
+            background:#16A34A;
+            color:white;
+            font-weight:800;
+            text-decoration:none;
+            display:flex;
+            align-items:center;
+            justify-content:center;
+            padding:0.85rem 1rem;
+          ">Contacter un agent</a>
+        </div>
+        <div style="margin-top:0.75rem;font-size:0.82rem;color:#6B7280;text-align:center;">
+          Agent WhatsApp: ${SUPPORT_WHATSAPP_LABEL}
+        </div>
+      `;
+
+      const cleanup = () => {
+        overlay.remove();
+        resolve(false);
+      };
+
+      overlay.addEventListener('click', (event) => {
+        if (event.target === overlay) {
+          cleanup();
+        }
+      });
+
+      modal.querySelector('[data-missing-id="close"]')?.addEventListener('click', cleanup);
 
       overlay.appendChild(modal);
       document.body.appendChild(overlay);
@@ -1951,6 +2102,10 @@ class PaymentModal {
             : (step.buttonText || 'Soumettre ma demande'))
           : (step.buttonText || 'Continuer');
       }
+      if (step.type === 'proof' && isDepositProofSecurityError(error)) {
+        await this.openMissingDepositIdSupportModal();
+        return;
+      }
       alert(getPaymentFriendlyErrorMessage(error));
     }
   }
@@ -2047,22 +2202,38 @@ class PaymentModal {
     const imageFile = this.proofImageFile || proofImage;
     this.extractedText = '';
     this.extractedTextStatus = 'pending';
+    this.extractedProofId = '';
 
     try {
       this.extractedText = await this.extractTextFromProofImage(imageFile);
       this.extractedTextStatus = this.extractedText ? 'success' : 'empty';
+      this.extractedProofId = extractDepositIdFromOcrText(this.extractedText);
     } catch (ocrError) {
       console.error('❌ Erreur OCR:', ocrError);
       this.extractedText = '';
       this.extractedTextStatus = 'failed';
+      this.extractedProofId = '';
     }
 
     this.clientData.depositorPhone = proofDepositorPhone;
 
+    if (!this.isWelcomeBonusSelected() && !this.extractedProofId) {
+      console.info('[DEPOSIT_GUARD_DEBUG][PAYMENT] proof-id-missing', {
+        uid: this.getClientUid(),
+        extractedTextStatus: this.extractedTextStatus,
+        extractedTextLength: this.extractedText.length,
+      });
+      await this.openMissingDepositIdSupportModal();
+      return false;
+    }
+
     if (this.isWelcomeBonusSelected()) {
       await this.saveWelcomeBonusClaim(proofName);
     } else {
-      await this.saveOrder(proofName);
+      const orderSaved = await this.saveOrder(proofName);
+      if (orderSaved === false) {
+        return false;
+      }
     }
     
     return true;
@@ -2210,6 +2381,10 @@ class PaymentModal {
       return true;
     } catch (error) {
       console.error('❌ Erreur sauvegarde commande:', error);
+      if (isDepositProofSecurityError(error)) {
+        await this.openMissingDepositIdSupportModal();
+        return false;
+      }
       throw error;
     }
   }

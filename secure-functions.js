@@ -132,6 +132,14 @@ export async function joinMatchmakingDuelSecure(payload = {}) {
   return invokeCallable("joinMatchmakingDuel", payload, "Impossible de rejoindre un duel.");
 }
 
+export async function createFriendDuelRoomSecure(payload = {}) {
+  return invokeCallable("createFriendDuelRoom", payload, "Impossible de creer un duel entre amis.");
+}
+
+export async function joinFriendDuelRoomByCodeSecure(payload = {}) {
+  return invokeCallable("joinFriendDuelRoomByCode", payload, "Impossible de rejoindre le duel entre amis.");
+}
+
 export async function ensureRoomReadyDuelSecure(payload = {}) {
   return invokeCallable("ensureRoomReadyDuel", payload, "Impossible de demarrer le duel.");
 }

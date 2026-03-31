@@ -116,10 +116,10 @@ const FRIEND_ROOM_WAIT_MS = 10 * 60 * 1000;
 const FRIEND_ROOM_CODE_SIZE = 6;
 const ROOM_DISCONNECT_TAKEOVER_MS = 45 * 1000;
 const ROOM_DISCONNECT_GRACE_MS = 45 * 1000;
-const BOT_THINK_DELAY_MIN_MS = 1400;
-const BOT_THINK_DELAY_MAX_MS = 2600;
-const BOT_THINK_DELAY_PASS_MIN_MS = 900;
-const BOT_THINK_DELAY_PASS_MAX_MS = 1700;
+const BOT_THINK_DELAY_MIN_MS = 650;
+const BOT_THINK_DELAY_MAX_MS = 1200;
+const BOT_THINK_DELAY_PASS_MIN_MS = 320;
+const BOT_THINK_DELAY_PASS_MAX_MS = 650;
 const BOT_DIFFICULTY_LEVELS = new Set(["amateur", "expert", "ultra", "userpro"]);
 const BOT_PILOT_MODES = new Set(["manual", "auto"]);
 const BOT_PILOT_WINDOW_MS = 24 * 60 * 60 * 1000;
@@ -150,6 +150,7 @@ const BOT_DIFFICULTY_LOOKAHEAD = Object.freeze({
   ultra: 5,
   userpro: 0,
 });
+const DUEL_ELITE_LOOKAHEAD_PLIES = 4;
 const USER_TOURNAMENTS_COLLECTION = "userTournaments";
 const USER_TOURNAMENT_SLOT_COUNT = 5;
 const USER_TOURNAMENT_DAILY_LIMIT = 3;
@@ -3313,6 +3314,276 @@ async function computeBotPilotSnapshot(options = {}) {
   };
 }
 
+function normalizeDuelAnalyticsWindow(value = "") {
+  const normalized = String(value || "").trim().toLowerCase();
+  return normalized === "today" || normalized === "7d" || normalized === "30d" || normalized === "global"
+    ? normalized
+    : "30d";
+}
+
+function getDuelAnalyticsDayKey(ms = 0) {
+  if (!ms) return "";
+  const date = new Date(ms);
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
+function getDuelAnalyticsHourKey(ms = 0) {
+  if (!ms) return "";
+  const date = new Date(ms);
+  const hour = String(date.getHours()).padStart(2, "0");
+  return `${getDuelAnalyticsDayKey(ms)} ${hour}:00`;
+}
+
+function getDuelAnalyticsBucketKey(granularity = "day", ms = 0) {
+  return granularity === "hour" ? getDuelAnalyticsHourKey(ms) : getDuelAnalyticsDayKey(ms);
+}
+
+function getDuelAnalyticsBucketLabel(granularity = "day", ms = 0) {
+  if (!ms) return "-";
+  const date = new Date(ms);
+  if (granularity === "hour") {
+    return date.toLocaleString("fr-FR", {
+      day: "2-digit",
+      month: "short",
+      hour: "2-digit",
+      minute: "2-digit",
+    });
+  }
+  return date.toLocaleDateString("fr-FR", {
+    day: "2-digit",
+    month: "short",
+  });
+}
+
+function getDuelAnalyticsRange(options = {}, nowMs = Date.now()) {
+  const customStartMs = safeSignedInt(options.startMs);
+  const customEndMs = safeSignedInt(options.endMs);
+  if (customStartMs > 0 && customEndMs > 0 && customEndMs >= customStartMs) {
+    const rangeMs = Math.max(1, customEndMs - customStartMs);
+    return {
+      windowKey: "custom",
+      startMs: customStartMs,
+      endMs: customEndMs,
+      granularity: rangeMs <= (2 * 24 * 60 * 60 * 1000) ? "hour" : "day",
+      isGlobal: false,
+    };
+  }
+
+  const windowKey = normalizeDuelAnalyticsWindow(options.window || "30d");
+  const now = new Date(nowMs);
+  const todayStartMs = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+  if (windowKey === "today") {
+    return {
+      windowKey,
+      startMs: todayStartMs,
+      endMs: nowMs,
+      granularity: "hour",
+      isGlobal: false,
+    };
+  }
+  if (windowKey === "7d") {
+    return {
+      windowKey,
+      startMs: todayStartMs - (6 * 24 * 60 * 60 * 1000),
+      endMs: nowMs,
+      granularity: "day",
+      isGlobal: false,
+    };
+  }
+  if (windowKey === "30d") {
+    return {
+      windowKey,
+      startMs: todayStartMs - (29 * 24 * 60 * 60 * 1000),
+      endMs: nowMs,
+      granularity: "day",
+      isGlobal: false,
+    };
+  }
+  return {
+    windowKey: "global",
+    startMs: 0,
+    endMs: nowMs,
+    granularity: "day",
+    isGlobal: true,
+  };
+}
+
+async function computeDuelAnalyticsSnapshot(options = {}) {
+  const nowMs = safeSignedInt(options.nowMs) || Date.now();
+  const range = getDuelAnalyticsRange(options, nowMs);
+  let query = db.collection(DUEL_ROOM_RESULTS_COLLECTION).orderBy("endedAtMs", "asc");
+
+  if (range.startMs > 0) {
+    query = query.where("endedAtMs", ">=", range.startMs);
+  }
+  if (range.endMs > 0) {
+    query = query.where("endedAtMs", "<=", range.endMs);
+  }
+
+  const querySnap = await query.get();
+  let matchesPlayed = 0;
+  let matchesWithBot = 0;
+  let botWins = 0;
+  let humanWins = 0;
+  let publicMatches = 0;
+  let friendMatches = 0;
+  let totalDurationMs = 0;
+  let durationSamples = 0;
+  let totalStakeDoes = 0;
+  const trendMap = new Map();
+  const stakeMixMap = new Map();
+  const recentResults = [];
+
+  querySnap.forEach((docSnap) => {
+    const data = docSnap.data() || {};
+    const status = String(data.status || "").trim().toLowerCase();
+    const endedAtMs = safeSignedInt(data.endedAtMs);
+    if (status !== "ended") return;
+    if (range.startMs > 0 && endedAtMs < range.startMs) return;
+    if (range.endMs > 0 && endedAtMs > range.endMs) return;
+
+    matchesPlayed += 1;
+
+    const botCount = safeInt(data.botCount);
+    const withBot = botCount > 0;
+    if (withBot) matchesWithBot += 1;
+
+    const winnerType = String(data.winnerType || "").trim().toLowerCase();
+    if (winnerType === "bot") botWins += 1;
+    if (winnerType === "human") humanWins += 1;
+
+    const roomModeRaw = String(data.roomMode || "").trim().toLowerCase();
+    const modeKey = roomModeRaw === "duel_friends" ? "friends" : "public";
+    if (modeKey === "friends") friendMatches += 1;
+    else publicMatches += 1;
+
+    const stakeDoes = safeInt(data.entryCostDoes || data.stakeDoes);
+    totalStakeDoes += stakeDoes;
+    const stakeEntry = stakeMixMap.get(String(stakeDoes)) || {
+      stakeDoes,
+      label: `${stakeDoes} Does`,
+      count: 0,
+    };
+    stakeEntry.count += 1;
+    stakeMixMap.set(String(stakeDoes), stakeEntry);
+
+    const startedAtMs = safeSignedInt(data.startedAtMs);
+    const durationMs = startedAtMs > 0 && endedAtMs >= startedAtMs
+      ? Math.max(0, endedAtMs - startedAtMs)
+      : 0;
+    if (durationMs > 0) {
+      totalDurationMs += durationMs;
+      durationSamples += 1;
+    }
+
+    const bucketKey = getDuelAnalyticsBucketKey(range.granularity, endedAtMs);
+    const bucket = trendMap.get(bucketKey) || {
+      key: bucketKey,
+      label: getDuelAnalyticsBucketLabel(range.granularity, endedAtMs),
+      periodMs: endedAtMs,
+      matchesPlayed: 0,
+      matchesWithBot: 0,
+      botWins: 0,
+      humanWins: 0,
+      publicMatches: 0,
+      friendMatches: 0,
+      totalStakeDoes: 0,
+      totalDurationMs: 0,
+      durationSamples: 0,
+    };
+    bucket.matchesPlayed += 1;
+    if (withBot) bucket.matchesWithBot += 1;
+    if (winnerType === "bot") bucket.botWins += 1;
+    if (winnerType === "human") bucket.humanWins += 1;
+    if (modeKey === "friends") bucket.friendMatches += 1;
+    else bucket.publicMatches += 1;
+    bucket.totalStakeDoes += stakeDoes;
+    if (durationMs > 0) {
+      bucket.totalDurationMs += durationMs;
+      bucket.durationSamples += 1;
+    }
+    if (endedAtMs > safeSignedInt(bucket.periodMs)) {
+      bucket.periodMs = endedAtMs;
+      bucket.label = getDuelAnalyticsBucketLabel(range.granularity, endedAtMs);
+    }
+    trendMap.set(bucketKey, bucket);
+
+    recentResults.push({
+      roomId: docSnap.id,
+      endedAtMs,
+      stakeDoes,
+      botCount,
+      withBot,
+      winnerType,
+      roomMode: modeKey,
+      durationMs,
+    });
+  });
+
+  recentResults.sort((left, right) => safeSignedInt(right.endedAtMs) - safeSignedInt(left.endedAtMs));
+
+  const trend = Array.from(trendMap.values())
+    .sort((left, right) => safeSignedInt(left.periodMs) - safeSignedInt(right.periodMs))
+    .map((bucket) => ({
+      key: bucket.key,
+      label: bucket.label,
+      periodMs: safeSignedInt(bucket.periodMs),
+      matchesPlayed: safeInt(bucket.matchesPlayed),
+      matchesWithBot: safeInt(bucket.matchesWithBot),
+      matchesWithoutBot: Math.max(0, safeInt(bucket.matchesPlayed) - safeInt(bucket.matchesWithBot)),
+      botWins: safeInt(bucket.botWins),
+      humanWins: safeInt(bucket.humanWins),
+      publicMatches: safeInt(bucket.publicMatches),
+      friendMatches: safeInt(bucket.friendMatches),
+      avgStakeDoes: safeInt(bucket.matchesPlayed) > 0 ? Math.round(bucket.totalStakeDoes / bucket.matchesPlayed) : 0,
+      avgDurationMs: safeInt(bucket.durationSamples) > 0 ? Math.round(bucket.totalDurationMs / bucket.durationSamples) : 0,
+    }));
+
+  const stakeMix = Array.from(stakeMixMap.values())
+    .sort((left, right) => safeInt(left.stakeDoes) - safeInt(right.stakeDoes))
+    .map((item) => ({
+      stakeDoes: safeInt(item.stakeDoes),
+      label: String(item.label || `${safeInt(item.stakeDoes)} Does`),
+      count: safeInt(item.count),
+    }));
+
+  return {
+    ok: true,
+    generatedAtMs: nowMs,
+    range: {
+      window: range.windowKey,
+      startMs: range.startMs,
+      endMs: range.endMs,
+      granularity: range.granularity,
+      isGlobal: range.isGlobal,
+    },
+    summary: {
+      matchesPlayed,
+      matchesWithBot,
+      matchesWithoutBot: Math.max(0, matchesPlayed - matchesWithBot),
+      botWins,
+      humanWins,
+      publicMatches,
+      friendMatches,
+      avgDurationMs: durationSamples > 0 ? Math.round(totalDurationMs / durationSamples) : 0,
+      avgStakeDoes: matchesPlayed > 0 ? Math.round(totalStakeDoes / matchesPlayed) : 0,
+      botMatchRatePct: matchesPlayed > 0 ? matchesWithBot / matchesPlayed : 0,
+      botWinRatePct: matchesPlayed > 0 ? botWins / matchesPlayed : 0,
+      humanWinRatePct: matchesPlayed > 0 ? humanWins / matchesPlayed : 0,
+    },
+    modeMix: [
+      { key: "public", label: "Public", count: publicMatches },
+      { key: "friends", label: "Entre amis", count: friendMatches },
+    ],
+    stakeMix,
+    trend,
+    recentResults: recentResults.slice(0, 12),
+  };
+}
+
 function makeDeckOrder() {
   const arr = Array.from({ length: 28 }, (_, i) => i);
   for (let i = arr.length - 1; i > 0; i -= 1) {
@@ -4204,19 +4475,19 @@ function computeBotThinkDelayMs(room, state, seat) {
   let max = BOT_THINK_DELAY_MAX_MS;
 
   if (openingResponse) {
-    min += 180;
-    max += 420;
+    min += 80;
+    max += 170;
   }
 
-  min += Math.min(900, branchingCount * 220);
-  max += Math.min(1700, branchingCount * 420);
+  min += Math.min(320, branchingCount * 80);
+  max += Math.min(650, branchingCount * 160);
 
   if (difficulty === "ultra") {
-    min += 180;
-    max += 360;
+    min += 90;
+    max += 180;
   } else if (difficulty === "amateur") {
-    min = Math.max(900, min - 140);
-    max = Math.max(min + 220, max - 180);
+    min = Math.max(420, min - 90);
+    max = Math.max(min + 140, max - 120);
   }
 
   return randomInt(min, max);
@@ -4539,8 +4810,9 @@ function resolveDuelWaitingDeadlineMs(room = {}, nowMs = Date.now()) {
   const explicit = safeSignedInt(room.waitingDeadlineMs);
   if (explicit > 0) return explicit;
   const createdAtMs = safeSignedInt(room.createdAtMs);
-  if (createdAtMs > 0) return createdAtMs + ROOM_WAIT_MS;
-  return nowMs + ROOM_WAIT_MS;
+  const waitMs = isFriendDuelRoom(room) ? FRIEND_ROOM_WAIT_MS : ROOM_WAIT_MS;
+  if (createdAtMs > 0) return createdAtMs + waitMs;
+  return nowMs + waitMs;
 }
 
 function getDuelStakeConfigByAmount(stakeDoes) {
@@ -4584,6 +4856,9 @@ async function findActiveDuelRoomForUser(uid) {
     roomId: candidate.id,
     status: String(data.status || ""),
     seatIndex,
+    roomMode: String(data.roomMode || "duel_2p"),
+    stakeDoes: safeInt(data.entryCostDoes || data.stakeDoes),
+    inviteCode: String(data.inviteCode || "").trim(),
   };
 }
 
@@ -4692,12 +4967,19 @@ function buildDuelPresenceUpdates(room = {}, actorUid = "", nowMs = Date.now()) 
     && currentPlayerSeat >= 0
     && currentPlayerSeat < 2
     && !isSeatHuman(effectiveRoom, currentPlayerSeat);
+  const shouldResolveExpiredHumanTurn = String(room.status || "") === "playing"
+    && room.startRevealPending !== true
+    && currentPlayerSeat >= 0
+    && currentPlayerSeat < 2
+    && isSeatHuman(effectiveRoom, currentPlayerSeat)
+    && resolveDuelTurnDeadlineMs(room, nowMs) <= nowMs;
 
   return {
     changed,
     removedAny,
     updates,
     shouldNudgeBots,
+    shouldResolveExpiredHumanTurn,
     takeoverCount: updates.botTakeoverSeats.length,
   };
 }
@@ -5204,6 +5486,11 @@ function buildDuelDrawMove(seat, tileId = null) {
   };
 }
 
+function pickRandomItem(items = []) {
+  if (!Array.isArray(items) || items.length <= 0) return null;
+  return items[randomInt(0, items.length - 1)] || null;
+}
+
 function getDuelTurnStartedAtMs(room = {}) {
   const directMs = safeSignedInt(room?.turnStartedAtMs);
   if (directMs > 0) return directMs;
@@ -5225,23 +5512,294 @@ function resolveDuelTurnDeadlineMs(room = {}, nowMs = Date.now()) {
   return safeNowMs + DUEL_TURN_LIMIT_MS;
 }
 
-function buildExpiredHumanDuelMove(room, state) {
+function getOtherDuelSeat(seat) {
+  return seat === 0 ? 1 : 0;
+}
+
+function countValueMatchesInDuelSeatHand(state, seat, value) {
+  if (!Number.isFinite(Number(value))) return 0;
+  const target = Math.trunc(Number(value));
+  const hand = Array.isArray(state?.seatHands?.[seat]) ? state.seatHands[seat] : [];
+  return hand.reduce((count, tileId) => {
+    if (tileId === null) return count;
+    const values = getTileValues(tileId);
+    if (!values) return count;
+    return count + ((values[0] === target || values[1] === target) ? 1 : 0);
+  }, 0);
+}
+
+function countValueMatchesInDuelStock(state, value) {
+  if (!Number.isFinite(Number(value))) return 0;
+  const target = Math.trunc(Number(value));
+  const stock = Array.isArray(state?.stockPile) ? state.stockPile : [];
+  return stock.reduce((count, tileId) => {
+    const values = getTileValues(tileId);
+    if (!values) return count;
+    return count + ((values[0] === target || values[1] === target) ? 1 : 0);
+  }, 0);
+}
+
+function countImmediateWinThreatForDuel(state, seat) {
+  if (seat < 0 || seat > 1) return 0;
+  if (countRemainingTilesForDuelSeat(state?.seatHands, seat) !== 1) return 0;
+  return getLegalMovesForDuelSeat(state, seat).length > 0 ? 1 : 0;
+}
+
+function scoreDuelStateForSeat(room, state, perspectiveSeat) {
+  const winnerSeat = Number.isFinite(Number(state?.winnerSeat))
+    ? Math.trunc(Number(state.winnerSeat))
+    : -1;
+  if (winnerSeat >= 0) {
+    return winnerSeat === perspectiveSeat ? 1_000_000 : -1_000_000;
+  }
+
+  const opponentSeat = getOtherDuelSeat(perspectiveSeat);
+  const selfTiles = countRemainingTilesForDuelSeat(state?.seatHands, perspectiveSeat);
+  const opponentTiles = countRemainingTilesForDuelSeat(state?.seatHands, opponentSeat);
+  const selfPips = sumDuelSeatPips(state?.seatHands, perspectiveSeat);
+  const opponentPips = sumDuelSeatPips(state?.seatHands, opponentSeat);
+  const selfLegal = getLegalMovesForDuelSeat(state, perspectiveSeat).length;
+  const opponentLegal = getLegalMovesForDuelSeat(state, opponentSeat).length;
+  const stockCount = Array.isArray(state?.stockPile) ? state.stockPile.length : 0;
+  const leftEnd = Number.isFinite(Number(state?.leftEnd)) ? Math.trunc(Number(state.leftEnd)) : null;
+  const rightEnd = Number.isFinite(Number(state?.rightEnd)) ? Math.trunc(Number(state.rightEnd)) : null;
+
+  const selfLeftMatches = countValueMatchesInDuelSeatHand(state, perspectiveSeat, leftEnd);
+  const selfRightMatches = countValueMatchesInDuelSeatHand(state, perspectiveSeat, rightEnd);
+  const opponentLeftMatches = countValueMatchesInDuelSeatHand(state, opponentSeat, leftEnd);
+  const opponentRightMatches = countValueMatchesInDuelSeatHand(state, opponentSeat, rightEnd);
+  const stockLeftMatches = countValueMatchesInDuelStock(state, leftEnd);
+  const stockRightMatches = countValueMatchesInDuelStock(state, rightEnd);
+
+  let score = 0;
+  score += (7 - selfTiles) * 440;
+  score -= selfTiles * 150;
+  score -= selfPips * (stockCount <= 0 ? 30 : 18);
+  score += opponentTiles * 125;
+  score += opponentPips * (stockCount <= 0 ? 12 : 5);
+  score += selfLegal * 38;
+  score -= opponentLegal * 110;
+
+  if (leftEnd !== null || rightEnd !== null) {
+    score += selfLeftMatches * 34;
+    score -= opponentLeftMatches * 76;
+    if (rightEnd !== leftEnd) {
+      score += selfRightMatches * 34;
+      score -= opponentRightMatches * 76;
+    }
+  }
+
+  if (leftEnd !== null) {
+    const opponentBlockedLeft = opponentLeftMatches <= 0;
+    const selfBlockedLeft = selfLeftMatches <= 0;
+    if (opponentBlockedLeft) {
+      score += 115 + Math.max(0, 55 - (stockLeftMatches * 10));
+    }
+    if (selfBlockedLeft) {
+      score -= 90 + Math.max(0, 40 - (stockLeftMatches * 8));
+    }
+  }
+
+  if (rightEnd !== null && rightEnd !== leftEnd) {
+    const opponentBlockedRight = opponentRightMatches <= 0;
+    const selfBlockedRight = selfRightMatches <= 0;
+    if (opponentBlockedRight) {
+      score += 115 + Math.max(0, 55 - (stockRightMatches * 10));
+    }
+    if (selfBlockedRight) {
+      score -= 90 + Math.max(0, 40 - (stockRightMatches * 8));
+    }
+  }
+
+  if (opponentLegal === 0) {
+    const rescueCount = stockLeftMatches + ((rightEnd !== leftEnd) ? stockRightMatches : 0);
+    score += 260 + Math.max(0, 140 - (rescueCount * 10));
+  }
+  if (selfLegal === 0) {
+    const rescueCount = stockLeftMatches + ((rightEnd !== leftEnd) ? stockRightMatches : 0);
+    score -= 220 + Math.max(0, 120 - (rescueCount * 10));
+  }
+
+  const selfThreat = countImmediateWinThreatForDuel(state, perspectiveSeat);
+  const opponentThreat = countImmediateWinThreatForDuel(state, opponentSeat);
+  if (selfThreat > 0) score += 1_600;
+  if (opponentThreat > 0) score -= 2_400;
+
+  if (stockCount <= 0 && safeInt(state?.passesInRow) >= 1) {
+    score += (opponentPips - selfPips) * 24;
+  }
+
+  const nextSeat = safeSignedInt(state?.currentPlayer, -1);
+  if (nextSeat === perspectiveSeat) {
+    score += 70;
+  } else if (nextSeat === opponentSeat) {
+    score -= 45;
+  }
+
+  return score;
+}
+
+function buildDuelBotCandidateMoves(state, seat) {
+  const legalMoves = getLegalMovesForDuelSeat(state, seat);
+  if (legalMoves.length > 0) {
+    return legalMoves.map((move) => buildPlayMoveFromDuelLegal(seat, move));
+  }
+
+  if (Array.isArray(state?.stockPile) && state.stockPile.length > 0) {
+    return state.stockPile
+      .filter((tileId) => Number.isFinite(Number(tileId)) && getTileValues(tileId))
+      .map((tileId) => buildDuelDrawMove(seat, Math.trunc(Number(tileId))));
+  }
+
+  return [buildDuelPassMove(seat)];
+}
+
+function scoreDuelMoveTieBreaker(state, move) {
+  if (!move) return Number.NEGATIVE_INFINITY;
+  if (move.type === "pass") return -1_000;
+
+  const values = getTileValues(move.tileId) || [0, 0];
+  const pipSum = values[0] + values[1];
+  const isDouble = values[0] === values[1];
+  let score = move.type === "play" ? 5_000 : 1_000;
+  score += pipSum * 11;
+  if (isDouble) score += 90 + (values[0] * 14);
+
+  if (move.type === "draw") {
+    const leftEnd = Number.isFinite(Number(state?.leftEnd)) ? Math.trunc(Number(state.leftEnd)) : null;
+    const rightEnd = Number.isFinite(Number(state?.rightEnd)) ? Math.trunc(Number(state.rightEnd)) : null;
+    if (leftEnd !== null && (values[0] === leftEnd || values[1] === leftEnd)) {
+      score += 260;
+    }
+    if (rightEnd !== null && rightEnd !== leftEnd && (values[0] === rightEnd || values[1] === rightEnd)) {
+      score += 260;
+    }
+  }
+
+  return score;
+}
+
+function evaluateDuelFutureForSeat(room, state, perspectiveSeat, remainingPlies) {
+  const baseScore = scoreDuelStateForSeat(room, state, perspectiveSeat);
+  if (remainingPlies <= 0 || safeSignedInt(state?.winnerSeat, -1) >= 0) {
+    return baseScore;
+  }
+
+  const actor = safeSignedInt(state?.currentPlayer, -1);
+  if (actor < 0 || actor > 1) {
+    return baseScore;
+  }
+
+  let predictedMove = null;
+  try {
+    predictedMove = chooseStrategicDuelMove(room, state, actor, { lookaheadPlies: 0 });
+  } catch (_) {
+    return baseScore;
+  }
+  if (!predictedMove) return baseScore;
+
+  try {
+    const predictedResult = applyResolvedDuelMove(state, room, predictedMove, `server:bot:duel:sim:${actor}`);
+    return baseScore + (0.68 * evaluateDuelFutureForSeat(
+      room,
+      predictedResult.state,
+      perspectiveSeat,
+      remainingPlies - 1
+    ));
+  } catch (_) {
+    return baseScore;
+  }
+}
+
+function chooseStrategicDuelMove(room, state, seat, options = {}) {
+  const liveState = normalizeDuelGameState(state, room);
+  const requestedLookahead = Number.isFinite(Number(options?.lookaheadPlies))
+    ? Math.max(0, Math.trunc(Number(options.lookaheadPlies)))
+    : DUEL_ELITE_LOOKAHEAD_PLIES;
+  const candidateMoves = buildDuelBotCandidateMoves(liveState, seat);
+  if (candidateMoves.length <= 0) {
+    return buildDuelPassMove(seat);
+  }
+
+  let bestMove = candidateMoves[0];
+  let bestScore = Number.NEGATIVE_INFINITY;
+  let bestTieBreaker = Number.NEGATIVE_INFINITY;
+
+  for (let index = 0; index < candidateMoves.length; index += 1) {
+    const candidate = candidateMoves[index];
+    let simulated = null;
+
+    try {
+      simulated = applyResolvedDuelMove(liveState, room, candidate, `server:bot:duel:eval:${seat}`);
+    } catch (_) {
+      continue;
+    }
+
+    let score = scoreDuelStateForSeat(room, simulated.state, seat);
+    const tileValues = getTileValues(candidate.tileId) || [0, 0];
+    const pipSum = tileValues[0] + tileValues[1];
+
+    if (candidate.type === "play") {
+      score += pipSum * 15;
+      if (tileValues[0] === tileValues[1]) score += 45 + (tileValues[0] * 12);
+      if (getLegalMovesForDuelSeat(simulated.state, getOtherDuelSeat(seat)).length === 0) {
+        score += 220;
+      }
+    } else if (candidate.type === "draw") {
+      score += pipSum * 7;
+      const drawnTileId = safeSignedInt(simulated.record?.drawnTileIds?.[0], -1);
+      const legalAfterDraw = getLegalMovesForDuelSeat(simulated.state, seat);
+      score += legalAfterDraw.length * 20;
+      if (drawnTileId >= 0 && legalAfterDraw.some((move) => move.tileId === drawnTileId)) {
+        score += 260;
+      }
+    } else {
+      score -= 320;
+    }
+
+    if (requestedLookahead > 0 && simulated.state.winnerSeat < 0) {
+      score += 0.74 * evaluateDuelFutureForSeat(room, simulated.state, seat, requestedLookahead - 1);
+    }
+
+    const tieBreaker = scoreDuelMoveTieBreaker(liveState, candidate);
+    if (score > bestScore || (score === bestScore && tieBreaker > bestTieBreaker)) {
+      bestScore = score;
+      bestMove = candidate;
+      bestTieBreaker = tieBreaker;
+    }
+  }
+
+  return bestMove;
+}
+
+function buildExpiredHumanDuelMoves(room, state) {
   const liveState = normalizeDuelGameState(state, room);
   const seat = safeSignedInt(liveState.currentPlayer, -1);
   if (seat < 0 || seat > 1) {
     throw new HttpsError("failed-precondition", "Impossible de resoudre le tour duel expire.");
   }
 
+  const plannedMoves = [];
   const legalMoves = getLegalMovesForDuelSeat(liveState, seat);
   if (legalMoves.length > 0) {
-    return buildPlayMoveFromDuelLegal(seat, legalMoves[0]);
+    const selectedMove = pickRandomItem(legalMoves);
+    if (!selectedMove) {
+      throw new HttpsError("failed-precondition", "Impossible de choisir un coup duel expire.");
+    }
+    plannedMoves.push(buildPlayMoveFromDuelLegal(seat, selectedMove));
+    return plannedMoves;
   }
 
   if (Array.isArray(liveState.stockPile) && liveState.stockPile.length > 0) {
-    return buildDuelDrawMove(seat, liveState.stockPile[0]);
+    const drawnTileId = pickRandomItem(liveState.stockPile);
+    if (Number.isFinite(drawnTileId)) {
+      plannedMoves.push(buildDuelDrawMove(seat, Math.trunc(drawnTileId)));
+      return plannedMoves;
+    }
   }
 
-  return buildDuelPassMove(seat);
+  plannedMoves.push(buildDuelPassMove(seat));
+  return plannedMoves;
 }
 
 function buildPlayMoveFromDuelLegal(seat, move) {
@@ -5461,14 +6019,9 @@ function applyResolvedDuelMove(state, room, move, actorUid) {
 }
 
 function chooseDuelBotMove(room, state, seat) {
-  const legalMoves = getLegalMovesForDuelSeat(state, seat);
-  if (legalMoves.length > 0) {
-    return buildPlayMoveFromDuelLegal(seat, legalMoves[0]);
-  }
-  if (Array.isArray(state?.stockPile) && state.stockPile.length > 0) {
-    return buildDuelDrawMove(seat);
-  }
-  return buildDuelPassMove(seat);
+  return chooseStrategicDuelMove(room, state, seat, {
+    lookaheadPlies: DUEL_ELITE_LOOKAHEAD_PLIES,
+  });
 }
 
 function resolveDuelBotTurnLockUntilMs(room, state, nowMs = Date.now()) {
@@ -5501,13 +6054,18 @@ function advanceDuelBotsAndCollect(room, state, roomId, firstMove = null, actorU
   const records = [];
   let autoBotMoves = 0;
 
-  if (firstMove) {
-    const result = applyResolvedDuelMove(liveState, room, firstMove, actorUid);
+  const initialMoves = Array.isArray(firstMove)
+    ? firstMove.filter(Boolean)
+    : (firstMove ? [firstMove] : []);
+
+  for (let moveIndex = 0; moveIndex < initialMoves.length; moveIndex += 1) {
+    const result = applyResolvedDuelMove(liveState, room, initialMoves[moveIndex], actorUid);
     liveState = result.state;
     records.push({
       ...result.record,
       roomId,
     });
+    if (liveState.winnerSeat >= 0) break;
   }
 
   while (allowBotAdvance === true && liveState.winnerSeat < 0 && autoBotMoves < 12) {
@@ -5776,14 +6334,14 @@ async function processPendingBotTurnsDuel(roomId) {
           return { processed: false, stop: true };
         }
 
-        const timeoutMove = buildExpiredHumanDuelMove(liveRoom, currentState);
+        const timeoutMoves = buildExpiredHumanDuelMoves(liveRoom, currentState);
         const batchResult = applyDuelActionBatchInTransaction(
           tx,
           roomRefDoc,
           liveRoom,
           currentState,
           safeRoomId,
-          timeoutMove,
+          timeoutMoves,
           "server:timeout",
           { allowBotAdvance: false }
         );
@@ -6515,6 +7073,10 @@ function isFriendRoom(room = {}) {
   return String(room?.roomMode || "").trim() === "friends";
 }
 
+function isFriendDuelRoom(room = {}) {
+  return String(room?.roomMode || "").trim() === "duel_friends";
+}
+
 function getRoomTargetHumanCount(room = {}) {
   const requested = safeInt(room?.requiredHumans);
   if (requested >= 2 && requested <= 4) return requested;
@@ -6643,6 +7205,21 @@ async function generateUniqueFriendRoomInviteCode(size = FRIEND_ROOM_CODE_SIZE, 
     if (existing.empty) return candidate;
   }
   throw new HttpsError("aborted", "Impossible de générer un code de salle unique.");
+}
+
+async function generateUniqueFriendDuelInviteCode(size = FRIEND_ROOM_CODE_SIZE, maxAttempts = 18) {
+  const targetSize = Math.max(4, safeInt(size) || FRIEND_ROOM_CODE_SIZE);
+  for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
+    const candidate = normalizeCode(randomCode(targetSize));
+    if (!candidate) continue;
+    const existing = await db
+      .collection(DUEL_ROOMS_COLLECTION)
+      .where("inviteCodeNormalized", "==", candidate)
+      .limit(1)
+      .get();
+    if (existing.empty) return candidate;
+  }
+  throw new HttpsError("aborted", "Impossible de générer un code de duel unique.");
 }
 
 async function chargeRoomEntriesTx(tx, room = {}, playerUids = [], stakeDoes = 0) {
@@ -8850,6 +9427,309 @@ exports.getPublicDuelStakeOptionsSecure = publicOnCall("getPublicDuelStakeOption
   };
 }, { invoker: "public" });
 
+exports.createFriendDuelRoom = publicOnCall("createFriendDuelRoom", async (request) => {
+  const { uid, email } = assertAuth(request);
+  const payload = request.data && typeof request.data === "object" ? request.data : {};
+  const stakeDoes = safeInt(payload.stakeDoes);
+  const selectedStakeConfig = getDuelStakeConfigByAmount(stakeDoes);
+  const configuredBotDifficulty = await getConfiguredBotDifficulty();
+
+  if (!selectedStakeConfig) {
+    throw new HttpsError("invalid-argument", "Mise duel non autorisee.");
+  }
+
+  const activeRoom = await findActiveDuelRoomForUser(uid);
+  if (activeRoom) {
+    throw new HttpsError("failed-precondition", "Tu participes deja a une salle duel active.", {
+      code: "active-room-exists",
+      roomId: activeRoom.roomId,
+      status: String(activeRoom.status || ""),
+      seatIndex: safeInt(activeRoom.seatIndex, 0),
+      roomMode: String(activeRoom.roomMode || "duel_2p"),
+      stakeDoes: safeInt(activeRoom.stakeDoes),
+      inviteCode: String(activeRoom.inviteCode || "").trim(),
+    });
+  }
+
+  const [inviteCode] = await Promise.all([
+    generateUniqueFriendDuelInviteCode(),
+  ]);
+  const rewardAmountDoes = selectedStakeConfig.rewardDoes;
+  const roomRefDoc = duelRoomRef();
+
+  return db.runTransaction(async (tx) => {
+    const walletSnap = await tx.get(walletRef(uid));
+    const walletData = walletSnap.exists ? (walletSnap.data() || {}) : {};
+    assertWalletNotFrozen(walletData);
+
+    const nowMs = Date.now();
+    const waitingDeadlineMs = nowMs + FRIEND_ROOM_WAIT_MS;
+
+    tx.set(roomRefDoc, {
+      status: "waiting",
+      createdAt: admin.firestore.FieldValue.serverTimestamp(),
+      createdAtMs: nowMs,
+      updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      ownerUid: uid,
+      roomMode: "duel_friends",
+      isPrivate: true,
+      allowBots: false,
+      inviteCode,
+      inviteCodeNormalized: normalizeCode(inviteCode),
+      requiredHumans: 2,
+      gameMode: "domino-duel",
+      engineVersion: 1,
+      playerUids: [uid, ""],
+      playerNames: [sanitizePlayerLabel(email || uid, 0), ""],
+      entryFundingByUid: {},
+      blockedRejoinUids: [],
+      humanCount: 1,
+      seats: { [uid]: 0 },
+      roomPresenceMs: { [uid]: nowMs },
+      botCount: 0,
+      botDifficulty: configuredBotDifficulty,
+      startRevealPending: false,
+      startRevealAckUids: [],
+      waitingDeadlineMs,
+      startedAt: null,
+      startedAtMs: 0,
+      endedAtMs: 0,
+      turnLockedUntilMs: 0,
+      nextActionSeq: 0,
+      playedCount: 0,
+      stakeDoes,
+      entryCostDoes: stakeDoes,
+      rewardAmountDoes,
+      stakeConfigId: selectedStakeConfig.id,
+    });
+
+    return {
+      ok: true,
+      roomId: roomRefDoc.id,
+      seatIndex: 0,
+      status: "waiting",
+      roomMode: "duel_friends",
+      charged: false,
+      inviteCode,
+      requiredHumans: 2,
+      waitingDeadlineMs,
+      stakeDoes,
+      rewardAmountDoes,
+      privateDeckOrder: [],
+    };
+  });
+}, { invoker: "public" });
+
+exports.joinFriendDuelRoomByCode = publicOnCall("joinFriendDuelRoomByCode", async (request) => {
+  const { uid, email } = assertAuth(request);
+  const payload = request.data && typeof request.data === "object" ? request.data : {};
+  const inviteCodeNormalized = normalizeCode(payload.inviteCode || payload.code || "");
+  const configuredBotDifficulty = await getConfiguredBotDifficulty();
+
+  if (!inviteCodeNormalized) {
+    throw new HttpsError("invalid-argument", "Code de salle requis.");
+  }
+
+  const activeRoom = await findActiveDuelRoomForUser(uid);
+  if (activeRoom) {
+    throw new HttpsError("failed-precondition", "Tu participes deja a une salle duel active.", {
+      code: "active-room-exists",
+      roomId: activeRoom.roomId,
+      status: String(activeRoom.status || ""),
+      seatIndex: safeInt(activeRoom.seatIndex, 0),
+      roomMode: String(activeRoom.roomMode || "duel_2p"),
+      stakeDoes: safeInt(activeRoom.stakeDoes),
+      inviteCode: String(activeRoom.inviteCode || "").trim(),
+    });
+  }
+
+  const matchingSnap = await db
+    .collection(DUEL_ROOMS_COLLECTION)
+    .where("inviteCodeNormalized", "==", inviteCodeNormalized)
+    .limit(6)
+    .get();
+
+  const roomDoc = matchingSnap.docs.find((docSnap) => isFriendDuelRoom(docSnap.data() || {})) || null;
+  if (!roomDoc) {
+    throw new HttpsError("not-found", "Code de duel introuvable.");
+  }
+
+  const roomRefDoc = roomDoc.ref;
+  const result = await db.runTransaction(async (tx) => {
+    const [roomSnap, walletSnap] = await Promise.all([
+      tx.get(roomRefDoc),
+      tx.get(walletRef(uid)),
+    ]);
+
+    if (!roomSnap.exists) {
+      throw new HttpsError("not-found", "Salle duel introuvable.");
+    }
+
+    const room = roomSnap.data() || {};
+    if (!isFriendDuelRoom(room)) {
+      throw new HttpsError("failed-precondition", "Cette salle duel n'est pas disponible.");
+    }
+
+    const roomStatus = String(room.status || "");
+    const nowMs = Date.now();
+    const waitingDeadlineMs = resolveDuelWaitingDeadlineMs(room, nowMs);
+    const playerUids = Array.from({ length: 2 }, (_, idx) => String((room.playerUids || [])[idx] || ""));
+    const humans = playerUids.filter(Boolean).length;
+    const roomStakeDoes = safeInt(room.entryCostDoes || room.stakeDoes);
+    const roomRewardAmountDoes = safeInt(room.rewardAmountDoes);
+    const roomInviteCode = String(room.inviteCode || inviteCodeNormalized || "").trim();
+
+    const walletData = walletSnap.exists ? (walletSnap.data() || {}) : {};
+    assertWalletNotFrozen(walletData);
+
+    if (playerUids.includes(uid)) {
+      const seatIndex = getSeatForUser(room, uid);
+      const nextPresence = room.roomPresenceMs && typeof room.roomPresenceMs === "object"
+        ? { ...room.roomPresenceMs }
+        : {};
+      nextPresence[uid] = nowMs;
+      tx.update(roomRefDoc, {
+        roomPresenceMs: nextPresence,
+        waitingDeadlineMs,
+        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      });
+      return {
+        ok: true,
+        resumed: true,
+        charged: false,
+        roomId: roomRefDoc.id,
+        seatIndex: seatIndex >= 0 ? seatIndex : 0,
+        status: roomStatus,
+        roomMode: "duel_friends",
+        stakeDoes: roomStakeDoes,
+        rewardAmountDoes: roomRewardAmountDoes,
+        inviteCode: roomInviteCode,
+        waitingDeadlineMs,
+        privateDeckOrder: roomStatus === "playing" ? [] : [],
+      };
+    }
+
+    if (roomStatus === "playing") {
+      throw new HttpsError("failed-precondition", "Cette salle duel a deja demarre.");
+    }
+    if (roomStatus !== "waiting") {
+      throw new HttpsError("failed-precondition", "Cette salle duel n'est plus disponible.");
+    }
+    if (getBlockedRejoinSet(room).has(uid)) {
+      throw new HttpsError("permission-denied", "Tu ne peux plus rejoindre cette salle duel.");
+    }
+
+    const currentSeats = room.seats && typeof room.seats === "object" ? room.seats : {};
+    const usedSeats = new Set(
+      Object.values(currentSeats)
+        .map((seat) => Number(seat))
+        .filter((seat) => Number.isFinite(seat) && seat >= 0 && seat < 2)
+    );
+    const seatIndex = [0, 1].find((seat) => !usedSeats.has(seat));
+    if (typeof seatIndex !== "number" || humans >= 2) {
+      throw new HttpsError("failed-precondition", "Cette salle duel est complete.");
+    }
+
+    if (safeInt(walletData.doesBalance) < roomStakeDoes) {
+      throw new HttpsError("failed-precondition", "Solde Does insuffisant.");
+    }
+
+    const nextPlayerUids = playerUids.slice();
+    nextPlayerUids[seatIndex] = uid;
+    const currentNames = Array.from({ length: 2 }, (_, idx) => String((room.playerNames || [])[idx] || ""));
+    const nextPlayerNames = currentNames.slice();
+    nextPlayerNames[seatIndex] = sanitizePlayerLabel(email || uid, seatIndex);
+    const nextSeats = {
+      ...currentSeats,
+      [uid]: seatIndex,
+    };
+    const nextPresence = room.roomPresenceMs && typeof room.roomPresenceMs === "object"
+      ? { ...room.roomPresenceMs }
+      : {};
+    nextPresence[uid] = nowMs;
+    const nextHumans = nextPlayerUids.filter(Boolean).length;
+
+    if (nextHumans >= 2) {
+      const chargeResult = await chargeRoomEntriesTx(tx, room, nextPlayerUids, roomStakeDoes);
+      tx.set(roomRefDoc, {
+        playerUids: nextPlayerUids,
+        playerNames: nextPlayerNames,
+        seats: nextSeats,
+        roomPresenceMs: nextPresence,
+        humanCount: nextHumans,
+        botCount: 0,
+        entryFundingByUid: chargeResult.entryFundingByUid,
+        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      }, { merge: true });
+
+      return {
+        ok: true,
+        resumed: false,
+        charged: true,
+        roomId: roomRefDoc.id,
+        seatIndex,
+        does: safeInt(chargeResult.afterDoesByUid[uid]),
+        roomMode: "duel_friends",
+        inviteCode: roomInviteCode,
+        stakeDoes: roomStakeDoes,
+        rewardAmountDoes: roomRewardAmountDoes,
+        ...buildStartedDuelRoomTransaction(tx, roomRefDoc, {
+          ...room,
+          playerUids: nextPlayerUids,
+          playerNames: nextPlayerNames,
+          seats: nextSeats,
+          entryFundingByUid: chargeResult.entryFundingByUid,
+          roomPresenceMs: nextPresence,
+          humanCount: nextHumans,
+          botCount: 0,
+          waitingDeadlineMs,
+        }, {
+          configuredBotDifficulty,
+          nowMs,
+        }),
+      };
+    }
+
+    tx.update(roomRefDoc, {
+      playerUids: nextPlayerUids,
+      playerNames: nextPlayerNames,
+      seats: nextSeats,
+      roomPresenceMs: nextPresence,
+      humanCount: nextHumans,
+      botCount: 0,
+      waitingDeadlineMs,
+      updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+    });
+
+    return {
+      ok: true,
+      resumed: false,
+      charged: false,
+      roomId: roomRefDoc.id,
+      seatIndex,
+      status: "waiting",
+      roomMode: "duel_friends",
+      inviteCode: roomInviteCode,
+      stakeDoes: roomStakeDoes,
+      rewardAmountDoes: roomRewardAmountDoes,
+      waitingDeadlineMs,
+      privateDeckOrder: [],
+    };
+  });
+
+  if (result?.status === "playing") {
+    if (!Array.isArray(result.privateDeckOrder) || result.privateDeckOrder.length !== 28) {
+      result.privateDeckOrder = await readPrivateDeckOrderForDuelRoom(roomRefDoc.id);
+    }
+  }
+
+  if (result?.status === "playing" && result?.startRevealPending !== true) {
+    await processPendingBotTurnsDuel(roomRefDoc.id);
+  }
+
+  return result;
+}, { invoker: "public" });
+
 exports.joinMatchmakingDuel = publicOnCall("joinMatchmakingDuel", async (request) => {
   const { uid, email } = assertAuth(request);
   const payload = request.data && typeof request.data === "object" ? request.data : {};
@@ -8882,7 +9762,9 @@ exports.joinMatchmakingDuel = publicOnCall("joinMatchmakingDuel", async (request
       roomId: activeRoom.roomId,
       seatIndex: activeRoom.seatIndex,
       status: activeRoom.status,
-      roomMode: "duel_2p",
+      roomMode: String(activeRoom.roomMode || "duel_2p"),
+      stakeDoes: safeInt(activeRoom.stakeDoes),
+      inviteCode: String(activeRoom.inviteCode || "").trim(),
       privateDeckOrder,
     };
     }
@@ -9140,7 +10022,7 @@ exports.ensureRoomReadyDuel = publicOnCall("ensureRoomReadyDuel", async (request
       });
     }
 
-    if (humans < 2 && nowMs < waitingDeadlineMs) {
+    if (humans < 2 && (isFriendDuelRoom(room) || nowMs < waitingDeadlineMs)) {
       return {
         ok: true,
         started: false,
@@ -9148,7 +10030,7 @@ exports.ensureRoomReadyDuel = publicOnCall("ensureRoomReadyDuel", async (request
         startRevealPending: false,
         waitingDeadlineMs,
         humanCount: humans,
-        botCount: Math.max(0, 2 - humans),
+        botCount: isFriendDuelRoom(room) ? 0 : Math.max(0, 2 - humans),
         privateDeckOrder: [],
       };
     }
@@ -9189,6 +10071,7 @@ exports.touchRoomPresenceDuel = publicOnCall("touchRoomPresenceDuel", async (req
 
   const roomRefDoc = duelRoomRef(roomId);
   let shouldNudgeBots = false;
+  let shouldResolveExpiredHumanTurn = false;
   const result = await db.runTransaction(async (tx) => {
     const roomSnap = await tx.get(roomRefDoc);
     if (!roomSnap.exists) {
@@ -9204,6 +10087,7 @@ exports.touchRoomPresenceDuel = publicOnCall("touchRoomPresenceDuel", async (req
     const nowMs = Date.now();
     const presenceResult = buildDuelPresenceUpdates(room, uid, nowMs);
     shouldNudgeBots = presenceResult.shouldNudgeBots === true;
+    shouldResolveExpiredHumanTurn = presenceResult.shouldResolveExpiredHumanTurn === true;
     tx.update(roomRefDoc, presenceResult.updates);
 
     return {
@@ -9217,7 +10101,7 @@ exports.touchRoomPresenceDuel = publicOnCall("touchRoomPresenceDuel", async (req
     };
   });
 
-  if (result?.status === "playing" && shouldNudgeBots) {
+  if (result?.status === "playing" && (shouldNudgeBots || shouldResolveExpiredHumanTurn)) {
     await processPendingBotTurnsDuel(roomId);
   }
 
@@ -10652,6 +11536,22 @@ exports.getGlobalAnalyticsSnapshot = publicOnCall(
   }
 );
 
+exports.getDuelAnalyticsSnapshot = publicOnCall(
+  "getDuelAnalyticsSnapshot",
+  async (request) => {
+    assertFinanceAdmin(request);
+    const payload = request.data && typeof request.data === "object" ? request.data : {};
+    const snapshot = await computeDuelAnalyticsSnapshot(payload);
+    return {
+      ok: true,
+      snapshot,
+    };
+  },
+  {
+    memory: "1GiB",
+  }
+);
+
 exports.getClientAcquisitionSnapshot = publicOnCall("getClientAcquisitionSnapshot", async (request) => {
   assertFinanceAdmin(request);
   const payload = request.data && typeof request.data === "object" ? request.data : {};
@@ -10843,6 +11743,45 @@ exports.updateClientProfileSecure = publicOnCall("updateClientProfileSecure", as
   };
 }, { minInstances: 1 });
 
+function normalizeDepositOcrSearchText(value) {
+  return String(value || "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toUpperCase();
+}
+
+function isLikelyDepositIdCandidate(value) {
+  const token = String(value || "")
+    .trim()
+    .replace(/^[^A-Z0-9]+|[^A-Z0-9]+$/g, "");
+  if (!token) return false;
+  if (/^\d{5,}$/.test(token)) return true;
+  if (!/^[A-Z0-9-]{5,}$/.test(token)) return false;
+  return /[A-Z]/.test(token) || /\d{4,}/.test(token);
+}
+
+function extractDepositIdFromOcrText(value) {
+  const text = normalizeDepositOcrSearchText(value);
+  if (!text) return "";
+
+  const patterns = [
+    /(?:TRANSACTION|TRANS|REFERENCE|REF|IDENTIFIANT|IDENTIFIANT DE TRANSACTION|ID)\s*(?:NO|N0|NUMERO|NUM|NUMBER|#|:|-)?\s*([A-Z0-9-]{5,})/g,
+    /(?:NO|N0|NUMERO|NUM|NUMBER|#)\s*(?:DE\s+)?(?:TRANSACTION|TRANS|REFERENCE|REF|IDENTIFIANT|ID)\s*[:\-]?\s*([A-Z0-9-]{5,})/g,
+    /(?:ID|REF)[\s:.-]*([A-Z0-9-]{5,})/g,
+  ];
+
+  for (const pattern of patterns) {
+    let match;
+    while ((match = pattern.exec(text)) !== null) {
+      const candidate = String(match[1] || "").trim();
+      if (isLikelyDepositIdCandidate(candidate)) {
+        return candidate;
+      }
+    }
+  }
+
+  return "";
+}
 exports.createOrderSecure = publicOnCall("createOrderSecure", async (request) => {
   const { uid, email } = assertAuth(request);
   const payload = request.data && typeof request.data === "object" ? request.data : {};
@@ -10854,9 +11793,30 @@ exports.createOrderSecure = publicOnCall("createOrderSecure", async (request) =>
   const depositorPhone = sanitizePhone(payload.depositorPhone || "", 40);
   const proofRef = sanitizeText(payload.proofRef || "", 180);
   const proofStepDurationMs = safeInt(payload.proofStepDurationMs);
+  const extractedText = sanitizeText(payload.extractedText || "", MAX_PUBLIC_TEXT_LENGTH);
+  const extractedTextStatus = ["pending", "success", "empty", "failed"].includes(String(payload.extractedTextStatus || ""))
+    ? String(payload.extractedTextStatus)
+    : "pending";
+  const extractedProofId = extractDepositIdFromOcrText(extractedText);
 
   if (!methodId || amountHtg < MIN_ORDER_HTG || !customerName || !proofRef) {
     throw new HttpsError("invalid-argument", "Commande invalide.");
+  }
+
+  if (!extractedProofId) {
+    console.info("[DEPOSIT_GUARD_DEBUG][FUNCTIONS] createOrderSecure:missing_proof_id", {
+      uid,
+      methodId,
+      amountHtg,
+      proofRef,
+      extractedTextStatus,
+      extractedTextLength: extractedText.length,
+    });
+    throw new HttpsError(
+      "failed-precondition",
+      "Cette image ne passe pas nos mesures de securite. Veuillez contacter un agent.",
+      { code: "deposit-proof-security-check-failed" },
+    );
   }
 
   const methodSnap = await db.collection("paymentMethods").doc(methodId).get();
@@ -10973,10 +11933,9 @@ exports.createOrderSecure = publicOnCall("createOrderSecure", async (request) =>
       customerEmail,
       customerPhone,
       depositorPhone,
-      extractedText: sanitizeText(payload.extractedText || "", MAX_PUBLIC_TEXT_LENGTH),
-      extractedTextStatus: ["pending", "success", "empty", "failed"].includes(String(payload.extractedTextStatus || ""))
-        ? String(payload.extractedTextStatus)
-        : "pending",
+      extractedText,
+      extractedTextStatus,
+      extractedProofId,
       createdAtMs: nowMs,
       createdAt: nowIso,
       expiresAt: new Date(Date.now() + (settings.verificationHours * 60 * 60 * 1000)).toISOString(),
