@@ -3451,6 +3451,79 @@ function getDuelAnalyticsRange(options = {}, nowMs = Date.now()) {
   };
 }
 
+function normalizeGlobalAnalyticsWindow(value = "") {
+  const normalized = String(value || "").trim().toLowerCase();
+  return normalized === "today" || normalized === "7d" || normalized === "30d" || normalized === "global"
+    ? normalized
+    : "today";
+}
+
+function getGlobalAnalyticsRange(options = {}, nowMs = Date.now()) {
+  const customStartMs = safeSignedInt(options.startMs);
+  const customEndMs = safeSignedInt(options.endMs);
+  if (customStartMs > 0 && customEndMs > 0 && customEndMs >= customStartMs) {
+    return {
+      windowKey: "custom",
+      startMs: customStartMs,
+      endMs: customEndMs,
+    };
+  }
+
+  const windowKey = normalizeGlobalAnalyticsWindow(options.window || "today");
+  const now = new Date(nowMs);
+  const todayStartMs = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+  if (windowKey === "today") {
+    return { windowKey, startMs: todayStartMs, endMs: nowMs };
+  }
+  if (windowKey === "7d") {
+    return {
+      windowKey,
+      startMs: todayStartMs - (6 * 24 * 60 * 60 * 1000),
+      endMs: nowMs,
+    };
+  }
+  if (windowKey === "30d") {
+    return {
+      windowKey,
+      startMs: todayStartMs - (29 * 24 * 60 * 60 * 1000),
+      endMs: nowMs,
+    };
+  }
+  return {
+    windowKey: "global",
+    startMs: 0,
+    endMs: nowMs,
+  };
+}
+
+function applyAnalyticsTimeRange(query, field, range, direction = "desc") {
+  let next = query.orderBy(field, direction);
+  if (range.startMs > 0) {
+    next = next.where(field, ">=", range.startMs);
+  }
+  if (range.endMs > 0) {
+    next = next.where(field, "<=", range.endMs);
+  }
+  return next;
+}
+
+async function safeAnalyticsQueryGet(primaryQuery, fallbackQuery = null, label = "") {
+  try {
+    return await primaryQuery.get();
+  } catch (error) {
+    const code = safeSignedInt(error?.code);
+    if ((code === 9 || String(error?.message || "").includes("FAILED_PRECONDITION")) && fallbackQuery) {
+      console.warn("[GLOBAL_ANALYTICS] range query fallback", {
+        label,
+        code,
+        message: String(error?.message || ""),
+      });
+      return fallbackQuery.get();
+    }
+    throw error;
+  }
+}
+
 async function computeDuelAnalyticsSnapshot(options = {}) {
   const nowMs = safeSignedInt(options.nowMs) || Date.now();
   const range = getDuelAnalyticsRange(options, nowMs);
@@ -11645,8 +11718,10 @@ exports.getGlobalAnalyticsSnapshot = publicOnCall(
   "getGlobalAnalyticsSnapshot",
   async (request) => {
     assertFinanceAdmin(request);
+    const payload = request.data && typeof request.data === "object" ? request.data : {};
     const botDifficulty = await getConfiguredBotDifficulty();
     const nowMs = Date.now();
+    const range = getGlobalAnalyticsRange(payload, nowMs);
     const presenceSnapshotsCutoffMs = nowMs - (PRESENCE_ANALYTICS_RECENT_SNAPSHOT_DAYS * 24 * 60 * 60 * 1000);
     const [
       clientsSnap,
@@ -11669,15 +11744,51 @@ exports.getGlobalAnalyticsSnapshot = publicOnCall(
     ] = await Promise.all([
       db.collection(CLIENTS_COLLECTION).get(),
       db.collection(AMBASSADORS_COLLECTION).get(),
-      db.collection(ROOMS_COLLECTION).get(),
-      db.collectionGroup("orders").get(),
-      db.collectionGroup("withdrawals").get(),
-      db.collectionGroup("xchanges").get(),
-      db.collectionGroup("referralRewards").get(),
-      db.collectionGroup("referrals").get(),
-      db.collection(CHAT_COLLECTION).get(),
-      db.collection(SUPPORT_THREADS_COLLECTION).get(),
-      db.collectionGroup(SUPPORT_MESSAGES_SUBCOLLECTION).get(),
+      safeAnalyticsQueryGet(
+        applyAnalyticsTimeRange(db.collection(ROOMS_COLLECTION), "createdAtMs", range),
+        db.collection(ROOMS_COLLECTION),
+        "rooms"
+      ),
+      safeAnalyticsQueryGet(
+        applyAnalyticsTimeRange(db.collectionGroup("orders"), "createdAtMs", range),
+        db.collectionGroup("orders"),
+        "orders"
+      ),
+      safeAnalyticsQueryGet(
+        applyAnalyticsTimeRange(db.collectionGroup("withdrawals"), "createdAtMs", range),
+        db.collectionGroup("withdrawals"),
+        "withdrawals"
+      ),
+      safeAnalyticsQueryGet(
+        applyAnalyticsTimeRange(db.collectionGroup("xchanges"), "createdAtMs", range),
+        db.collectionGroup("xchanges"),
+        "xchanges"
+      ),
+      safeAnalyticsQueryGet(
+        applyAnalyticsTimeRange(db.collectionGroup("referralRewards"), "createdAtMs", range),
+        db.collectionGroup("referralRewards"),
+        "referralRewards"
+      ),
+      safeAnalyticsQueryGet(
+        applyAnalyticsTimeRange(db.collectionGroup("referrals"), "createdAtMs", range),
+        db.collectionGroup("referrals"),
+        "referrals"
+      ),
+      safeAnalyticsQueryGet(
+        applyAnalyticsTimeRange(db.collection(CHAT_COLLECTION), "createdAtMs", range),
+        db.collection(CHAT_COLLECTION),
+        "channelMessages"
+      ),
+      safeAnalyticsQueryGet(
+        applyAnalyticsTimeRange(db.collection(SUPPORT_THREADS_COLLECTION), "createdAtMs", range),
+        db.collection(SUPPORT_THREADS_COLLECTION),
+        "supportThreads"
+      ),
+      safeAnalyticsQueryGet(
+        applyAnalyticsTimeRange(db.collectionGroup(SUPPORT_MESSAGES_SUBCOLLECTION), "createdAtMs", range),
+        db.collectionGroup(SUPPORT_MESSAGES_SUBCOLLECTION),
+        "supportMessages"
+      ),
       collectPresenceAnalyticsNow(nowMs),
       presenceSnapshotsCollection()
         .where("bucketMs", ">=", presenceSnapshotsCutoffMs)
@@ -11703,6 +11814,7 @@ exports.getGlobalAnalyticsSnapshot = publicOnCall(
 
     return {
       generatedAtMs: Date.now(),
+      requestedRange: range,
       botDifficulty,
       clients: clientsSnap.docs.map(snapshotRecordForCallable),
       ambassadors: ambassadorsSnap.docs.map(snapshotRecordForCallable),
@@ -11729,6 +11841,151 @@ exports.getGlobalAnalyticsSnapshot = publicOnCall(
   },
   {
     memory: "1GiB",
+  }
+);
+
+async function computePresenceAnalyticsSnapshot(options = {}) {
+  const nowMs = safeSignedInt(options.nowMs) || Date.now();
+  const range = getGlobalAnalyticsRange(options, nowMs);
+  const live = await collectPresenceAnalyticsNow(nowMs);
+  const defaultSnapshotsStartMs = nowMs - (PRESENCE_ANALYTICS_RECENT_SNAPSHOT_DAYS * 24 * 60 * 60 * 1000);
+  const snapshotsStartMs = range.startMs > 0
+    ? Math.max(range.startMs, defaultSnapshotsStartMs)
+    : defaultSnapshotsStartMs;
+  const startDayKey = range.startMs > 0 ? getPresenceLocalKeys(range.startMs).dayKey : "";
+  const endDayKey = getPresenceLocalKeys(range.endMs || nowMs).dayKey;
+
+  let dailyQuery = presenceDailyCollection().orderBy("dayKey", "desc");
+  if (startDayKey) {
+    dailyQuery = dailyQuery.where("dayKey", ">=", startDayKey);
+  }
+  if (endDayKey) {
+    dailyQuery = dailyQuery.where("dayKey", "<=", endDayKey);
+  }
+
+  const [
+    snapshotsSnap,
+    dailySnap,
+    hourSnap,
+    weekdaySnap,
+  ] = await Promise.all([
+    presenceSnapshotsCollection()
+      .where("bucketMs", ">=", snapshotsStartMs)
+      .where("bucketMs", "<=", range.endMs || nowMs)
+      .orderBy("bucketMs", "asc")
+      .get(),
+    dailyQuery.limit(PRESENCE_ANALYTICS_RECENT_DAYS_LIMIT).get(),
+    presenceHourCollection().orderBy("hourKey", "asc").get(),
+    presenceWeekdayCollection().orderBy("weekdayKey", "asc").get(),
+  ]);
+
+  const snapshots = snapshotsSnap.docs.map(snapshotRecordForCallable);
+  const daily = dailySnap.docs.map(snapshotRecordForCallable).reverse();
+  const hourOfDay = hourSnap.docs.map(snapshotRecordForCallable);
+  const weekday = weekdaySnap.docs.map(snapshotRecordForCallable);
+
+  const trend = daily.map((item) => {
+    const samples = Math.max(1, safeInt(item.samples));
+    return {
+      label: String(item.dayKey || ""),
+      peakVisitors: safeInt(item.onlineUsersMax),
+      avgVisitors: Math.round(safeInt(item.onlineUsersSum) / samples),
+      peakPlayers: safeInt(item.onlineInGameUsersMax),
+      avgPlayers: Math.round(safeInt(item.onlineInGameUsersSum) / samples),
+      peakRooms: safeInt(item.playingRoomsMax),
+      samples,
+    };
+  });
+
+  const snapshotTrend = snapshots.map((item) => ({
+    bucketMs: safeSignedInt(item.bucketMs),
+    label: String(item.dayKey || ""),
+    onlineUsers: safeInt(item.onlineUsers),
+    onlineInGameUsers: safeInt(item.onlineInGameUsers),
+    playingRooms: safeInt(item.playingRooms),
+    waitingRooms: safeInt(item.waitingRooms),
+  }));
+
+  const peakMoments = snapshots
+    .map((item) => ({
+      bucketMs: safeSignedInt(item.bucketMs),
+      onlineUsers: safeInt(item.onlineUsers),
+      onlineInGameUsers: safeInt(item.onlineInGameUsers),
+      playingRooms: safeInt(item.playingRooms),
+    }))
+    .sort((a, b) => b.onlineUsers - a.onlineUsers || b.onlineInGameUsers - a.onlineInGameUsers || a.bucketMs - b.bucketMs)
+    .slice(0, 8);
+
+  const activeDays = Math.max(1, trend.length);
+  const avgDailyPeakVisitors = trend.length > 0
+    ? Math.round(trend.reduce((sum, item) => sum + safeInt(item.peakVisitors), 0) / activeDays)
+    : safeInt(live.onlineUsers);
+  const avgDailyPeakPlayers = trend.length > 0
+    ? Math.round(trend.reduce((sum, item) => sum + safeInt(item.peakPlayers), 0) / activeDays)
+    : safeInt(live.onlineInGameUsers);
+  const peakVisitors = Math.max(
+    safeInt(live.onlineUsers),
+    ...trend.map((item) => safeInt(item.peakVisitors)),
+    ...snapshotTrend.map((item) => safeInt(item.onlineUsers))
+  );
+  const peakPlayers = Math.max(
+    safeInt(live.onlineInGameUsers),
+    ...trend.map((item) => safeInt(item.peakPlayers)),
+    ...snapshotTrend.map((item) => safeInt(item.onlineInGameUsers))
+  );
+  const peakPlayingRooms = Math.max(
+    safeInt(live.playingRooms),
+    ...trend.map((item) => safeInt(item.peakRooms)),
+    ...snapshotTrend.map((item) => safeInt(item.playingRooms))
+  );
+
+  const peakDay = trend
+    .slice()
+    .sort((a, b) => b.peakVisitors - a.peakVisitors || b.peakPlayers - a.peakPlayers)
+    .at(0) || null;
+
+  return {
+    generatedAtMs: nowMs,
+    range,
+    snapshot: {
+      live,
+      summary: {
+        activeDays,
+        currentOnlineUsers: safeInt(live.onlineUsers),
+        currentInGameUsers: safeInt(live.onlineInGameUsers),
+        currentPlayingRooms: safeInt(live.playingRooms),
+        currentWaitingRooms: safeInt(live.waitingRooms),
+        currentActiveRooms: safeInt(live.activeRooms),
+        peakVisitors,
+        peakPlayers,
+        peakPlayingRooms,
+        avgDailyPeakVisitors,
+        avgDailyPeakPlayers,
+        peakDayLabel: String(peakDay?.label || ""),
+      },
+      trend,
+      snapshotTrend,
+      peakMoments,
+      hourOfDay,
+      weekday,
+      snapshotsCoverage: {
+        startMs: snapshotsStartMs,
+        endMs: range.endMs || nowMs,
+        limitedToRecentWindow: snapshotsStartMs > safeSignedInt(range.startMs),
+      },
+    },
+  };
+}
+
+exports.getPresenceAnalyticsSnapshot = publicOnCall(
+  "getPresenceAnalyticsSnapshot",
+  async (request) => {
+    assertFinanceAdmin(request);
+    const payload = request.data && typeof request.data === "object" ? request.data : {};
+    return computePresenceAnalyticsSnapshot(payload);
+  },
+  {
+    memory: "512MiB",
   }
 );
 
