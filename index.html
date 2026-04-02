@@ -171,6 +171,14 @@
         gap: 16px;
       }
 
+      .home-shell__header-actions {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        flex-wrap: wrap;
+        justify-content: flex-end;
+      }
+
       .home-shell__logo {
         display: block;
         height: auto;
@@ -195,6 +203,13 @@
         font-size: 14px;
         font-weight: 600;
         box-shadow: 8px 8px 18px rgba(163, 82, 27, 0.45), -6px -6px 14px rgba(255, 175, 102, 0.16);
+      }
+
+      .home-shell__header-cta--ghost {
+        background: rgba(255, 255, 255, 0.08);
+        color: #fff;
+        border: 1px solid rgba(255, 255, 255, 0.16);
+        box-shadow: 10px 10px 24px rgba(22, 28, 45, 0.34), -6px -6px 18px rgba(123, 140, 184, 0.12);
       }
 
       .home-shell__content {
@@ -235,6 +250,10 @@
 
         .home-shell__top-inner {
           gap: 12px;
+        }
+
+        .home-shell__header-actions {
+          gap: 8px;
         }
 
         .home-shell__logo {
@@ -589,7 +608,9 @@
                 height="500"
                 decoding="async"
               />
-              <a class="home-shell__header-cta" href="./auth.html">Connexion / Inscription</a>
+              <div class="home-shell__header-actions">
+                <a class="home-shell__header-cta" href="./auth.html">Connexion / Inscription</a>
+              </div>
             </div>
           </header>
         </section>

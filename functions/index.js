@@ -28,6 +28,9 @@ const GAME_STATES_COLLECTION = "gameStates";
 const DUEL_ROOMS_COLLECTION = "duelRooms";
 const DUEL_ROOM_RESULTS_COLLECTION = "duelRoomResults";
 const DUEL_GAME_STATES_COLLECTION = "duelGameStates";
+const MORPION_ROOMS_COLLECTION = "morpionRooms";
+const MORPION_ROOM_RESULTS_COLLECTION = "morpionRoomResults";
+const MORPION_GAME_STATES_COLLECTION = "morpionGameStates";
 const CLIENTS_COLLECTION = "clients";
 const AMBASSADORS_COLLECTION = "ambassadors";
 const AMBASSADOR_EVENTS_COLLECTION = "ambassadorGameEvents";
@@ -41,6 +44,8 @@ const SURVEY_RESPONSES_SUBCOLLECTION = "responses";
 const DASHBOARD_PUSH_SUBSCRIPTIONS_COLLECTION = "dashboardPushSubscriptions";
 const MATCHMAKING_POOLS_COLLECTION = "matchmakingPools";
 const DUEL_MATCHMAKING_POOLS_COLLECTION = "duelMatchmakingPools";
+const MORPION_MATCHMAKING_POOLS_COLLECTION = "morpionMatchmakingPools";
+const MORPION_PLAYER_PROFILES_COLLECTION = "morpionPlayerProfiles";
 const ANALYTICS_META_COLLECTION = "analyticsMeta";
 const ANALYTICS_PRESENCE_SNAPSHOTS_COLLECTION = "analyticsPresenceSnapshots";
 const ANALYTICS_PRESENCE_DAILY_COLLECTION = "analyticsPresenceDaily";
@@ -98,6 +103,10 @@ const DEFAULT_DUEL_STAKE_OPTIONS = Object.freeze([
   Object.freeze({ id: "duel_500", stakeDoes: 500, rewardDoes: 925, enabled: true, sortOrder: 10 }),
   Object.freeze({ id: "duel_1000", stakeDoes: 1000, rewardDoes: 1850, enabled: true, sortOrder: 20 }),
 ]);
+const DEFAULT_MORPION_STAKE_OPTIONS = Object.freeze([
+  Object.freeze({ id: "morpion_500", stakeDoes: 500, rewardDoes: 900, enabled: true, sortOrder: 10 }),
+  Object.freeze({ id: "morpion_1000", stakeDoes: 1000, rewardDoes: 1800, enabled: true, sortOrder: 20 }),
+]);
 
 function computeDepositBonusSnapshot(amountHtg = 0) {
   const safeAmountHtg = Math.max(0, Number(amountHtg) || 0);
@@ -116,6 +125,7 @@ function computeDepositBonusSnapshot(amountHtg = 0) {
 const DEFAULT_BOT_DIFFICULTY = "expert";
 const ROOM_WAIT_MS = 15 * 1000;
 const DUEL_TURN_LIMIT_MS = 15 * 1000;
+const MORPION_TURN_LIMIT_MS = 15 * 1000;
 const FRIEND_ROOM_WAIT_MS = 10 * 60 * 1000;
 const FRIEND_ROOM_CODE_SIZE = 6;
 const ROOM_DISCONNECT_TAKEOVER_MS = 45 * 1000;
@@ -130,6 +140,15 @@ const BOT_PILOT_WINDOW_MS = 24 * 60 * 60 * 1000;
 const BOT_PILOT_SNAPSHOT_LIMIT = 5000;
 const BOT_PILOT_TREND_POINT_LIMIT = 12;
 const BOT_PILOT_EQUITY_POINT_LIMIT = 24;
+const MORPION_PILOT_MODES = new Set(["manual", "auto"]);
+const MORPION_PILOT_WINDOW_MS = 24 * 60 * 60 * 1000;
+const MORPION_PILOT_SNAPSHOT_LIMIT = 5000;
+const MORPION_PILOT_TREND_POINT_LIMIT = 12;
+const MORPION_PILOT_EQUITY_POINT_LIMIT = 24;
+const MORPION_BOT_BLOCK_MIN_GAMES = 5;
+const MORPION_BOT_BLOCK_MIN_WIN_RATE = 0.6;
+const MORPION_BOT_BLOCK_WIN_STREAK = 2;
+const MORPION_MATCHMAKING_REASON_SKILLED_WAIT_ONLY = "morpion-skilled-wait-human-only";
 const ACQUISITION_DEFAULT_WINDOW_MS = 30 * 24 * 60 * 60 * 1000;
 const ACQUISITION_MAX_WINDOW_MS = 180 * 24 * 60 * 60 * 1000;
 const ACQUISITION_ACTIVE_LOOKBACK_MS = 7 * 24 * 60 * 60 * 1000;
@@ -458,14 +477,22 @@ function publicOnCall(callableName, handler, options = {}) {
   });
 }
 
-function safeInt(value) {
+function safeInt(value, fallback = 0) {
   const n = Number(value);
-  return Number.isFinite(n) ? Math.max(0, Math.floor(n)) : 0;
+  if (Number.isFinite(n)) {
+    return Math.max(0, Math.floor(n));
+  }
+  const safeFallback = Number(fallback);
+  return Number.isFinite(safeFallback) ? Math.max(0, Math.floor(safeFallback)) : 0;
 }
 
-function safeSignedInt(value) {
+function safeSignedInt(value, fallback = 0) {
   const n = Number(value);
-  return Number.isFinite(n) ? Math.trunc(n) : 0;
+  if (Number.isFinite(n)) {
+    return Math.trunc(n);
+  }
+  const safeFallback = Number(fallback);
+  return Number.isFinite(safeFallback) ? Math.trunc(safeFallback) : 0;
 }
 
 function computeOrderAmount(order) {
@@ -2305,6 +2332,13 @@ async function getConfiguredBotDifficulty() {
   }
 }
 
+async function getConfiguredMorpionMatchmakingPolicy() {
+  return {
+    mode: "manual",
+    allowHumanOnly: true,
+  };
+}
+
 function normalizeBotPilotMode(value = "") {
   const normalized = String(value || "").trim().toLowerCase();
   return BOT_PILOT_MODES.has(normalized) ? normalized : "manual";
@@ -2359,6 +2393,52 @@ function getBotPilotTrendLabel(windowKey = "today", ms = 0) {
     return `${String(date.getDate()).padStart(2, "0")}/${String(date.getMonth() + 1).padStart(2, "0")}`;
   }
   return `${String(date.getHours()).padStart(2, "0")}h`;
+}
+
+function normalizeMorpionPilotMode(value = "") {
+  const normalized = String(value || "").trim().toLowerCase();
+  return MORPION_PILOT_MODES.has(normalized) ? normalized : "manual";
+}
+
+function normalizeMorpionPilotWindow(value = "") {
+  const normalized = String(value || "").trim().toLowerCase();
+  return normalized === "today" || normalized === "24h" || normalized === "7d"
+    ? normalized
+    : "today";
+}
+
+function getMorpionPilotRange(windowKey = "today", nowMs = Date.now()) {
+  const normalized = normalizeMorpionPilotWindow(windowKey);
+  if (normalized === "24h") {
+    return { windowKey: normalized, startMs: nowMs - MORPION_PILOT_WINDOW_MS, endMs: nowMs };
+  }
+  if (normalized === "7d") {
+    return { windowKey: normalized, startMs: nowMs - (7 * MORPION_PILOT_WINDOW_MS), endMs: nowMs };
+  }
+  const now = new Date(nowMs);
+  const startMs = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+  return { windowKey: "today", startMs, endMs: nowMs };
+}
+
+function getMorpionPilotTrendKey(windowKey = "today", ms = 0) {
+  const normalized = normalizeMorpionPilotWindow(windowKey);
+  return normalized === "7d" ? getBotPilotDayKey(ms) : getBotPilotHourKey(ms);
+}
+
+function getMorpionPilotTrendLabel(windowKey = "today", ms = 0) {
+  if (!ms) return "-";
+  const normalized = normalizeMorpionPilotWindow(windowKey);
+  const date = new Date(ms);
+  if (normalized === "7d") {
+    return `${String(date.getDate()).padStart(2, "0")}/${String(date.getMonth() + 1).padStart(2, "0")}`;
+  }
+  return `${String(date.getHours()).padStart(2, "0")}h`;
+}
+
+function normalizeMorpionPilotDecision(value = "") {
+  const normalized = String(value || "").trim().toLowerCase();
+  if (normalized === "bot_only_temp") return "bot_only_temp";
+  return "normal";
 }
 
 function normalizeAcquisitionGranularity(value = "", rangeMs = 0) {
@@ -3354,6 +3434,274 @@ async function computeBotPilotSnapshot(options = {}) {
   };
 }
 
+function chooseMorpionAutoRouting(snapshot = {}) {
+  const roomsCount = safeInt(snapshot.roomsCount);
+  const netDoes = safeSignedInt(snapshot.netDoes);
+  const marginPct = Number(snapshot.marginPct || 0);
+  const drawdownPct = Math.max(0, Number(snapshot.drawdownPct || 0));
+  const humanOnlySharePct = Number(snapshot.humanOnlySharePct || 0);
+
+  if (roomsCount <= 10) {
+    return {
+      decision: "normal",
+      band: "neutral",
+      reason: "low_volume",
+      humanOnlyEnabled: true,
+    };
+  }
+  if (netDoes < 0) {
+    return {
+      decision: "bot_only_temp",
+      band: "danger",
+      reason: "negative_net",
+      humanOnlyEnabled: false,
+    };
+  }
+  if (marginPct < 0.04) {
+    return {
+      decision: "bot_only_temp",
+      band: "danger",
+      reason: "margin_too_low",
+      humanOnlyEnabled: false,
+    };
+  }
+  if (drawdownPct >= 0.15) {
+    return {
+      decision: "bot_only_temp",
+      band: "danger",
+      reason: "drawdown_critical",
+      humanOnlyEnabled: false,
+    };
+  }
+  if (humanOnlySharePct >= 0.72 && marginPct < 0.08) {
+    return {
+      decision: "bot_only_temp",
+      band: "defense",
+      reason: "too_many_human_rooms",
+      humanOnlyEnabled: false,
+    };
+  }
+
+  return {
+    decision: "normal",
+    band: "comfort",
+    reason: "profit_ok",
+    humanOnlyEnabled: true,
+  };
+}
+
+async function computeMorpionPilotSnapshot(options = {}) {
+  const nowMs = safeSignedInt(options.nowMs) || Date.now();
+  const range = getMorpionPilotRange(options.window || "today", nowMs);
+  const querySnap = await db.collection(MORPION_ROOM_RESULTS_COLLECTION)
+    .where("endedAtMs", ">=", range.startMs)
+    .orderBy("endedAtMs", "desc")
+    .limit(MORPION_PILOT_SNAPSHOT_LIMIT)
+    .get();
+
+  let roomsCount = 0;
+  let collectedDoes = 0;
+  let payoutDoes = 0;
+  let netDoes = 0;
+  let grossCollectedDoes = 0;
+  let grossPayoutDoes = 0;
+  let grossNetDoes = 0;
+  let promoExposureDoes = 0;
+  let humanOnlyRooms = 0;
+  let withBotRooms = 0;
+  let withBotBotWins = 0;
+  let withBotHumanWins = 0;
+  let truncated = querySnap.size >= MORPION_PILOT_SNAPSHOT_LIMIT;
+  const trendMap = new Map();
+
+  querySnap.forEach((docSnap) => {
+    const data = docSnap.data() || {};
+    const endedAtMs = safeSignedInt(data.endedAtMs);
+    if (endedAtMs < range.startMs || endedAtMs > range.endMs) return;
+    if (String(data.status || "").trim().toLowerCase() !== "ended") return;
+
+    roomsCount += 1;
+    const roomCollectedGross = safeInt(data.companyCollectedDoes);
+    const roomPayoutGross = safeInt(data.companyPayoutDoes);
+    const roomNetGross = safeSignedInt(
+      typeof data.companyNetDoes === "number"
+        ? data.companyNetDoes
+        : (roomCollectedGross - roomPayoutGross)
+    );
+    const roomCollected = safeInt(
+      typeof data.companyCollectedRealDoes === "number"
+        ? data.companyCollectedRealDoes
+        : roomCollectedGross
+    );
+    const roomPayout = safeInt(
+      typeof data.companyPayoutRealDoes === "number"
+        ? data.companyPayoutRealDoes
+        : roomPayoutGross
+    );
+    const roomNet = safeSignedInt(
+      typeof data.companyNetRealDoes === "number"
+        ? data.companyNetRealDoes
+        : (roomCollected - roomPayout)
+    );
+    const roomPromoExposure = safeInt(data.companyPromoExposureDoes);
+
+    grossCollectedDoes += roomCollectedGross;
+    grossPayoutDoes += roomPayoutGross;
+    grossNetDoes += roomNetGross;
+    promoExposureDoes += roomPromoExposure;
+    collectedDoes += roomCollected;
+    payoutDoes += roomPayout;
+    netDoes += roomNet;
+
+    const humanCount = safeInt(data.humanCount);
+    const botCount = safeInt(data.botCount);
+    const composition = getMorpionCompositionMeta(humanCount, botCount);
+    const winnerType = String(data.winnerType || "").trim().toLowerCase();
+    if (composition.key === "human_only") {
+      humanOnlyRooms += 1;
+    } else if (composition.key === "with_bot") {
+      withBotRooms += 1;
+      if (winnerType === "bot") withBotBotWins += 1;
+      if (winnerType === "human") withBotHumanWins += 1;
+    }
+
+    const trendKey = getMorpionPilotTrendKey(range.windowKey, endedAtMs);
+    const trendEntry = trendMap.get(trendKey) || {
+      key: trendKey,
+      label: getMorpionPilotTrendLabel(range.windowKey, endedAtMs),
+      periodMs: endedAtMs,
+      rooms: 0,
+      collectedDoes: 0,
+      payoutDoes: 0,
+      netDoes: 0,
+      humanOnlyRooms: 0,
+      withBotRooms: 0,
+      grossCollectedDoes: 0,
+      grossPayoutDoes: 0,
+      grossNetDoes: 0,
+      promoExposureDoes: 0,
+    };
+    trendEntry.rooms += 1;
+    trendEntry.collectedDoes += roomCollected;
+    trendEntry.payoutDoes += roomPayout;
+    trendEntry.netDoes += roomNet;
+    trendEntry.grossCollectedDoes += roomCollectedGross;
+    trendEntry.grossPayoutDoes += roomPayoutGross;
+    trendEntry.grossNetDoes += roomNetGross;
+    trendEntry.promoExposureDoes += roomPromoExposure;
+    if (composition.key === "human_only") trendEntry.humanOnlyRooms += 1;
+    if (composition.key === "with_bot") trendEntry.withBotRooms += 1;
+    if (endedAtMs > safeSignedInt(trendEntry.periodMs)) {
+      trendEntry.periodMs = endedAtMs;
+      trendEntry.label = getMorpionPilotTrendLabel(range.windowKey, endedAtMs);
+    }
+    trendMap.set(trendKey, trendEntry);
+  });
+
+  const fullTrend = Array.from(trendMap.values())
+    .sort((a, b) => safeSignedInt(a.periodMs) - safeSignedInt(b.periodMs))
+    .map((item) => ({
+      key: item.key,
+      label: item.label,
+      periodMs: safeSignedInt(item.periodMs),
+      rooms: safeInt(item.rooms),
+      collectedDoes: safeInt(item.collectedDoes),
+      payoutDoes: safeInt(item.payoutDoes),
+      netDoes: safeSignedInt(item.netDoes),
+      humanOnlyRooms: safeInt(item.humanOnlyRooms),
+      withBotRooms: safeInt(item.withBotRooms),
+      grossCollectedDoes: safeInt(item.grossCollectedDoes),
+      grossPayoutDoes: safeInt(item.grossPayoutDoes),
+      grossNetDoes: safeSignedInt(item.grossNetDoes),
+      promoExposureDoes: safeInt(item.promoExposureDoes),
+    }));
+
+  let runningEquityDoes = 0;
+  let highWaterMarkDoes = 0;
+  let lastPeakAtMs = range.startMs;
+  const fullEquityCurve = [{
+    key: "baseline",
+    label: "Debut",
+    periodMs: range.startMs,
+    deltaNetDoes: 0,
+    equityDoes: 0,
+    drawdownDoes: 0,
+    drawdownPct: 0,
+  }];
+
+  fullTrend.forEach((item) => {
+    runningEquityDoes += safeSignedInt(item.netDoes);
+    if (runningEquityDoes >= highWaterMarkDoes) {
+      highWaterMarkDoes = runningEquityDoes;
+      lastPeakAtMs = safeSignedInt(item.periodMs) || lastPeakAtMs;
+    }
+    const pointDrawdownDoes = Math.max(0, highWaterMarkDoes - runningEquityDoes);
+    const pointDrawdownPct = highWaterMarkDoes > 0 ? (pointDrawdownDoes / highWaterMarkDoes) : 0;
+    fullEquityCurve.push({
+      key: item.key,
+      label: item.label,
+      periodMs: safeSignedInt(item.periodMs),
+      deltaNetDoes: safeSignedInt(item.netDoes),
+      equityDoes: runningEquityDoes,
+      drawdownDoes: pointDrawdownDoes,
+      drawdownPct: pointDrawdownPct,
+    });
+  });
+
+  const currentEquityDoes = runningEquityDoes;
+  const drawdownDoes = Math.max(0, highWaterMarkDoes - currentEquityDoes);
+  const drawdownPct = highWaterMarkDoes > 0 ? (drawdownDoes / highWaterMarkDoes) : 0;
+  const marginPct = collectedDoes > 0 ? netDoes / collectedDoes : 0;
+  const humanOnlySharePct = roomsCount > 0 ? humanOnlyRooms / roomsCount : 0;
+  const withBotSharePct = roomsCount > 0 ? withBotRooms / roomsCount : 0;
+
+  const recommended = chooseMorpionAutoRouting({
+    roomsCount,
+    netDoes,
+    marginPct,
+    drawdownPct,
+    humanOnlySharePct,
+  });
+
+  return {
+    ok: true,
+    window: range.windowKey,
+    startMs: range.startMs,
+    endMs: range.endMs,
+    roomsCount,
+    collectedDoes,
+    payoutDoes,
+    netDoes,
+    grossCollectedDoes,
+    grossPayoutDoes,
+    grossNetDoes,
+    promoExposureDoes,
+    marginPct,
+    currentEquityDoes,
+    highWaterMarkDoes,
+    drawdownDoes,
+    drawdownPct,
+    lastPeakAtMs,
+    humanOnlyRooms,
+    withBotRooms,
+    humanOnlySharePct,
+    withBotSharePct,
+    withBotBotWins,
+    withBotHumanWins,
+    withBotBotWinRatePct: withBotRooms > 0 ? withBotBotWins / withBotRooms : 0,
+    withBotHumanWinRatePct: withBotRooms > 0 ? withBotHumanWins / withBotRooms : 0,
+    truncated,
+    fetchLimit: MORPION_PILOT_SNAPSHOT_LIMIT,
+    recommendedDecision: normalizeMorpionPilotDecision(recommended.decision),
+    recommendedBand: String(recommended.band || ""),
+    recommendedReason: String(recommended.reason || ""),
+    recommendedHumanOnlyEnabled: recommended.humanOnlyEnabled !== false,
+    trend: fullTrend.slice(-MORPION_PILOT_TREND_POINT_LIMIT),
+    equityCurve: fullEquityCurve.slice(-(MORPION_PILOT_EQUITY_POINT_LIMIT + 1)),
+    computedAtMs: nowMs,
+  };
+}
+
 function normalizeDuelAnalyticsWindow(value = "") {
   const normalized = String(value || "").trim().toLowerCase();
   return normalized === "today" || normalized === "7d" || normalized === "30d" || normalized === "global"
@@ -3691,6 +4039,260 @@ async function computeDuelAnalyticsSnapshot(options = {}) {
       { key: "public", label: "Public", count: publicMatches },
       { key: "friends", label: "Entre amis", count: friendMatches },
     ],
+    stakeMix,
+    trend,
+    recentResults: recentResults.slice(0, 12),
+  };
+}
+
+function normalizeMorpionAnalyticsComposition(value = "") {
+  const normalized = String(value || "").trim().toLowerCase();
+  if (normalized === "human_only" || normalized === "human-vs-human") return "human_only";
+  if (normalized === "with_bot" || normalized === "human-vs-bot" || normalized === "bot") return "with_bot";
+  return "all";
+}
+
+function normalizeAnalyticsWinnerFilter(value = "") {
+  const normalized = String(value || "").trim().toLowerCase();
+  if (normalized === "human" || normalized === "bot") return normalized;
+  return "all";
+}
+
+function getMorpionCompositionMeta(humanCount = 0, botCount = 0) {
+  const safeHumanCount = safeInt(humanCount);
+  const safeBotCount = safeInt(botCount);
+  if (safeHumanCount >= 2 && safeBotCount <= 0) {
+    return {
+      key: "human_only",
+      label: "2 humains",
+    };
+  }
+  if (safeHumanCount >= 1 && safeBotCount >= 1) {
+    return {
+      key: "with_bot",
+      label: "1 humain + 1 bot",
+    };
+  }
+  return {
+    key: "other",
+    label: "Autre",
+  };
+}
+
+async function computeMorpionAnalyticsSnapshot(options = {}) {
+  const nowMs = safeSignedInt(options.nowMs) || Date.now();
+  const range = getDuelAnalyticsRange(options, nowMs);
+  const compositionFilter = normalizeMorpionAnalyticsComposition(options.composition);
+  const winnerFilter = normalizeAnalyticsWinnerFilter(options.winnerType);
+  const stakeFilter = safeInt(options.stakeDoes);
+
+  let query = db.collection(MORPION_ROOM_RESULTS_COLLECTION).orderBy("endedAtMs", "asc");
+
+  if (range.startMs > 0) {
+    query = query.where("endedAtMs", ">=", range.startMs);
+  }
+  if (range.endMs > 0) {
+    query = query.where("endedAtMs", "<=", range.endMs);
+  }
+
+  const querySnap = await query.get();
+  let matchesPlayed = 0;
+  let matchesWithBot = 0;
+  let matchesHumanOnly = 0;
+  let botWins = 0;
+  let humanWins = 0;
+  let botMatchBotWins = 0;
+  let botMatchHumanWins = 0;
+  let totalDurationMs = 0;
+  let durationSamples = 0;
+  let totalStakeDoes = 0;
+  const trendMap = new Map();
+  const stakeMixMap = new Map();
+  const compositionMixMap = new Map([
+    ["human_only", { key: "human_only", label: "2 humains", count: 0 }],
+    ["with_bot", { key: "with_bot", label: "1 humain + 1 bot", count: 0 }],
+  ]);
+  const recentResults = [];
+
+  querySnap.forEach((docSnap) => {
+    const data = docSnap.data() || {};
+    const status = String(data.status || "").trim().toLowerCase();
+    const endedAtMs = safeSignedInt(data.endedAtMs);
+    if (status !== "ended") return;
+    if (range.startMs > 0 && endedAtMs < range.startMs) return;
+    if (range.endMs > 0 && endedAtMs > range.endMs) return;
+
+    const humanCount = safeInt(data.humanCount);
+    const botCount = safeInt(data.botCount);
+    const composition = getMorpionCompositionMeta(humanCount, botCount);
+    if (compositionFilter !== "all" && composition.key !== compositionFilter) return;
+
+    const winnerType = String(data.winnerType || "").trim().toLowerCase();
+    if (winnerFilter !== "all" && winnerType !== winnerFilter) return;
+
+    const stakeDoes = safeInt(data.entryCostDoes || data.stakeDoes);
+    if (stakeFilter > 0 && stakeDoes !== stakeFilter) return;
+
+    matchesPlayed += 1;
+    totalStakeDoes += stakeDoes;
+
+    if (composition.key === "with_bot") matchesWithBot += 1;
+    if (composition.key === "human_only") matchesHumanOnly += 1;
+
+    if (winnerType === "bot") {
+      botWins += 1;
+      if (composition.key === "with_bot") botMatchBotWins += 1;
+    }
+    if (winnerType === "human") {
+      humanWins += 1;
+      if (composition.key === "with_bot") botMatchHumanWins += 1;
+    }
+
+    const compositionEntry = compositionMixMap.get(composition.key);
+    if (compositionEntry) {
+      compositionEntry.count += 1;
+    }
+
+    const stakeEntry = stakeMixMap.get(String(stakeDoes)) || {
+      stakeDoes,
+      label: `${stakeDoes} Does`,
+      count: 0,
+    };
+    stakeEntry.count += 1;
+    stakeMixMap.set(String(stakeDoes), stakeEntry);
+
+    const startedAtMs = safeSignedInt(data.startedAtMs);
+    const durationMs = startedAtMs > 0 && endedAtMs >= startedAtMs
+      ? Math.max(0, endedAtMs - startedAtMs)
+      : 0;
+    if (durationMs > 0) {
+      totalDurationMs += durationMs;
+      durationSamples += 1;
+    }
+
+    const bucketKey = getDuelAnalyticsBucketKey(range.granularity, endedAtMs);
+    const bucket = trendMap.get(bucketKey) || {
+      key: bucketKey,
+      label: getDuelAnalyticsBucketLabel(range.granularity, endedAtMs),
+      periodMs: endedAtMs,
+      matchesPlayed: 0,
+      matchesWithBot: 0,
+      matchesHumanOnly: 0,
+      botWins: 0,
+      humanWins: 0,
+      botMatchBotWins: 0,
+      botMatchHumanWins: 0,
+      totalStakeDoes: 0,
+      totalDurationMs: 0,
+      durationSamples: 0,
+    };
+    bucket.matchesPlayed += 1;
+    if (composition.key === "with_bot") bucket.matchesWithBot += 1;
+    if (composition.key === "human_only") bucket.matchesHumanOnly += 1;
+    if (winnerType === "bot") {
+      bucket.botWins += 1;
+      if (composition.key === "with_bot") bucket.botMatchBotWins += 1;
+    }
+    if (winnerType === "human") {
+      bucket.humanWins += 1;
+      if (composition.key === "with_bot") bucket.botMatchHumanWins += 1;
+    }
+    bucket.totalStakeDoes += stakeDoes;
+    if (durationMs > 0) {
+      bucket.totalDurationMs += durationMs;
+      bucket.durationSamples += 1;
+    }
+    if (endedAtMs > safeSignedInt(bucket.periodMs)) {
+      bucket.periodMs = endedAtMs;
+      bucket.label = getDuelAnalyticsBucketLabel(range.granularity, endedAtMs);
+    }
+    trendMap.set(bucketKey, bucket);
+
+    recentResults.push({
+      roomId: docSnap.id,
+      endedAtMs,
+      startedAtMs,
+      durationMs,
+      stakeDoes,
+      humanCount,
+      botCount,
+      compositionKey: composition.key,
+      compositionLabel: composition.label,
+      winnerType,
+      winnerSeat: safeSignedInt(data.winnerSeat),
+      endedReason: String(data.endedReason || "").trim(),
+      botDifficulty: normalizeBotDifficulty(data.botDifficulty),
+    });
+  });
+
+  recentResults.sort((left, right) => safeSignedInt(right.endedAtMs) - safeSignedInt(left.endedAtMs));
+
+  const trend = Array.from(trendMap.values())
+    .sort((left, right) => safeSignedInt(left.periodMs) - safeSignedInt(right.periodMs))
+    .map((bucket) => ({
+      key: bucket.key,
+      label: bucket.label,
+      periodMs: safeSignedInt(bucket.periodMs),
+      matchesPlayed: safeInt(bucket.matchesPlayed),
+      matchesWithBot: safeInt(bucket.matchesWithBot),
+      matchesHumanOnly: safeInt(bucket.matchesHumanOnly),
+      botWins: safeInt(bucket.botWins),
+      humanWins: safeInt(bucket.humanWins),
+      botMatchBotWins: safeInt(bucket.botMatchBotWins),
+      botMatchHumanWins: safeInt(bucket.botMatchHumanWins),
+      avgStakeDoes: safeInt(bucket.matchesPlayed) > 0 ? Math.round(bucket.totalStakeDoes / bucket.matchesPlayed) : 0,
+      avgDurationMs: safeInt(bucket.durationSamples) > 0 ? Math.round(bucket.totalDurationMs / bucket.durationSamples) : 0,
+    }));
+
+  const stakeMix = Array.from(stakeMixMap.values())
+    .sort((left, right) => safeInt(left.stakeDoes) - safeInt(right.stakeDoes))
+    .map((item) => ({
+      stakeDoes: safeInt(item.stakeDoes),
+      label: String(item.label || `${safeInt(item.stakeDoes)} Does`),
+      count: safeInt(item.count),
+    }));
+
+  const compositionMix = Array.from(compositionMixMap.values())
+    .filter((item) => safeInt(item.count) > 0 || item.key === "human_only" || item.key === "with_bot")
+    .map((item) => ({
+      key: String(item.key || ""),
+      label: String(item.label || ""),
+      count: safeInt(item.count),
+    }));
+
+  return {
+    ok: true,
+    generatedAtMs: nowMs,
+    filters: {
+      composition: compositionFilter,
+      winnerType: winnerFilter,
+      stakeDoes: stakeFilter,
+    },
+    range: {
+      window: range.windowKey,
+      startMs: range.startMs,
+      endMs: range.endMs,
+      granularity: range.granularity,
+      isGlobal: range.isGlobal,
+    },
+    summary: {
+      matchesPlayed,
+      matchesWithBot,
+      matchesHumanOnly,
+      botWins,
+      humanWins,
+      botMatchBotWins,
+      botMatchHumanWins,
+      avgDurationMs: durationSamples > 0 ? Math.round(totalDurationMs / durationSamples) : 0,
+      avgStakeDoes: matchesPlayed > 0 ? Math.round(totalStakeDoes / matchesPlayed) : 0,
+      withBotRatePct: matchesPlayed > 0 ? matchesWithBot / matchesPlayed : 0,
+      humanOnlyRatePct: matchesPlayed > 0 ? matchesHumanOnly / matchesPlayed : 0,
+      botWinRatePct: matchesPlayed > 0 ? botWins / matchesPlayed : 0,
+      humanWinRatePct: matchesPlayed > 0 ? humanWins / matchesPlayed : 0,
+      botMatchBotWinRatePct: matchesWithBot > 0 ? botMatchBotWins / matchesWithBot : 0,
+      botMatchHumanWinRatePct: matchesWithBot > 0 ? botMatchHumanWins / matchesWithBot : 0,
+    },
+    compositionMix,
     stakeMix,
     trend,
     recentResults: recentResults.slice(0, 12),
@@ -9527,6 +10129,2279 @@ exports.claimWinReward = publicOnCall("claimWinReward", async (request) => {
   return result;
 });
 
+function morpionRoomRef(roomId = "") {
+  const safeRoomId = String(roomId || "").trim();
+  return safeRoomId
+    ? db.collection(MORPION_ROOMS_COLLECTION).doc(safeRoomId)
+    : db.collection(MORPION_ROOMS_COLLECTION).doc();
+}
+
+function morpionGameStateRef(roomId = "") {
+  return db.collection(MORPION_GAME_STATES_COLLECTION).doc(String(roomId || "").trim());
+}
+
+function morpionRoomResultRef(roomId = "") {
+  return db.collection(MORPION_ROOM_RESULTS_COLLECTION).doc(String(roomId || "").trim());
+}
+
+function morpionMatchmakingPoolRef(stakeConfigId = "", stakeDoes = 0) {
+  const cleanStakeConfigId = String(stakeConfigId || "").trim() || `morpion_${safeInt(stakeDoes)}`;
+  return db.collection(MORPION_MATCHMAKING_POOLS_COLLECTION).doc(`${cleanStakeConfigId}_${safeInt(stakeDoes)}`);
+}
+
+function morpionPlayerProfileRef(uid = "") {
+  return db.collection(MORPION_PLAYER_PROFILES_COLLECTION).doc(String(uid || "").trim());
+}
+
+function computeMorpionBotBlockingState(profile = {}, didWinVsBot = false) {
+  const prevGames = safeInt(profile.botGames);
+  const prevWins = safeInt(profile.botWins);
+  const prevLosses = safeInt(profile.botLosses);
+  const prevDraws = safeInt(profile.botDraws);
+  const prevWinStreak = safeInt(profile.botWinStreak);
+  const wasBlocked = profile.botBlocked === true;
+
+  const nextGames = prevGames + 1;
+  const nextWins = prevWins + (didWinVsBot ? 1 : 0);
+  const nextLosses = prevLosses + (didWinVsBot ? 0 : 1);
+  const nextDraws = prevDraws;
+  const nextWinStreak = didWinVsBot ? (prevWinStreak + 1) : 0;
+  const nextWinRate = nextGames > 0 ? (nextWins / nextGames) : 0;
+  const hitsStreakThreshold = nextWinStreak >= MORPION_BOT_BLOCK_WIN_STREAK;
+  const hitsRateThreshold = nextGames >= MORPION_BOT_BLOCK_MIN_GAMES && nextWinRate >= MORPION_BOT_BLOCK_MIN_WIN_RATE;
+  const shouldBlockNow = wasBlocked || hitsStreakThreshold || hitsRateThreshold;
+  const blockReason = wasBlocked
+    ? String(profile.botBlockedReason || "locked")
+    : (hitsStreakThreshold ? "win_streak" : (hitsRateThreshold ? "win_rate" : ""));
+
+  return {
+    nextGames,
+    nextWins,
+    nextLosses,
+    nextDraws,
+    nextWinStreak,
+    nextWinRate,
+    shouldBlockNow,
+    blockReason,
+  };
+}
+
+async function recordMorpionBotOutcomeProfilesIfNeeded(roomId = "") {
+  const safeRoomId = String(roomId || "").trim();
+  if (!safeRoomId) return false;
+  const roomRefDoc = morpionRoomRef(safeRoomId);
+
+  return db.runTransaction(async (tx) => {
+    const roomSnap = await tx.get(roomRefDoc);
+    if (!roomSnap.exists) return false;
+
+    const room = roomSnap.data() || {};
+    if (String(room.status || "").trim().toLowerCase() !== "ended") return false;
+    if (safeInt(room.botCount) <= 0) return false;
+    if (safeSignedInt(room.botOutcomeProfileAppliedAtMs) > 0) return false;
+
+    const playerUids = Array.from({ length: 2 }, (_, idx) => String((room.playerUids || [])[idx] || "").trim());
+    const humanPlayers = playerUids
+      .map((playerUid, seatIndex) => ({ uid: playerUid, seatIndex }))
+      .filter((entry) => entry.uid && isMorpionSeatHuman(room, entry.seatIndex));
+
+    if (!humanPlayers.length) {
+      tx.update(roomRefDoc, {
+        botOutcomeProfileAppliedAtMs: Date.now(),
+        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      });
+      return false;
+    }
+
+    const winnerSeat = safeSignedInt(room.winnerSeat, -1);
+    const winnerUid = String(room.winnerUid || "").trim();
+    const nowMs = Date.now();
+    const profileRefs = humanPlayers.map((entry) => morpionPlayerProfileRef(entry.uid));
+    const profileSnaps = await Promise.all(profileRefs.map((ref) => tx.get(ref)));
+
+    humanPlayers.forEach((entry, idx) => {
+      const profileData = profileSnaps[idx].exists ? (profileSnaps[idx].data() || {}) : {};
+      const didWinVsBot = (winnerUid && winnerUid === entry.uid) || (winnerSeat >= 0 && winnerSeat === entry.seatIndex);
+      const next = computeMorpionBotBlockingState(profileData, didWinVsBot);
+      tx.set(profileRefs[idx], {
+        uid: entry.uid,
+        botGames: next.nextGames,
+        botWins: next.nextWins,
+        botLosses: next.nextLosses,
+        botDraws: next.nextDraws,
+        botWinStreak: next.nextWinStreak,
+        botWinRate: Number(next.nextWinRate.toFixed(4)),
+        botBlocked: next.shouldBlockNow,
+        botBlockedReason: next.blockReason || admin.firestore.FieldValue.delete(),
+        lastBotOutcome: didWinVsBot ? "win" : "loss",
+        lastBotRoomId: safeRoomId,
+        lastBotEndedAtMs: safeSignedInt(room.endedAtMs) || nowMs,
+        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+        ...(profileSnaps[idx].exists ? {} : { createdAt: admin.firestore.FieldValue.serverTimestamp() }),
+      }, { merge: true });
+    });
+
+    tx.update(roomRefDoc, {
+      botOutcomeProfileAppliedAtMs: nowMs,
+      updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+    });
+
+    logMorpionServerDebug("botOutcome:profilesUpdated", {
+      roomId: safeRoomId,
+      players: humanPlayers.map((entry) => entry.uid),
+      winnerSeat,
+      winnerUid,
+    });
+    return true;
+  });
+}
+
+function logMorpionServerDebug(event, payload = {}) {
+  try {
+    console.log("[MORPION_DEBUG][FUNCTIONS]", JSON.stringify({
+      event: String(event || ""),
+      ts: new Date().toISOString(),
+      ...payload,
+    }));
+  } catch (_) {
+    console.log("[MORPION_DEBUG][FUNCTIONS]", event, payload);
+  }
+}
+
+function setMorpionMatchmakingPoolOpen(tx, poolRef, roomId, stakeConfigId = "", stakeDoes = 0) {
+  tx.set(poolRef, {
+    openRoomId: String(roomId || "").trim(),
+    stakeConfigId: String(stakeConfigId || "").trim(),
+    stakeDoes: safeInt(stakeDoes),
+    updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+  }, { merge: true });
+}
+
+function clearMorpionMatchmakingPool(tx, poolRef) {
+  tx.set(poolRef, {
+    openRoomId: "",
+    updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+  }, { merge: true });
+}
+
+function resolveMorpionWaitingDeadlineMs(room = {}, nowMs = Date.now()) {
+  const explicit = safeSignedInt(room.waitingDeadlineMs);
+  if (explicit > 0) return explicit;
+  const createdAtMs = safeSignedInt(room.createdAtMs);
+  if (createdAtMs > 0) return createdAtMs + ROOM_WAIT_MS;
+  return nowMs + ROOM_WAIT_MS;
+}
+
+function getMorpionStakeConfigByAmount(stakeDoes) {
+  const targetStakeDoes = safeInt(stakeDoes);
+  return DEFAULT_MORPION_STAKE_OPTIONS.find((item) => item.enabled !== false && safeInt(item.stakeDoes) === targetStakeDoes) || null;
+}
+
+function buildZeroMorpionEntryFunding() {
+  return {
+    approvedDoes: 0,
+    provisionalDoes: 0,
+    welcomeDoes: 0,
+    provisionalSources: [],
+  };
+}
+
+function isMorpionSeatHuman(room = {}, seat) {
+  const safeSeat = safeSignedInt(seat, -1);
+  if (safeSeat < 0 || safeSeat > 1) return false;
+  const playerUids = Array.isArray(room.playerUids) ? room.playerUids : [];
+  const seatUid = String(playerUids[safeSeat] || "").trim();
+  if (!seatUid) return false;
+  return !getBotTakeoverSeatSet(room).has(safeSeat);
+}
+
+async function findActiveMorpionRoomForUser(uid) {
+  const rooms = db.collection(MORPION_ROOMS_COLLECTION);
+  const membershipSnap = await rooms
+    .where("playerUids", "array-contains", uid)
+    .limit(8)
+    .get();
+
+  if (membershipSnap.empty) return null;
+
+  let playingCandidate = null;
+  let waitingCandidate = null;
+
+  membershipSnap.docs.forEach((docSnap) => {
+    const data = docSnap.data() || {};
+    if (getBlockedRejoinSet(data).has(uid)) return;
+    const status = String(data.status || "");
+    if (status === "playing" && !playingCandidate) {
+      playingCandidate = docSnap;
+      return;
+    }
+    if (status === "waiting" && !waitingCandidate) {
+      waitingCandidate = docSnap;
+    }
+  });
+
+  const candidate = playingCandidate || waitingCandidate;
+  if (!candidate) return null;
+
+  const data = candidate.data() || {};
+  const seats = data.seats && typeof data.seats === "object" ? data.seats : {};
+  const seatIndex = typeof seats[uid] === "number" ? seats[uid] : -1;
+
+  return {
+    roomId: candidate.id,
+    status: String(data.status || ""),
+    seatIndex,
+    stakeDoes: safeInt(data.entryCostDoes || data.stakeDoes),
+  };
+}
+
+function normalizeMorpionExcludedRoomIds(value) {
+  const rawItems = Array.isArray(value) ? value : [value];
+  return Array.from(new Set(
+    rawItems
+      .map((item) => String(item || "").trim())
+      .filter(Boolean)
+  )).slice(0, 8);
+}
+
+function buildMorpionPresenceUpdates(room = {}, actorUid = "", nowMs = Date.now()) {
+  const currentPresence = room.roomPresenceMs && typeof room.roomPresenceMs === "object"
+    ? { ...room.roomPresenceMs }
+    : {};
+  const playerUids = Array.from({ length: 2 }, (_, idx) => String((room.playerUids || [])[idx] || ""));
+  const playerNames = Array.from({ length: 2 }, (_, idx) => String((room.playerNames || [])[idx] || ""));
+  const seats = { ...getRoomSeats(room) };
+  const takeoverSeats = getBotTakeoverSeatSet(room);
+  const graceUntil = room.botGraceUntilMs && typeof room.botGraceUntilMs === "object"
+    ? { ...room.botGraceUntilMs }
+    : {};
+  const blockedRejoinUids = Array.from(getBlockedRejoinSet(room));
+  const actor = String(actorUid || "").trim();
+  const actorSeat = actor ? getSeatForUser(room, actor) : -1;
+  let removedAny = false;
+
+  if (actor) {
+    currentPresence[actor] = nowMs;
+    if (takeoverSeats.has(actorSeat)) {
+      takeoverSeats.delete(actorSeat);
+      delete graceUntil[String(actorSeat)];
+    }
+  }
+
+  for (let seat = 0; seat < 2; seat += 1) {
+    const seatUid = String(playerUids[seat] || "").trim();
+    if (!seatUid || seatUid === actor) continue;
+    const lastSeen = safeSignedInt(currentPresence[seatUid]);
+    if (lastSeen <= 0) continue;
+    const offlineForMs = nowMs - lastSeen;
+    if (offlineForMs < ROOM_DISCONNECT_TAKEOVER_MS) continue;
+
+    if (!takeoverSeats.has(seat)) {
+      takeoverSeats.add(seat);
+      graceUntil[String(seat)] = lastSeen + ROOM_DISCONNECT_GRACE_MS;
+    }
+
+    const seatGraceUntil = safeSignedInt(graceUntil[String(seat)]);
+    if (seatGraceUntil > 0 && nowMs > seatGraceUntil) {
+      removedAny = true;
+      playerUids[seat] = "";
+      playerNames[seat] = String(room.status || "") === "playing" ? botSeatLabel(seat) : "";
+      delete seats[seatUid];
+      delete currentPresence[seatUid];
+      takeoverSeats.delete(seat);
+      delete graceUntil[String(seat)];
+      if (!blockedRejoinUids.includes(seatUid)) {
+        blockedRejoinUids.push(seatUid);
+      }
+    }
+  }
+
+  const updates = {
+    roomPresenceMs: currentPresence,
+    botTakeoverSeats: Array.from(takeoverSeats),
+    updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+  };
+
+  if (Object.keys(graceUntil).length > 0) {
+    updates.botGraceUntilMs = graceUntil;
+  } else {
+    updates.botGraceUntilMs = admin.firestore.FieldValue.delete();
+  }
+
+  if (removedAny) {
+    const humans = playerUids.filter(Boolean).length;
+    updates.playerUids = playerUids;
+    updates.playerNames = playerNames;
+    updates.seats = seats;
+    updates.humanCount = humans;
+    updates.botCount = Math.max(0, 2 - humans);
+    updates.blockedRejoinUids = blockedRejoinUids;
+    updates.playerEmails = admin.firestore.FieldValue.delete();
+  }
+
+  const effectiveRoom = {
+    ...room,
+    playerUids: updates.playerUids || room.playerUids,
+    playerNames: updates.playerNames || room.playerNames,
+    seats: updates.seats || room.seats,
+    botTakeoverSeats: updates.botTakeoverSeats,
+  };
+  const currentPlayerSeat = safeInt(room.currentPlayer);
+  const shouldNudgeBots = String(room.status || "") === "playing"
+    && room.startRevealPending !== true
+    && currentPlayerSeat >= 0
+    && currentPlayerSeat < 2
+    && !isMorpionSeatHuman(effectiveRoom, currentPlayerSeat);
+  const shouldResolveExpiredHumanTurn = String(room.status || "") === "playing"
+    && room.startRevealPending !== true
+    && currentPlayerSeat >= 0
+    && currentPlayerSeat < 2
+    && isMorpionSeatHuman(effectiveRoom, currentPlayerSeat)
+    && resolveMorpionTurnDeadlineMs(room, nowMs) <= nowMs;
+
+  return {
+    updates,
+    shouldNudgeBots,
+    shouldResolveExpiredHumanTurn,
+  };
+}
+
+function applyMorpionLeaveForUidTx(tx, roomRefDoc, room = {}, uid = "") {
+  const safeUid = String(uid || "").trim();
+  const currentUids = Array.from({ length: 2 }, (_, idx) => String((room.playerUids || [])[idx] || ""));
+  if (!safeUid || !currentUids.includes(safeUid)) {
+    return {
+      result: { ok: true, deleted: false, status: String(room.status || "") },
+      shouldCleanup: false,
+      shouldNudgeBots: false,
+    };
+  }
+
+  const status = String(room.status || "");
+  const seatIndex = currentUids.findIndex((candidate) => candidate === safeUid);
+  const nextPlayerUids = currentUids.slice();
+  if (seatIndex >= 0) nextPlayerUids[seatIndex] = "";
+  const nextPlayerNames = Array.from({ length: 2 }, (_, idx) => String((room.playerNames || [])[idx] || ""));
+  if (seatIndex >= 0) {
+    nextPlayerNames[seatIndex] = status === "playing" ? botSeatLabel(seatIndex) : "";
+  }
+  const nextSeats = { ...getRoomSeats(room) };
+  delete nextSeats[safeUid];
+  const blockedRejoinUids = Array.from(getBlockedRejoinSet(room));
+  if (!blockedRejoinUids.includes(safeUid)) {
+    blockedRejoinUids.push(safeUid);
+  }
+  const nextPresence = room.roomPresenceMs && typeof room.roomPresenceMs === "object"
+    ? { ...room.roomPresenceMs }
+    : {};
+  delete nextPresence[safeUid];
+  const nextBotTakeoverSeats = getBotTakeoverSeatSet(room);
+  nextBotTakeoverSeats.delete(seatIndex);
+  const nextGraceUntil = room.botGraceUntilMs && typeof room.botGraceUntilMs === "object"
+    ? { ...room.botGraceUntilMs }
+    : {};
+  delete nextGraceUntil[String(seatIndex)];
+  const humans = nextPlayerUids.filter(Boolean).length;
+
+  if (humans <= 0) {
+    tx.set(roomRefDoc, {
+      status: "closing",
+      playerUids: ["", ""],
+      playerNames: ["", ""],
+      blockedRejoinUids,
+      seats: {},
+      roomPresenceMs: nextPresence,
+      humanCount: 0,
+      botCount: 2,
+      botTakeoverSeats: [],
+      botGraceUntilMs: admin.firestore.FieldValue.delete(),
+      updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+    }, { merge: true });
+    return {
+      result: { ok: true, deleted: true, status: "closing" },
+      shouldCleanup: true,
+      shouldNudgeBots: false,
+    };
+  }
+
+  const nextAckUids = Array.isArray(room.startRevealAckUids)
+    ? room.startRevealAckUids.map((item) => String(item || "").trim()).filter(Boolean).filter((item) => item !== safeUid)
+    : [];
+  const revealPending = room.startRevealPending === true;
+  const revealReady = revealPending === true
+    && nextPlayerUids.filter(Boolean).every((playerUid) => nextAckUids.includes(playerUid));
+  const nextBotCount = Math.max(0, 2 - humans);
+  const updates = {
+    playerUids: nextPlayerUids,
+    playerNames: nextPlayerNames,
+    blockedRejoinUids,
+    seats: nextSeats,
+    roomPresenceMs: nextPresence,
+    humanCount: humans,
+    botCount: nextBotCount,
+    botTakeoverSeats: Array.from(nextBotTakeoverSeats),
+    botGraceUntilMs: Object.keys(nextGraceUntil).length > 0 ? nextGraceUntil : admin.firestore.FieldValue.delete(),
+    startRevealAckUids: nextAckUids,
+    startRevealPending: revealPending === true ? !revealReady : false,
+    ownerUid: room.ownerUid === safeUid ? String(nextPlayerUids.find(Boolean) || "") : String(room.ownerUid || ""),
+    updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+  };
+
+  tx.update(roomRefDoc, updates);
+
+  const effectiveRoom = {
+    ...room,
+    playerUids: nextPlayerUids,
+    playerNames: nextPlayerNames,
+    seats: nextSeats,
+    botTakeoverSeats: updates.botTakeoverSeats,
+  };
+  const currentPlayerSeat = safeInt(room.currentPlayer);
+  const shouldNudgeBots = status === "playing"
+    && updates.startRevealPending !== true
+    && currentPlayerSeat >= 0
+    && currentPlayerSeat < 2
+    && !isMorpionSeatHuman(effectiveRoom, currentPlayerSeat);
+
+  return {
+    result: {
+      ok: true,
+      deleted: false,
+      status,
+      humanCount: humans,
+      botCount: nextBotCount,
+      revealPending: updates.startRevealPending === true,
+    },
+    shouldCleanup: false,
+    shouldNudgeBots,
+  };
+}
+
+async function forceRemoveUserFromMorpionRoom(roomId = "", uid = "") {
+  const safeRoomId = String(roomId || "").trim();
+  const safeUid = String(uid || "").trim();
+  if (!safeRoomId || !safeUid) return { ok: true, deleted: false, status: "skipped" };
+
+  const roomRefDoc = morpionRoomRef(safeRoomId);
+  const outcome = await db.runTransaction(async (tx) => {
+    const roomSnap = await tx.get(roomRefDoc);
+    if (!roomSnap.exists) {
+      return {
+        result: { ok: true, deleted: true, status: "missing" },
+        shouldCleanup: false,
+        shouldNudgeBots: false,
+      };
+    }
+    return applyMorpionLeaveForUidTx(tx, roomRefDoc, roomSnap.data() || {}, safeUid);
+  });
+
+  if (outcome?.shouldNudgeBots) {
+    await processPendingBotTurnsMorpion(safeRoomId);
+  }
+  if (outcome?.shouldCleanup) {
+    await cleanupMorpionRoom(roomRefDoc);
+    return { ok: true, deleted: true, status: "deleted" };
+  }
+  return outcome?.result || { ok: true, deleted: false, status: "left" };
+}
+
+function buildEmptyMorpionBoard() {
+  return Array.from({ length: 15 * 15 }, () => -1);
+}
+
+function normalizeMorpionBoard(raw = []) {
+  if (!Array.isArray(raw) || raw.length !== 225) return buildEmptyMorpionBoard();
+  return raw.map((cell) => {
+    const parsed = Number(cell);
+    return parsed === 0 || parsed === 1 ? parsed : -1;
+  });
+}
+
+function getMorpionRowCol(index) {
+  const safeIndex = Math.max(0, Math.min(224, safeInt(index)));
+  return {
+    row: Math.floor(safeIndex / 15),
+    col: safeIndex % 15,
+  };
+}
+
+function getMorpionCellIndex(row, col) {
+  return (row * 15) + col;
+}
+
+function checkMorpionWinningLine(board = [], cellIndex = 0, seat = 0) {
+  const { row, col } = getMorpionRowCol(cellIndex);
+  const directions = [
+    [1, 0],
+    [0, 1],
+    [1, 1],
+    [1, -1],
+  ];
+
+  for (const [deltaRow, deltaCol] of directions) {
+    const line = [cellIndex];
+    let nextRow = row + deltaRow;
+    let nextCol = col + deltaCol;
+
+    while (nextRow >= 0 && nextRow < 15 && nextCol >= 0 && nextCol < 15) {
+      const nextIndex = getMorpionCellIndex(nextRow, nextCol);
+      if (board[nextIndex] !== seat) break;
+      line.push(nextIndex);
+      nextRow += deltaRow;
+      nextCol += deltaCol;
+    }
+
+    nextRow = row - deltaRow;
+    nextCol = col - deltaCol;
+    while (nextRow >= 0 && nextRow < 15 && nextCol >= 0 && nextCol < 15) {
+      const nextIndex = getMorpionCellIndex(nextRow, nextCol);
+      if (board[nextIndex] !== seat) break;
+      line.unshift(nextIndex);
+      nextRow -= deltaRow;
+      nextCol -= deltaCol;
+    }
+
+    if (line.length >= 5) return line.slice(0, 5);
+  }
+
+  return [];
+}
+
+function isMorpionBoardFull(board = []) {
+  return Array.isArray(board) && board.length === 225 && board.every((cell) => cell === 0 || cell === 1);
+}
+
+function createInitialMorpionGameState(room = {}) {
+  const initialCurrentPlayer = Math.random() >= 0.5 ? 1 : 0;
+  return {
+    board: buildEmptyMorpionBoard(),
+    currentPlayer: initialCurrentPlayer,
+    moveCount: 0,
+    winnerSeat: -1,
+    winnerUid: "",
+    endedReason: "",
+    winningLine: [],
+    appliedActionSeq: 0,
+    idempotencyKeys: {},
+  };
+}
+
+function normalizeMorpionGameState(raw = {}, room = {}) {
+  const winnerSeat = safeSignedInt(raw.winnerSeat);
+  const board = normalizeMorpionBoard(raw.board);
+  return {
+    board,
+    currentPlayer: safeSignedInt(raw.currentPlayer, 0),
+    moveCount: safeInt(raw.moveCount),
+    winnerSeat: winnerSeat >= 0 ? winnerSeat : -1,
+    winnerUid: String(raw.winnerUid || "").trim(),
+    endedReason: String(raw.endedReason || "").trim(),
+    winningLine: Array.isArray(raw.winningLine) ? raw.winningLine.map((item) => safeInt(item)).filter((item) => item >= 0 && item < 225).slice(0, 5) : [],
+    appliedActionSeq: safeInt(raw.appliedActionSeq),
+    idempotencyKeys: raw.idempotencyKeys && typeof raw.idempotencyKeys === "object" ? { ...raw.idempotencyKeys } : {},
+    playerUids: Array.from({ length: 2 }, (_, idx) => String((room.playerUids || [])[idx] || "")),
+  };
+}
+
+function buildMorpionGameStateWrite(nextState) {
+  return {
+    board: Array.isArray(nextState.board) ? nextState.board.slice(0, 225) : buildEmptyMorpionBoard(),
+    currentPlayer: safeSignedInt(nextState.currentPlayer),
+    moveCount: safeInt(nextState.moveCount),
+    winnerSeat: safeSignedInt(nextState.winnerSeat, -1),
+    winnerUid: String(nextState.winnerUid || "").trim(),
+    endedReason: String(nextState.endedReason || "").trim(),
+    winningLine: Array.isArray(nextState.winningLine) ? nextState.winningLine.slice(0, 5) : [],
+    appliedActionSeq: safeInt(nextState.appliedActionSeq),
+    idempotencyKeys: trimIdempotencyKeys(nextState.idempotencyKeys),
+    updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+  };
+}
+
+function getLegalMorpionMoves(state = {}) {
+  if (safeSignedInt(state.winnerSeat, -1) >= 0) return [];
+  const board = Array.isArray(state.board) ? state.board : [];
+  const moves = [];
+  for (let index = 0; index < 225; index += 1) {
+    if (board[index] === -1) {
+      moves.push(index);
+    }
+  }
+  return moves;
+}
+
+function evaluateMorpionDirection(board = [], row = 0, col = 0, seat = 0, deltaRow = 0, deltaCol = 0) {
+  let forward = 0;
+  let nextRow = row + deltaRow;
+  let nextCol = col + deltaCol;
+  while (nextRow >= 0 && nextRow < 15 && nextCol >= 0 && nextCol < 15) {
+    const nextIndex = getMorpionCellIndex(nextRow, nextCol);
+    if (board[nextIndex] !== seat) break;
+    forward += 1;
+    nextRow += deltaRow;
+    nextCol += deltaCol;
+  }
+  const forwardOpen = nextRow >= 0
+    && nextRow < 15
+    && nextCol >= 0
+    && nextCol < 15
+    && board[getMorpionCellIndex(nextRow, nextCol)] === -1;
+
+  let backward = 0;
+  nextRow = row - deltaRow;
+  nextCol = col - deltaCol;
+  while (nextRow >= 0 && nextRow < 15 && nextCol >= 0 && nextCol < 15) {
+    const nextIndex = getMorpionCellIndex(nextRow, nextCol);
+    if (board[nextIndex] !== seat) break;
+    backward += 1;
+    nextRow -= deltaRow;
+    nextCol -= deltaCol;
+  }
+  const backwardOpen = nextRow >= 0
+    && nextRow < 15
+    && nextCol >= 0
+    && nextCol < 15
+    && board[getMorpionCellIndex(nextRow, nextCol)] === -1;
+
+  return {
+    lineLength: 1 + forward + backward,
+    openEnds: (forwardOpen ? 1 : 0) + (backwardOpen ? 1 : 0),
+  };
+}
+
+function scoreMorpionMoveCandidate(board = [], index = 0, seat = 0) {
+  const { row, col } = getMorpionRowCol(index);
+  const directions = [
+    [1, 0],
+    [0, 1],
+    [1, 1],
+    [1, -1],
+  ];
+  let bestLength = 1;
+  let bestOpenEnds = 0;
+  let totalPressure = 0;
+
+  directions.forEach(([deltaRow, deltaCol]) => {
+    const result = evaluateMorpionDirection(board, row, col, seat, deltaRow, deltaCol);
+    bestLength = Math.max(bestLength, result.lineLength);
+    bestOpenEnds = Math.max(bestOpenEnds, result.openEnds);
+    totalPressure += (result.lineLength * result.lineLength * 10) + (result.openEnds * 12);
+  });
+
+  const centerDistance = Math.abs(7 - row) + Math.abs(7 - col);
+  return {
+    bestLength,
+    bestOpenEnds,
+    score: totalPressure - (centerDistance * 3),
+  };
+}
+
+const MORPION_SEARCH_WIN_SCORE = 10_000_000;
+const MORPION_ULTRA_SEARCH_DEPTH = 4;
+const MORPION_ULTRA_ROOT_CANDIDATES = 24;
+const MORPION_ULTRA_CHILD_CANDIDATES = 14;
+
+function scoreMorpionThreatPattern(result = {}) {
+  const lineLength = safeInt(result.lineLength);
+  const openEnds = safeInt(result.openEnds);
+  if (lineLength >= 5) return 5_000_000;
+  if (lineLength === 4 && openEnds >= 2) return 650_000;
+  if (lineLength === 4 && openEnds === 1) return 160_000;
+  if (lineLength === 3 && openEnds >= 2) return 48_000;
+  if (lineLength === 3 && openEnds === 1) return 9_500;
+  if (lineLength === 2 && openEnds >= 2) return 2_200;
+  if (lineLength === 2 && openEnds === 1) return 520;
+  return Math.max(0, lineLength * 32) + (openEnds * 18);
+}
+
+function analyzeMorpionPlacement(board = [], index = 0, seat = 0) {
+  const placedBoard = Array.isArray(board) ? board.slice(0, 225) : buildEmptyMorpionBoard();
+  placedBoard[index] = seat;
+  const line = checkMorpionWinningLine(placedBoard, index, seat);
+  const candidate = scoreMorpionMoveCandidate(placedBoard, index, seat);
+  const { row, col } = getMorpionRowCol(index);
+  const directions = [
+    [1, 0],
+    [0, 1],
+    [1, 1],
+    [1, -1],
+  ];
+  let openFourCount = 0;
+  let closedFourCount = 0;
+  let openThreeCount = 0;
+  directions.forEach(([deltaRow, deltaCol]) => {
+    const directional = evaluateMorpionDirection(placedBoard, row, col, seat, deltaRow, deltaCol);
+    const lineLength = safeInt(directional.lineLength);
+    const openEnds = safeInt(directional.openEnds);
+    if (lineLength >= 4 && openEnds >= 2) openFourCount += 1;
+    else if (lineLength >= 4 && openEnds === 1) closedFourCount += 1;
+    else if (lineLength === 3 && openEnds >= 2) openThreeCount += 1;
+  });
+  let tacticalBonus = 0;
+  if (openFourCount >= 2) tacticalBonus += 2_400_000;
+  else if (openFourCount >= 1 && openThreeCount >= 1) tacticalBonus += 1_350_000;
+  else if (openFourCount >= 1) tacticalBonus += 900_000;
+  if (openThreeCount >= 2) tacticalBonus += 320_000;
+  if (closedFourCount >= 2) tacticalBonus += 180_000;
+
+  return {
+    board: placedBoard,
+    isWin: line.length >= 5,
+    winningLine: line,
+    lineLength: safeInt(candidate.bestLength),
+    openEnds: safeInt(candidate.bestOpenEnds),
+    rawScore: safeInt(candidate.score),
+    openFourCount,
+    closedFourCount,
+    openThreeCount,
+    threatScore: scoreMorpionThreatPattern({
+      lineLength: candidate.bestLength,
+      openEnds: candidate.bestOpenEnds,
+    }) + safeInt(candidate.score) + tacticalBonus,
+  };
+}
+
+function getImmediateWinningMorpionMoves(board = [], seat = 0, candidateMoves = null) {
+  const legalMoves = Array.isArray(candidateMoves)
+    ? candidateMoves
+    : getCandidateMorpionMovesFromBoard(board, seat, { maxCandidates: 225 });
+  const winners = [];
+  for (const index of legalMoves) {
+    if (board[index] !== -1) continue;
+    const analysis = analyzeMorpionPlacement(board, index, seat);
+    if (analysis.isWin) winners.push(index);
+  }
+  return winners;
+}
+
+function getMorpionThreatMovesComprehensive(board = [], seat = 0) {
+  const threats = [];
+  for (let index = 0; index < 225; index += 1) {
+    if (board[index] !== -1) continue;
+    const analysis = analyzeMorpionPlacement(board, index, seat);
+    const isCritical =
+      analysis.isWin
+      || analysis.openFourCount >= 1
+      || analysis.closedFourCount >= 1
+      || (analysis.lineLength >= 4 && analysis.openEnds >= 1)
+      || (analysis.openThreeCount >= 1);
+    if (!isCritical) continue;
+
+    let severity = 0;
+    if (analysis.isWin) severity += 25_000_000;
+    severity += (analysis.openFourCount * 3_000_000);
+    severity += (analysis.closedFourCount * 1_300_000);
+    severity += (analysis.openThreeCount * 460_000);
+    severity += safeInt(analysis.threatScore);
+    threats.push({
+      move: index,
+      severity,
+      analysis,
+    });
+  }
+  threats.sort((left, right) => right.severity - left.severity);
+  return threats;
+}
+
+function boardHashMorpion(board = [], currentSeat = 0, depth = 0) {
+  const compact = board.map((cell) => {
+    if (cell === -1) return "0";
+    if (cell === 0) return "1";
+    return "2";
+  }).join("");
+  return `${currentSeat}|${depth}|${compact}`;
+}
+
+function createsUnstoppableMorpionFork(board = [], move = 0, botSeat = 0) {
+  if (board[move] !== -1) return false;
+  const opponentSeat = botSeat === 0 ? 1 : 0;
+  const nextBoard = board.slice(0, 225);
+  nextBoard[move] = botSeat;
+  const opponentImmediateWins = getImmediateWinningMorpionMoves(nextBoard, opponentSeat);
+  if (opponentImmediateWins.length > 0) return false;
+  const botImmediateWins = getImmediateWinningMorpionMoves(nextBoard, botSeat);
+  return botImmediateWins.length >= 2;
+}
+
+function getCriticalOpponentThreatMoves(board = [], botSeat = 0) {
+  const opponentSeat = botSeat === 0 ? 1 : 0;
+  return getMorpionThreatMovesComprehensive(board, opponentSeat).map((item) => ({
+    move: item.move,
+    severity: item.severity,
+    analysis: item.analysis,
+  }));
+}
+
+function chooseForcedDefensiveMorpionMove(board = [], botSeat = 0) {
+  const threats = getCriticalOpponentThreatMoves(board, botSeat);
+  if (!threats.length) return null;
+
+  const opponentSeat = botSeat === 0 ? 1 : 0;
+  const blockCandidates = threats
+    .map((item) => item.move)
+    .filter((move, idx, arr) => board[move] === -1 && arr.indexOf(move) === idx);
+  if (!blockCandidates.length) return null;
+
+  const ranked = blockCandidates.map((move) => {
+    const nextBoard = board.slice(0, 225);
+    nextBoard[move] = botSeat;
+    const opponentImmediateWins = getImmediateWinningMorpionMoves(nextBoard, opponentSeat).length;
+    const remainingThreats = getCriticalOpponentThreatMoves(nextBoard, botSeat);
+    const strongestRemainingThreat = remainingThreats.length > 0
+      ? safeInt(remainingThreats[0].severity)
+      : 0;
+    const ownThreat = analyzeMorpionPlacement(board, move, botSeat).threatScore;
+    const evaluation =
+      (opponentImmediateWins * -25_000_000)
+      + (remainingThreats.length * -180_000)
+      - strongestRemainingThreat
+      + safeInt(ownThreat);
+
+    return {
+      move,
+      evaluation,
+      opponentImmediateWins,
+      remainingThreats: remainingThreats.length,
+      strongestRemainingThreat,
+      ownThreat,
+    };
+  }).sort((left, right) => right.evaluation - left.evaluation);
+
+  return ranked[0] || null;
+}
+
+function hasMorpionNeighbor(board = [], index = 0, radius = 2) {
+  const { row, col } = getMorpionRowCol(index);
+  for (let deltaRow = -radius; deltaRow <= radius; deltaRow += 1) {
+    for (let deltaCol = -radius; deltaCol <= radius; deltaCol += 1) {
+      if (deltaRow === 0 && deltaCol === 0) continue;
+      const nextRow = row + deltaRow;
+      const nextCol = col + deltaCol;
+      if (nextRow < 0 || nextRow >= 15 || nextCol < 0 || nextCol >= 15) continue;
+      const nextIndex = getMorpionCellIndex(nextRow, nextCol);
+      if (board[nextIndex] === 0 || board[nextIndex] === 1) {
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
+function countMorpionNeighbors(board = [], index = 0, seat = -1, radius = 2) {
+  const { row, col } = getMorpionRowCol(index);
+  let count = 0;
+  for (let deltaRow = -radius; deltaRow <= radius; deltaRow += 1) {
+    for (let deltaCol = -radius; deltaCol <= radius; deltaCol += 1) {
+      if (deltaRow === 0 && deltaCol === 0) continue;
+      const nextRow = row + deltaRow;
+      const nextCol = col + deltaCol;
+      if (nextRow < 0 || nextRow >= 15 || nextCol < 0 || nextCol >= 15) continue;
+      const nextIndex = getMorpionCellIndex(nextRow, nextCol);
+      if (seat === -1) {
+        if (board[nextIndex] === 0 || board[nextIndex] === 1) count += 1;
+      } else if (board[nextIndex] === seat) {
+        count += 1;
+      }
+    }
+  }
+  return count;
+}
+
+function getCandidateMorpionMovesFromBoard(board = [], seat = 0, options = {}) {
+  const opponentSeat = seat === 0 ? 1 : 0;
+  const maxCandidates = Math.max(1, safeInt(options.maxCandidates, MORPION_ULTRA_ROOT_CANDIDATES));
+  const legalMoves = [];
+  let occupiedCount = 0;
+
+  for (let index = 0; index < 225; index += 1) {
+    const occupant = board[index];
+    if (occupant === -1) {
+      legalMoves.push(index);
+      continue;
+    }
+    if (occupant === 0 || occupant === 1) occupiedCount += 1;
+  }
+
+  if (!legalMoves.length) return [];
+  if (occupiedCount === 0) return [getMorpionCellIndex(7, 7)];
+
+  const nearbyMoves = legalMoves.filter((index) => hasMorpionNeighbor(board, index, 2));
+  const sourceMoves = nearbyMoves.length ? nearbyMoves : legalMoves;
+  const scored = sourceMoves.map((index) => {
+    const own = analyzeMorpionPlacement(board, index, seat);
+    const opponent = analyzeMorpionPlacement(board, index, opponentSeat);
+    const { row, col } = getMorpionRowCol(index);
+    const centerBias = 18 - (Math.abs(7 - row) + Math.abs(7 - col));
+    const allyNeighbors = countMorpionNeighbors(board, index, seat, 2);
+    const enemyNeighbors = countMorpionNeighbors(board, index, opponentSeat, 2);
+    const totalNeighbors = countMorpionNeighbors(board, index, -1, 2);
+    const tacticalScore =
+      (own.isWin ? MORPION_SEARCH_WIN_SCORE : own.threatScore * 1.18)
+      + (opponent.isWin ? 4_800_000 : opponent.threatScore * 1.09)
+      + (allyNeighbors * 85)
+      + (enemyNeighbors * 62)
+      + (totalNeighbors * 20)
+      + centerBias;
+    return {
+      index,
+      score: tacticalScore,
+    };
+  }).sort((left, right) => right.score - left.score);
+
+  return scored.slice(0, maxCandidates).map((item) => item.index);
+}
+
+function evaluateMorpionBoardState(board = [], botSeat = 0) {
+  const opponentSeat = botSeat === 0 ? 1 : 0;
+  const botCandidates = getCandidateMorpionMovesFromBoard(board, botSeat, { maxCandidates: 6 });
+  const opponentCandidates = getCandidateMorpionMovesFromBoard(board, opponentSeat, { maxCandidates: 6 });
+  const topBotThreats = botCandidates.map((index) => analyzeMorpionPlacement(board, index, botSeat).threatScore).sort((a, b) => b - a);
+  const topOpponentThreats = opponentCandidates.map((index) => analyzeMorpionPlacement(board, index, opponentSeat).threatScore).sort((a, b) => b - a);
+  const botScore =
+    safeInt(topBotThreats[0]) * 1.45
+    + safeInt(topBotThreats[1]) * 0.92
+    + safeInt(topBotThreats[2]) * 0.5;
+  const opponentScore =
+    safeInt(topOpponentThreats[0]) * 1.52
+    + safeInt(topOpponentThreats[1]) * 0.97
+    + safeInt(topOpponentThreats[2]) * 0.55;
+  return botScore - opponentScore;
+}
+
+function searchMorpionMinimax(board = [], currentSeat = 0, botSeat = 0, depth = 0, alpha = -Infinity, beta = Infinity, ply = 0, cache = null) {
+  const transposition = cache instanceof Map ? cache : null;
+  const cacheKey = transposition ? boardHashMorpion(board, currentSeat, depth) : "";
+  if (transposition && transposition.has(cacheKey)) {
+    return transposition.get(cacheKey);
+  }
+
+  const legalMoves = getCandidateMorpionMovesFromBoard(
+    board,
+    currentSeat,
+    { maxCandidates: ply <= 0 ? MORPION_ULTRA_ROOT_CANDIDATES : MORPION_ULTRA_CHILD_CANDIDATES }
+  );
+  if (!legalMoves.length) {
+    const score = evaluateMorpionBoardState(board, botSeat);
+    if (transposition) transposition.set(cacheKey, score);
+    return score;
+  }
+  if (depth <= 0) {
+    const score = evaluateMorpionBoardState(board, botSeat);
+    if (transposition) transposition.set(cacheKey, score);
+    return score;
+  }
+
+  const maximizing = currentSeat === botSeat;
+  const nextSeat = currentSeat === 0 ? 1 : 0;
+
+  if (maximizing) {
+    let bestScore = -Infinity;
+    for (const move of legalMoves) {
+      const analysis = analyzeMorpionPlacement(board, move, currentSeat);
+      const score = analysis.isWin
+        ? (MORPION_SEARCH_WIN_SCORE - (ply * 1000))
+        : searchMorpionMinimax(analysis.board, nextSeat, botSeat, depth - 1, alpha, beta, ply + 1, transposition);
+      bestScore = Math.max(bestScore, score);
+      alpha = Math.max(alpha, score);
+      if (beta <= alpha) break;
+    }
+    if (transposition) transposition.set(cacheKey, bestScore);
+    return bestScore;
+  }
+
+  let bestScore = Infinity;
+  for (const move of legalMoves) {
+    const analysis = analyzeMorpionPlacement(board, move, currentSeat);
+    const score = analysis.isWin
+      ? (-MORPION_SEARCH_WIN_SCORE + (ply * 1000))
+      : searchMorpionMinimax(analysis.board, nextSeat, botSeat, depth - 1, alpha, beta, ply + 1, transposition);
+    bestScore = Math.min(bestScore, score);
+    beta = Math.min(beta, score);
+    if (beta <= alpha) break;
+  }
+  if (transposition) transposition.set(cacheKey, bestScore);
+  return bestScore;
+}
+
+function chooseUltraMorpionBotMove(state = {}, botSeat = 0) {
+  const board = Array.isArray(state.board) ? state.board.slice(0, 225) : buildEmptyMorpionBoard();
+  const rootMoves = getCandidateMorpionMovesFromBoard(board, botSeat, { maxCandidates: MORPION_ULTRA_ROOT_CANDIDATES });
+  if (!rootMoves.length) {
+    throw new HttpsError("failed-precondition", "Aucun coup morpion disponible pour le bot.");
+  }
+
+  const opponentSeat = botSeat === 0 ? 1 : 0;
+  const immediateWinMoves = getImmediateWinningMorpionMoves(board, botSeat, rootMoves);
+  if (immediateWinMoves.length > 0) {
+    return { seat: botSeat, cellIndex: immediateWinMoves[0] };
+  }
+
+  const opponentImmediateWins = getImmediateWinningMorpionMoves(board, opponentSeat);
+  if (opponentImmediateWins.length === 1 && board[opponentImmediateWins[0]] === -1) {
+    return { seat: botSeat, cellIndex: opponentImmediateWins[0] };
+  }
+
+  if (opponentImmediateWins.length > 1) {
+    const defensive = rootMoves.map((move) => {
+      const nextBoard = board.slice(0, 225);
+      nextBoard[move] = botSeat;
+      const remainingImmediateWins = getImmediateWinningMorpionMoves(nextBoard, opponentSeat);
+      return {
+        move,
+        remaining: remainingImmediateWins.length,
+        ownThreat: analyzeMorpionPlacement(board, move, botSeat).threatScore,
+      };
+    }).sort((left, right) => {
+      if (left.remaining !== right.remaining) return left.remaining - right.remaining;
+      return right.ownThreat - left.ownThreat;
+    });
+    if (defensive.length > 0) {
+      return { seat: botSeat, cellIndex: defensive[0].move };
+    }
+  }
+
+  const forcedDefense = chooseForcedDefensiveMorpionMove(board, botSeat);
+  if (forcedDefense && forcedDefense.opponentImmediateWins === 0) {
+    return { seat: botSeat, cellIndex: forcedDefense.move };
+  }
+
+  const forkMoves = rootMoves.filter((move) => createsUnstoppableMorpionFork(board, move, botSeat));
+  if (forkMoves.length > 0) {
+    return { seat: botSeat, cellIndex: forkMoves[0] };
+  }
+
+  const moveCount = safeInt(state.moveCount);
+  const currentOpponentThreats = getCriticalOpponentThreatMoves(board, botSeat);
+  const isDangerPhase = currentOpponentThreats.some((item) => {
+    const threat = item?.analysis || {};
+    return safeInt(threat.openFourCount) >= 1
+      || safeInt(threat.closedFourCount) >= 1
+      || safeInt(threat.openThreeCount) >= 2;
+  });
+  const searchDepth = moveCount < 6 ? 4 : (isDangerPhase ? 5 : MORPION_ULTRA_SEARCH_DEPTH);
+  const transposition = new Map();
+  let bestMove = rootMoves[0];
+  let bestScore = -Infinity;
+  let alpha = -Infinity;
+  const scoredRoot = [];
+
+  for (const move of rootMoves) {
+    const analysis = analyzeMorpionPlacement(board, move, botSeat);
+    let score = analysis.isWin
+      ? MORPION_SEARCH_WIN_SCORE
+      : searchMorpionMinimax(analysis.board, opponentSeat, botSeat, searchDepth - 1, alpha, Infinity, 1, transposition);
+    const nextOpponentThreats = getCriticalOpponentThreatMoves(analysis.board, botSeat);
+    const nextImmediateWins = getImmediateWinningMorpionMoves(analysis.board, opponentSeat).length;
+    if (nextImmediateWins > 0) {
+      score -= 30_000_000 * nextImmediateWins;
+    } else if (nextOpponentThreats.length > 0) {
+      const topSeverity = safeInt(nextOpponentThreats[0].severity);
+      score -= topSeverity * 0.8;
+      score -= nextOpponentThreats.length * 180_000;
+    }
+    scoredRoot.push({ move, score, threatScore: analysis.threatScore });
+    if (score > bestScore) {
+      bestScore = score;
+      bestMove = move;
+    }
+    alpha = Math.max(alpha, score);
+  }
+
+  scoredRoot.sort((left, right) => {
+    if (right.score !== left.score) return right.score - left.score;
+    return right.threatScore - left.threatScore;
+  });
+  return { seat: botSeat, cellIndex: scoredRoot[0]?.move ?? bestMove };
+}
+
+function buildMorpionTimeoutState(state = {}, room = {}) {
+  const winnerSeat = state.currentPlayer === 0 ? 1 : 0;
+  return {
+    ...state,
+    winnerSeat,
+    winnerUid: isMorpionSeatHuman(room, winnerSeat) ? String((room.playerUids || [])[winnerSeat] || "").trim() : "",
+    endedReason: "timeout",
+    currentPlayer: winnerSeat,
+    winningLine: [],
+    appliedActionSeq: safeInt(state.appliedActionSeq) + 1,
+  };
+}
+
+function applyMorpionMove(state = {}, room = {}, move = {}, actorUid = "") {
+  const seat = safeSignedInt(move.seat, -1);
+  const cellIndex = safeInt(move.cellIndex, -1);
+  if (seat < 0 || seat > 1) {
+    throw new HttpsError("invalid-argument", "Joueur morpion invalide.");
+  }
+  if (cellIndex < 0 || cellIndex >= 225) {
+    throw new HttpsError("invalid-argument", "Case morpion invalide.");
+  }
+  if (safeSignedInt(state.currentPlayer, -1) !== seat) {
+    throw new HttpsError("failed-precondition", "Ce n'est pas le tour de ce joueur.");
+  }
+  if ((state.board || [])[cellIndex] !== -1) {
+    throw new HttpsError("failed-precondition", "Cette case est deja occupee.");
+  }
+
+  const board = Array.isArray(state.board) ? state.board.slice(0, 225) : buildEmptyMorpionBoard();
+  board[cellIndex] = seat;
+  const winningLine = checkMorpionWinningLine(board, cellIndex, seat);
+  const { row, col } = getMorpionRowCol(cellIndex);
+  const winnerSeat = winningLine.length >= 5 ? seat : -1;
+  const nextPlayer = winnerSeat >= 0 ? seat : (seat === 0 ? 1 : 0);
+  const nextMoveCount = safeInt(state.moveCount) + 1;
+  const draw = winnerSeat < 0 && isMorpionBoardFull(board);
+  const nextState = {
+    ...state,
+    board,
+    currentPlayer: nextPlayer,
+    moveCount: nextMoveCount,
+    winnerSeat: draw ? -1 : winnerSeat,
+    winnerUid: winnerSeat >= 0 && isMorpionSeatHuman(room, winnerSeat)
+      ? String((room.playerUids || [])[winnerSeat] || "").trim()
+      : "",
+    endedReason: winnerSeat >= 0 ? "line" : (draw ? "draw" : ""),
+    winningLine,
+    appliedActionSeq: safeInt(state.appliedActionSeq) + 1,
+  };
+  const record = {
+    seq: nextState.appliedActionSeq,
+    type: "place",
+    player: seat,
+    symbol: seat === 0 ? "X" : "O",
+    cellIndex,
+    row,
+    col,
+    actorUid: String(actorUid || ""),
+  };
+  return { state: nextState, record };
+}
+
+function chooseHeuristicMorpionBotMove(state = {}, botSeat = 0) {
+  const legalMoves = getLegalMorpionMoves(state);
+  if (!legalMoves.length) {
+    throw new HttpsError("failed-precondition", "Aucun coup morpion disponible pour le bot.");
+  }
+  for (const index of legalMoves) {
+    const board = state.board.slice(0, 225);
+    board[index] = botSeat;
+    if (checkMorpionWinningLine(board, index, botSeat).length >= 5) {
+      return { seat: botSeat, cellIndex: index };
+    }
+  }
+
+  const opponentSeat = botSeat === 0 ? 1 : 0;
+  for (const index of legalMoves) {
+    const board = state.board.slice(0, 225);
+    board[index] = opponentSeat;
+    if (checkMorpionWinningLine(board, index, opponentSeat).length >= 5) {
+      return { seat: botSeat, cellIndex: index };
+    }
+  }
+
+  const scored = legalMoves.map((index) => {
+    const botBoard = state.board.slice(0, 225);
+    botBoard[index] = botSeat;
+    const ownEval = scoreMorpionMoveCandidate(botBoard, index, botSeat);
+
+    const blockBoard = state.board.slice(0, 225);
+    blockBoard[index] = opponentSeat;
+    const opponentEval = scoreMorpionMoveCandidate(blockBoard, index, opponentSeat);
+
+    const proximityBonus = (() => {
+      const { row, col } = getMorpionRowCol(index);
+      let nearby = 0;
+      for (let deltaRow = -1; deltaRow <= 1; deltaRow += 1) {
+        for (let deltaCol = -1; deltaCol <= 1; deltaCol += 1) {
+          if (deltaRow === 0 && deltaCol === 0) continue;
+          const nextRow = row + deltaRow;
+          const nextCol = col + deltaCol;
+          if (nextRow < 0 || nextRow >= 15 || nextCol < 0 || nextCol >= 15) continue;
+          const nextIndex = getMorpionCellIndex(nextRow, nextCol);
+          const occupant = state.board[nextIndex];
+          if (occupant === botSeat) nearby += 4;
+          else if (occupant === opponentSeat) nearby += 3;
+        }
+      }
+      return nearby;
+    })();
+
+    return {
+      index,
+      score:
+        (ownEval.score * 1.25)
+        + (ownEval.bestLength * 120)
+        + (ownEval.bestOpenEnds * 26)
+        + (opponentEval.score * 0.92)
+        + (opponentEval.bestLength * 105)
+        + (opponentEval.bestOpenEnds * 18)
+        + proximityBonus
+        + (Math.random() * 0.08),
+    };
+  }).sort((left, right) => right.score - left.score);
+
+  return { seat: botSeat, cellIndex: scored[0]?.index ?? legalMoves[0] };
+}
+
+function chooseMorpionBotMove(room = {}, state = {}, botSeat = 0) {
+  return chooseUltraMorpionBotMove(state, botSeat);
+}
+
+function computeMorpionBotThinkDelayMs() {
+  return Math.min(5000, BOT_THINK_DELAY_MIN_MS + Math.floor(Math.random() * Math.max(120, BOT_THINK_DELAY_MAX_MS - BOT_THINK_DELAY_MIN_MS + 1)));
+}
+
+function resolveMorpionTurnDeadlineMs(room = {}, nowMs = Date.now()) {
+  const explicit = safeSignedInt(room.turnDeadlineMs);
+  if (explicit > 0) return explicit;
+  const startedAtMs = safeSignedInt(room.turnStartedAtMs);
+  if (startedAtMs > 0) return startedAtMs + MORPION_TURN_LIMIT_MS;
+  return nowMs + MORPION_TURN_LIMIT_MS;
+}
+
+function buildMorpionRoomUpdateFromGameState(room, nextState, records = []) {
+  const lastRecord = records.length > 0 ? records[records.length - 1] : null;
+  const nextActionSeq = safeInt(nextState.appliedActionSeq + 1);
+  const nowMs = Date.now();
+  const nextTurnStartedAtMs = nextState.endedReason ? 0 : nowMs;
+  const roomForNextTurn = {
+    ...room,
+    currentPlayer: nextState.currentPlayer,
+    turnStartedAtMs: nextTurnStartedAtMs,
+  };
+  const turnDeadlineMs = nextState.endedReason ? 0 : (nextTurnStartedAtMs + MORPION_TURN_LIMIT_MS);
+  const turnLockedUntilMs = nextState.endedReason
+    ? 0
+    : (!isMorpionSeatHuman(roomForNextTurn, nextState.currentPlayer)
+      ? Math.min(turnDeadlineMs, nextTurnStartedAtMs + computeMorpionBotThinkDelayMs())
+      : 0);
+
+  const update = {
+    nextActionSeq,
+    lastActionSeq: nextState.appliedActionSeq,
+    currentPlayer: nextState.currentPlayer,
+    turnActual: nextActionSeq,
+    turnStartedAt: nextState.endedReason ? admin.firestore.FieldValue.delete() : admin.firestore.FieldValue.serverTimestamp(),
+    turnStartedAtMs: nextTurnStartedAtMs,
+    turnDeadlineMs,
+    playedCount: safeInt(room.playedCount) + records.length,
+    updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+    turnLockedUntilMs,
+    symbolBySeat: ["X", "O"],
+  };
+
+  if (lastRecord) {
+    update.lastMove = {
+      seq: lastRecord.seq,
+      type: lastRecord.type,
+      player: lastRecord.player,
+      symbol: lastRecord.symbol,
+      cellIndex: lastRecord.cellIndex,
+      row: lastRecord.row,
+      col: lastRecord.col,
+    };
+  }
+
+  if (nextState.endedReason) {
+    update.status = "ended";
+    update.winnerSeat = nextState.winnerSeat;
+    update.winnerUid = String(nextState.winnerUid || "").trim();
+    update.endedReason = nextState.endedReason;
+    update.endedAt = admin.firestore.FieldValue.serverTimestamp();
+    update.endedAtMs = nowMs;
+    update.endClicks = {};
+  }
+
+  return update;
+}
+
+function writeMorpionRoomResultIfEndedTx(tx, roomRefDoc, room = {}, roomUpdate = {}) {
+  const nextStatus = String(roomUpdate.status || room.status || "").trim().toLowerCase();
+  if (nextStatus !== "ended") return;
+  const snapshot = buildRoomResultSnapshot(roomRefDoc.id, room, roomUpdate);
+  tx.set(morpionRoomResultRef(roomRefDoc.id), {
+    ...snapshot,
+    createdAt: admin.firestore.FieldValue.serverTimestamp(),
+  }, { merge: true });
+}
+
+function cleanupMorpionRoom(roomRefDoc) {
+  return Promise.all([
+    deleteCollectionInChunks(roomRefDoc.collection("actions")),
+    deleteCollectionInChunks(roomRefDoc.collection("settlements")),
+    morpionGameStateRef(roomRefDoc.id).delete().catch(() => null),
+  ]).then(() => roomRefDoc.delete());
+}
+
+function buildStartedMorpionRoomTransaction(tx, roomRefDoc, room = {}, options = {}) {
+  const nowMs = safeSignedInt(options.nowMs) || Date.now();
+  const humans = Array.isArray(room.playerUids) ? room.playerUids.filter(Boolean).length : safeInt(room.humanCount);
+  const initialState = createInitialMorpionGameState(room);
+  tx.set(morpionGameStateRef(roomRefDoc.id), buildMorpionGameStateWrite(initialState), { merge: true });
+
+  const turnDeadlineMs = nowMs + MORPION_TURN_LIMIT_MS;
+  const turnLockedUntilMs = !isMorpionSeatHuman(room, initialState.currentPlayer)
+    ? Math.min(turnDeadlineMs, nowMs + computeMorpionBotThinkDelayMs())
+    : 0;
+
+  const updates = {
+    playerUids: Array.isArray(room.playerUids) ? room.playerUids : ["", ""],
+    playerNames: Array.isArray(room.playerNames) ? room.playerNames : ["", ""],
+    seats: getRoomSeats(room),
+    humanCount: humans,
+    status: "playing",
+    startRevealPending: true,
+    startRevealAckUids: [],
+    startedHumanCount: humans,
+    startedBotCount: Math.max(0, 2 - humans),
+    botCount: Math.max(0, 2 - humans),
+    symbolBySeat: ["X", "O"],
+    startedAt: admin.firestore.FieldValue.serverTimestamp(),
+    startedAtMs: nowMs,
+    waitingDeadlineMs: admin.firestore.FieldValue.delete(),
+    updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+    turnStartedAt: admin.firestore.FieldValue.serverTimestamp(),
+    turnStartedAtMs: nowMs,
+    turnDeadlineMs,
+    turnLockedUntilMs,
+    currentPlayer: initialState.currentPlayer,
+    nextActionSeq: 1,
+    lastActionSeq: 0,
+    playedCount: 0,
+    winnerSeat: admin.firestore.FieldValue.delete(),
+    winnerUid: admin.firestore.FieldValue.delete(),
+    endedReason: admin.firestore.FieldValue.delete(),
+    endedAt: admin.firestore.FieldValue.delete(),
+    endedAtMs: admin.firestore.FieldValue.delete(),
+    endClicks: {},
+  };
+
+  tx.update(roomRefDoc, updates);
+
+  logMorpionServerDebug("buildStartedRoom", {
+    roomId: roomRefDoc.id,
+    humans,
+    botCount: Math.max(0, 2 - humans),
+    initialCurrentPlayer: initialState.currentPlayer,
+    startRevealPending: true,
+    turnDeadlineMs,
+    turnLockedUntilMs,
+    playerUids: Array.isArray(room.playerUids) ? room.playerUids : ["", ""],
+    seats: getRoomSeats(room),
+  });
+
+  return {
+    ok: true,
+    started: true,
+    status: "playing",
+    startRevealPending: true,
+    humanCount: humans,
+    botCount: Math.max(0, 2 - humans),
+    waitingDeadlineMs: 0,
+  };
+}
+
+async function processPendingBotTurnsMorpion(roomId) {
+  const safeRoomId = String(roomId || "").trim();
+  if (!safeRoomId) return;
+
+  const roomRefDoc = morpionRoomRef(safeRoomId);
+  const stateRef = morpionGameStateRef(safeRoomId);
+
+  while (true) {
+    const roomSnap = await roomRefDoc.get();
+    if (!roomSnap.exists) {
+      logMorpionServerDebug("processBot:roomMissing", { roomId: safeRoomId });
+      return;
+    }
+    const room = roomSnap.data() || {};
+    if (String(room.status || "") !== "playing") {
+      logMorpionServerDebug("processBot:skipStatus", { roomId: safeRoomId, status: room.status || "" });
+      return;
+    }
+    if (room.startRevealPending === true) {
+      logMorpionServerDebug("processBot:skipRevealPending", { roomId: safeRoomId });
+      return;
+    }
+    if (safeSignedInt(room.winnerSeat, -1) >= 0 || String(room.endedReason || "").trim()) {
+      logMorpionServerDebug("processBot:skipEnded", {
+        roomId: safeRoomId,
+        winnerSeat: safeSignedInt(room.winnerSeat, -1),
+        endedReason: String(room.endedReason || "").trim(),
+      });
+      return;
+    }
+
+    const outcome = await db.runTransaction(async (tx) => {
+      const [liveRoomSnap, stateSnap] = await Promise.all([
+        tx.get(roomRefDoc),
+        tx.get(stateRef),
+      ]);
+      if (!liveRoomSnap.exists) {
+        logMorpionServerDebug("processBot:txRoomMissing", { roomId: safeRoomId });
+        return { processed: false, stop: true };
+      }
+
+      const liveRoom = liveRoomSnap.data() || {};
+      if (String(liveRoom.status || "") !== "playing" || liveRoom.startRevealPending === true) {
+        logMorpionServerDebug("processBot:txSkip", {
+          roomId: safeRoomId,
+          status: String(liveRoom.status || ""),
+          startRevealPending: liveRoom.startRevealPending === true,
+        });
+        return { processed: false, stop: true };
+      }
+
+      const currentState = stateSnap.exists
+        ? normalizeMorpionGameState(stateSnap.data(), liveRoom)
+        : createInitialMorpionGameState(liveRoom);
+      if (currentState.endedReason) {
+        return { processed: false, stop: true };
+      }
+
+      const safeNowMs = Date.now();
+      const activeSeat = safeSignedInt(liveRoom.currentPlayer, -1);
+      const activeSeatIsHuman = activeSeat >= 0 && activeSeat <= 1 && isMorpionSeatHuman(liveRoom, activeSeat);
+      const turnDeadlineMs = resolveMorpionTurnDeadlineMs(liveRoom, safeNowMs);
+      const lockedUntilMs = safeSignedInt(liveRoom.turnLockedUntilMs);
+
+      logMorpionServerDebug("processBot:evaluate", {
+        roomId: safeRoomId,
+        activeSeat,
+        activeSeatIsHuman,
+        turnDeadlineMs,
+        lockedUntilMs,
+        nowMs: safeNowMs,
+        humanCount: safeInt(liveRoom.humanCount),
+        botCount: safeInt(liveRoom.botCount),
+        playerUids: Array.isArray(liveRoom.playerUids) ? liveRoom.playerUids : ["", ""],
+        seats: getRoomSeats(liveRoom),
+      });
+
+      if (activeSeatIsHuman) {
+        if (turnDeadlineMs > safeNowMs) {
+          logMorpionServerDebug("processBot:humanStillHasTime", {
+            roomId: safeRoomId,
+            activeSeat,
+            msLeft: turnDeadlineMs - safeNowMs,
+          });
+          return { processed: false, stop: true };
+        }
+
+        const nextState = buildMorpionTimeoutState(currentState, liveRoom);
+        const record = {
+          seq: nextState.appliedActionSeq,
+          type: "timeout",
+          player: activeSeat,
+          symbol: activeSeat === 0 ? "X" : "O",
+          cellIndex: -1,
+          row: -1,
+          col: -1,
+          actorUid: "server:timeout",
+        };
+        tx.set(stateRef, buildMorpionGameStateWrite(nextState), { merge: true });
+        const roomUpdate = buildMorpionRoomUpdateFromGameState(liveRoom, nextState, [record]);
+        tx.update(roomRefDoc, roomUpdate);
+        tx.set(roomRefDoc.collection("actions").doc(String(record.seq)), {
+          ...record,
+          roomId: safeRoomId,
+          createdAt: admin.firestore.FieldValue.serverTimestamp(),
+        }, { merge: true });
+        writeMorpionRoomResultIfEndedTx(tx, roomRefDoc, liveRoom, roomUpdate);
+        logMorpionServerDebug("processBot:humanTimeout", {
+          roomId: safeRoomId,
+          loserSeat: activeSeat,
+          winnerSeat: nextState.winnerSeat,
+        });
+        return { processed: true, stop: true, ended: true };
+      }
+
+      if (lockedUntilMs > safeNowMs) {
+        logMorpionServerDebug("processBot:botLocked", {
+          roomId: safeRoomId,
+          activeSeat,
+          msLeft: lockedUntilMs - safeNowMs,
+        });
+        return { processed: false, stop: true };
+      }
+
+      const botMove = chooseMorpionBotMove(liveRoom, currentState, activeSeat);
+      const result = applyMorpionMove(currentState, liveRoom, botMove, "server:bot");
+      tx.set(stateRef, buildMorpionGameStateWrite(result.state), { merge: true });
+      const roomUpdate = buildMorpionRoomUpdateFromGameState(liveRoom, result.state, [result.record]);
+      tx.update(roomRefDoc, roomUpdate);
+      tx.set(roomRefDoc.collection("actions").doc(String(result.record.seq)), {
+        ...result.record,
+        roomId: safeRoomId,
+        createdAt: admin.firestore.FieldValue.serverTimestamp(),
+      }, { merge: true });
+      writeMorpionRoomResultIfEndedTx(tx, roomRefDoc, liveRoom, roomUpdate);
+
+      logMorpionServerDebug("processBot:botMoveApplied", {
+        roomId: safeRoomId,
+        activeSeat,
+        cellIndex: botMove.cellIndex,
+        nextPlayer: result.state.currentPlayer,
+        endedReason: result.state.endedReason || "",
+      });
+
+      return {
+        processed: true,
+        ended: !!result.state.endedReason,
+        stop: result.state.endedReason || isMorpionSeatHuman(liveRoom, result.state.currentPlayer),
+      };
+    });
+
+    if (outcome?.ended) {
+      await recordMorpionBotOutcomeProfilesIfNeeded(safeRoomId);
+    }
+
+    if (!outcome?.processed || outcome.stop) {
+      return;
+    }
+  }
+}
+
+exports.getPublicMorpionStakeOptionsSecure = publicOnCall("getPublicMorpionStakeOptionsSecure", async () => {
+  return {
+    ok: true,
+    options: DEFAULT_MORPION_STAKE_OPTIONS.map((item) => ({
+      id: item.id,
+      stakeDoes: item.stakeDoes,
+      rewardDoes: item.rewardDoes,
+      enabled: item.enabled !== false,
+      sortOrder: item.sortOrder,
+    })),
+  };
+}, { invoker: "public" });
+
+exports.joinMatchmakingMorpion = publicOnCall("joinMatchmakingMorpion", async (request) => {
+  const { uid, email } = assertAuth(request);
+  const payload = request.data && typeof request.data === "object" ? request.data : {};
+  const stakeDoes = safeInt(payload.stakeDoes);
+  const excludedRoomIds = normalizeMorpionExcludedRoomIds(payload.excludeRoomIds);
+  const excludedRoomIdSet = new Set(excludedRoomIds);
+  const selectedStakeConfig = getMorpionStakeConfigByAmount(stakeDoes);
+
+  if (!selectedStakeConfig) {
+    throw new HttpsError("invalid-argument", "Mise morpion non autorisee.");
+  }
+
+  const morpionPolicy = await getConfiguredMorpionMatchmakingPolicy();
+  const allowHumanOnlyMatchmaking = morpionPolicy.allowHumanOnly !== false;
+
+  for (const excludedRoomId of excludedRoomIds) {
+    await forceRemoveUserFromMorpionRoom(excludedRoomId, uid).catch(() => null);
+  }
+
+  const activeRoom = await findActiveMorpionRoomForUser(uid);
+  if (activeRoom) {
+    if (excludedRoomIdSet.has(String(activeRoom.roomId || "").trim())) {
+      await forceRemoveUserFromMorpionRoom(activeRoom.roomId, uid).catch(() => null);
+    } else {
+      return {
+        ok: true,
+        resumed: true,
+        charged: false,
+        roomId: activeRoom.roomId,
+        seatIndex: activeRoom.seatIndex,
+        status: activeRoom.status,
+        stakeDoes: safeInt(activeRoom.stakeDoes),
+      };
+    }
+  }
+
+  const rewardAmountDoes = selectedStakeConfig.rewardDoes;
+  const poolRef = morpionMatchmakingPoolRef(selectedStakeConfig.id, stakeDoes);
+
+  const created = await db.runTransaction(async (tx) => {
+    const nowMs = Date.now();
+    const [poolSnap, walletSnap, profileSnap] = await Promise.all([
+      tx.get(poolRef),
+      tx.get(walletRef(uid)),
+      tx.get(morpionPlayerProfileRef(uid)),
+    ]);
+    const walletData = walletSnap.exists ? (walletSnap.data() || {}) : {};
+    const profileData = profileSnap.exists ? (profileSnap.data() || {}) : {};
+    const botBlockedForUser = profileData.botBlocked === true;
+    assertWalletNotFrozen(walletData);
+    if (stakeDoes > 0 && safeInt(walletData.doesBalance) < stakeDoes) {
+      throw new HttpsError("failed-precondition", "Solde Does insuffisant.");
+    }
+
+    const existingOpenRoomId = allowHumanOnlyMatchmaking
+      ? String(poolSnap.exists ? (poolSnap.data() || {}).openRoomId || "" : "").trim()
+      : "";
+    if (existingOpenRoomId) {
+      const openRoomRef = morpionRoomRef(existingOpenRoomId);
+      const roomSnap = await tx.get(openRoomRef);
+      if (roomSnap.exists) {
+        const room = roomSnap.data() || {};
+        const status = String(room.status || "");
+        const roomEntryCostDoes = safeInt(room.entryCostDoes || room.stakeDoes);
+        const roomRewardAmountDoes = safeInt(room.rewardAmountDoes || 0);
+        const playerUids = Array.from({ length: 2 }, (_, idx) => String((room.playerUids || [])[idx] || ""));
+        const waitingDeadlineMs = resolveMorpionWaitingDeadlineMs(room, nowMs);
+        const humans = playerUids.filter(Boolean).length;
+
+        if (
+          status === "waiting"
+          && !getBlockedRejoinSet(room).has(uid)
+          && roomEntryCostDoes === stakeDoes
+          && roomRewardAmountDoes === rewardAmountDoes
+        ) {
+          if (nowMs >= waitingDeadlineMs) {
+            clearMorpionMatchmakingPool(tx, poolRef);
+            return {
+              ok: true,
+              resumed: false,
+              charged: false,
+              roomId: openRoomRef.id,
+              seatIndex: 0,
+              ...buildStartedMorpionRoomTransaction(tx, openRoomRef, {
+                ...room,
+                humanCount: humans,
+                botCount: Math.max(0, 2 - humans),
+                waitingDeadlineMs,
+              }, { nowMs }),
+            };
+          }
+
+          const currentSeats = room.seats && typeof room.seats === "object" ? room.seats : {};
+          const usedSeats = new Set(
+            Object.values(currentSeats)
+              .map((seat) => Number(seat))
+              .filter((seat) => Number.isFinite(seat) && seat >= 0 && seat < 2)
+          );
+          const seatIndex = [0, 1].find((seat) => !usedSeats.has(seat));
+          if (typeof seatIndex === "number" && humans < 2) {
+            const walletMutation = stakeDoes > 0
+              ? await applyWalletMutationTx(tx, {
+                uid,
+                email,
+                type: "game_entry",
+                note: "Participation morpion 5",
+                amountDoes: stakeDoes,
+                amountGourdes: 0,
+                deltaDoes: -stakeDoes,
+                deltaExchangedGourdes: 0,
+              })
+              : null;
+
+            const nextPlayerUids = playerUids.slice();
+            nextPlayerUids[seatIndex] = uid;
+            const currentNames = Array.from({ length: 2 }, (_, idx) => String((room.playerNames || [])[idx] || ""));
+            const nextPlayerNames = currentNames.slice();
+            nextPlayerNames[seatIndex] = sanitizePlayerLabel(email || uid, seatIndex);
+            const nextSeats = { ...currentSeats, [uid]: seatIndex };
+            const nextHumans = nextPlayerUids.filter(Boolean).length;
+            const nextPresence = room.roomPresenceMs && typeof room.roomPresenceMs === "object" ? { ...room.roomPresenceMs } : {};
+            nextPresence[uid] = nowMs;
+            const currentEntryFunding = room.entryFundingByUid && typeof room.entryFundingByUid === "object"
+              ? { ...room.entryFundingByUid }
+              : {};
+            currentEntryFunding[uid] = walletMutation
+              ? {
+                approvedDoes: safeInt(walletMutation.gameEntryFunding?.approvedDoes),
+                provisionalDoes: safeInt(walletMutation.gameEntryFunding?.provisionalDoes),
+                welcomeDoes: safeInt(walletMutation.gameEntryFunding?.welcomeDoes),
+                provisionalSources: normalizeFundingSources(walletMutation.gameEntryFunding?.provisionalSources),
+              }
+              : buildZeroMorpionEntryFunding();
+
+            if (nextHumans >= 2) {
+              clearMorpionMatchmakingPool(tx, poolRef);
+              logMorpionServerDebug("joinMatchmaking:matchedHuman", {
+                roomId: openRoomRef.id,
+                uid,
+                seatIndex,
+                stakeDoes,
+                nextHumans,
+              });
+              return {
+                ok: true,
+                resumed: false,
+                charged: stakeDoes > 0,
+                roomId: openRoomRef.id,
+                seatIndex,
+                does: walletMutation ? walletMutation.afterDoes : safeInt(walletData.doesBalance),
+                ...buildStartedMorpionRoomTransaction(tx, openRoomRef, {
+                  ...room,
+                  playerUids: nextPlayerUids,
+                  playerNames: nextPlayerNames,
+                  seats: nextSeats,
+                  entryFundingByUid: currentEntryFunding,
+                  roomPresenceMs: nextPresence,
+                  humanCount: nextHumans,
+                  botCount: 0,
+                  waitingDeadlineMs,
+                }, { nowMs }),
+              };
+            }
+          }
+        }
+      }
+    }
+
+    if (botBlockedForUser) {
+      logMorpionServerDebug("joinMatchmaking:blockedFromBot", {
+        uid,
+        stakeDoes,
+        reason: String(profileData.botBlockedReason || ""),
+        botGames: safeInt(profileData.botGames),
+        botWins: safeInt(profileData.botWins),
+      });
+      throw new HttpsError(
+        "failed-precondition",
+        "Aucun adversaire humain disponible pour le moment.",
+        {
+          code: MORPION_MATCHMAKING_REASON_SKILLED_WAIT_ONLY,
+          reason: MORPION_MATCHMAKING_REASON_SKILLED_WAIT_ONLY,
+        }
+      );
+    }
+
+    const walletMutation = stakeDoes > 0
+      ? await applyWalletMutationTx(tx, {
+        uid,
+        email,
+        type: "game_entry",
+        note: "Participation morpion 5",
+        amountDoes: stakeDoes,
+        amountGourdes: 0,
+        deltaDoes: -stakeDoes,
+        deltaExchangedGourdes: 0,
+      })
+      : null;
+
+    const newRoomRef = morpionRoomRef();
+    tx.set(newRoomRef, {
+      status: "waiting",
+      createdAt: admin.firestore.FieldValue.serverTimestamp(),
+      createdAtMs: nowMs,
+      updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      ownerUid: uid,
+      roomMode: "morpion_2p",
+      gameMode: "morpion-5",
+      engineVersion: 1,
+      playerUids: [uid, ""],
+      playerNames: [sanitizePlayerLabel(email || uid, 0), ""],
+      entryFundingByUid: {
+        [uid]: walletMutation
+          ? {
+            approvedDoes: safeInt(walletMutation.gameEntryFunding?.approvedDoes),
+            provisionalDoes: safeInt(walletMutation.gameEntryFunding?.provisionalDoes),
+            welcomeDoes: safeInt(walletMutation.gameEntryFunding?.welcomeDoes),
+            provisionalSources: normalizeFundingSources(walletMutation.gameEntryFunding?.provisionalSources),
+          }
+          : buildZeroMorpionEntryFunding(),
+      },
+      blockedRejoinUids: [],
+      humanCount: 1,
+      seats: { [uid]: 0 },
+      roomPresenceMs: { [uid]: nowMs },
+      botCount: 1,
+      botDifficulty: "ultra",
+      startRevealPending: false,
+      startRevealAckUids: [],
+      waitingDeadlineMs: nowMs + ROOM_WAIT_MS,
+      startedAt: null,
+      startedAtMs: 0,
+      endedAtMs: 0,
+      turnLockedUntilMs: 0,
+      nextActionSeq: 0,
+      playedCount: 0,
+      symbolBySeat: ["X", "O"],
+      stakeDoes,
+      entryCostDoes: stakeDoes,
+      rewardAmountDoes,
+      stakeConfigId: selectedStakeConfig.id,
+    });
+    setMorpionMatchmakingPoolOpen(tx, poolRef, newRoomRef.id, selectedStakeConfig.id, stakeDoes);
+    logMorpionServerDebug("joinMatchmaking:createdWaitingRoom", {
+      roomId: newRoomRef.id,
+      uid,
+      stakeDoes,
+      waitingDeadlineMs: nowMs + ROOM_WAIT_MS,
+    });
+
+    return {
+      ok: true,
+      resumed: false,
+      charged: stakeDoes > 0,
+      roomId: newRoomRef.id,
+      seatIndex: 0,
+      status: "waiting",
+      does: walletMutation ? walletMutation.afterDoes : safeInt(walletData.doesBalance),
+      waitingDeadlineMs: nowMs + ROOM_WAIT_MS,
+      humanCount: 1,
+      botCount: 1,
+    };
+  });
+
+  if (created?.status === "playing" && created?.startRevealPending !== true) {
+    await processPendingBotTurnsMorpion(String(created.roomId || ""));
+  }
+
+  return created;
+}, { invoker: "public" });
+
+exports.ensureRoomReadyMorpion = publicOnCall("ensureRoomReadyMorpion", async (request) => {
+  const { uid } = assertAuth(request);
+  const payload = request.data && typeof request.data === "object" ? request.data : {};
+  const roomId = String(payload.roomId || "").trim();
+  if (!roomId) {
+    throw new HttpsError("invalid-argument", "roomId requis.");
+  }
+
+  const roomRefDoc = morpionRoomRef(roomId);
+  const startResult = await db.runTransaction(async (tx) => {
+    const roomSnap = await tx.get(roomRefDoc);
+    if (!roomSnap.exists) {
+      throw new HttpsError("not-found", "Salle morpion introuvable.");
+    }
+
+    const room = roomSnap.data() || {};
+    const seatIndex = getSeatForUser(room, uid);
+    if (seatIndex < 0) {
+      throw new HttpsError("permission-denied", "Tu ne fais pas partie de ce morpion.");
+    }
+
+    const status = String(room.status || "");
+    if (status !== "waiting") {
+      logMorpionServerDebug("ensureRoomReady:skipStatus", {
+        roomId,
+        uid,
+        status,
+        startRevealPending: room.startRevealPending === true,
+      });
+      return {
+        ok: true,
+        started: false,
+        status,
+        startRevealPending: room.startRevealPending === true,
+        waitingDeadlineMs: safeSignedInt(room.waitingDeadlineMs),
+        humanCount: safeInt(room.humanCount),
+        botCount: safeInt(room.botCount),
+      };
+    }
+
+    const nowMs = Date.now();
+    const humans = Array.isArray(room.playerUids) ? room.playerUids.filter(Boolean).length : safeInt(room.humanCount);
+    const waitingDeadlineMs = resolveMorpionWaitingDeadlineMs(room, nowMs);
+    if (safeSignedInt(room.waitingDeadlineMs) !== waitingDeadlineMs) {
+      tx.update(roomRefDoc, { waitingDeadlineMs, updatedAt: admin.firestore.FieldValue.serverTimestamp() });
+    }
+
+    if (humans < 2 && nowMs < waitingDeadlineMs) {
+      logMorpionServerDebug("ensureRoomReady:stillWaiting", {
+        roomId,
+        uid,
+        humans,
+        waitingDeadlineMs,
+        nowMs,
+      });
+      return {
+        ok: true,
+        started: false,
+        status: "waiting",
+        startRevealPending: false,
+        waitingDeadlineMs,
+        humanCount: humans,
+        botCount: Math.max(0, 2 - humans),
+      };
+    }
+
+    clearMorpionMatchmakingPool(tx, morpionMatchmakingPoolRef(String(room.stakeConfigId || ""), safeInt(room.entryCostDoes || room.stakeDoes)));
+    logMorpionServerDebug("ensureRoomReady:startingRoom", {
+      roomId,
+      uid,
+      humans,
+      waitingDeadlineMs,
+      nowMs,
+    });
+    return buildStartedMorpionRoomTransaction(tx, roomRefDoc, {
+      ...room,
+      humanCount: humans,
+      botCount: Math.max(0, 2 - humans),
+      waitingDeadlineMs,
+    }, { nowMs });
+  });
+
+  if (startResult?.status === "playing" && startResult?.startRevealPending !== true) {
+    await processPendingBotTurnsMorpion(roomId);
+  }
+
+  return startResult;
+}, { invoker: "public" });
+
+exports.touchRoomPresenceMorpion = publicOnCall("touchRoomPresenceMorpion", async (request) => {
+  const { uid } = assertAuth(request);
+  const payload = request.data && typeof request.data === "object" ? request.data : {};
+  const roomId = String(payload.roomId || "").trim();
+  if (!roomId) {
+    throw new HttpsError("invalid-argument", "roomId requis.");
+  }
+
+  const roomRefDoc = morpionRoomRef(roomId);
+  let shouldNudgeBots = false;
+  let shouldResolveExpiredHumanTurn = false;
+  const result = await db.runTransaction(async (tx) => {
+    const roomSnap = await tx.get(roomRefDoc);
+    if (!roomSnap.exists) {
+      throw new HttpsError("not-found", "Salle morpion introuvable.");
+    }
+
+    const room = roomSnap.data() || {};
+    const seatIndex = getSeatForUser(room, uid);
+    if (seatIndex < 0) {
+      throw new HttpsError("permission-denied", "Tu ne fais pas partie de cette salle morpion.");
+    }
+
+    const nowMs = Date.now();
+    const presenceResult = buildMorpionPresenceUpdates(room, uid, nowMs);
+    shouldNudgeBots = presenceResult.shouldNudgeBots === true;
+    shouldResolveExpiredHumanTurn = presenceResult.shouldResolveExpiredHumanTurn === true;
+    tx.update(roomRefDoc, presenceResult.updates);
+
+    logMorpionServerDebug("touchPresence", {
+      roomId,
+      uid,
+      status: String(room.status || ""),
+      currentPlayer: Number.isFinite(Number(room.currentPlayer)) ? Math.trunc(Number(room.currentPlayer)) : -1,
+      shouldNudgeBots,
+      shouldResolveExpiredHumanTurn,
+      startRevealPending: room.startRevealPending === true,
+      turnLockedUntilMs: safeSignedInt(room.turnLockedUntilMs),
+      turnDeadlineMs: safeSignedInt(room.turnDeadlineMs),
+    });
+
+    return {
+      ok: true,
+      roomId: roomRefDoc.id,
+      status: String(room.status || ""),
+      currentPlayer: Number.isFinite(Number(room.currentPlayer)) ? Math.trunc(Number(room.currentPlayer)) : -1,
+      humanCount: safeInt(presenceResult.updates.humanCount, safeInt(room.humanCount)),
+      botCount: safeInt(presenceResult.updates.botCount, safeInt(room.botCount)),
+    };
+  });
+
+  if (result?.status === "playing") {
+    await processPendingBotTurnsMorpion(roomId);
+  }
+
+  return result;
+}, { invoker: "public" });
+
+exports.ackRoomStartSeenMorpion = publicOnCall("ackRoomStartSeenMorpion", async (request) => {
+  const { uid } = assertAuth(request);
+  const payload = request.data && typeof request.data === "object" ? request.data : {};
+  const roomId = String(payload.roomId || "").trim();
+  if (!roomId) {
+    throw new HttpsError("invalid-argument", "roomId requis.");
+  }
+
+  const roomRefDoc = morpionRoomRef(roomId);
+  const ackResult = await db.runTransaction(async (tx) => {
+    const roomSnap = await tx.get(roomRefDoc);
+    if (!roomSnap.exists) {
+      throw new HttpsError("not-found", "Salle morpion introuvable.");
+    }
+
+    const room = roomSnap.data() || {};
+    const humanUids = Array.isArray(room.playerUids) ? room.playerUids.map((item) => String(item || "").trim()).filter(Boolean) : [];
+    const ackUids = Array.isArray(room.startRevealAckUids) ? room.startRevealAckUids.map((item) => String(item || "").trim()).filter(Boolean) : [];
+    const ackSet = new Set(ackUids);
+
+    if (String(room.status || "") !== "playing") {
+      return { ok: true, pending: false, released: false, humanCount: humanUids.length, ackCount: ackSet.size };
+    }
+    const seatIndex = getSeatForUser(room, uid);
+    if (seatIndex < 0) {
+      throw new HttpsError("permission-denied", "Tu ne fais pas partie de cette salle morpion.");
+    }
+
+    ackSet.add(uid);
+    if (room.startRevealPending !== true) {
+      return { ok: true, pending: false, released: false, humanCount: humanUids.length, ackCount: ackSet.size };
+    }
+
+    const nextAckUids = Array.from(ackSet);
+    const ready = humanUids.length > 0 && humanUids.every((humanUid) => ackSet.has(humanUid));
+    tx.update(roomRefDoc, {
+      startRevealAckUids: nextAckUids,
+      startRevealPending: ready ? false : true,
+      updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+    });
+
+    return { ok: true, pending: !ready, released: ready, humanCount: humanUids.length, ackCount: nextAckUids.length };
+  });
+
+  if (ackResult?.released === true) {
+    await processPendingBotTurnsMorpion(roomId);
+  }
+
+  return ackResult;
+}, { invoker: "public" });
+
+exports.leaveRoomMorpion = publicOnCall("leaveRoomMorpion", async (request) => {
+  const { uid } = assertAuth(request);
+  const payload = request.data && typeof request.data === "object" ? request.data : {};
+  const roomId = String(payload.roomId || "").trim();
+  if (!roomId) {
+    throw new HttpsError("invalid-argument", "roomId requis.");
+  }
+
+  const roomRefDoc = morpionRoomRef(roomId);
+  const outcome = await db.runTransaction(async (tx) => {
+    const roomSnap = await tx.get(roomRefDoc);
+    if (!roomSnap.exists) {
+      return {
+        result: { ok: true, deleted: true, status: "missing" },
+        shouldCleanup: false,
+        shouldNudgeBots: false,
+      };
+    }
+    return applyMorpionLeaveForUidTx(tx, roomRefDoc, roomSnap.data() || {}, uid);
+  });
+
+  if (outcome?.shouldNudgeBots) {
+    await processPendingBotTurnsMorpion(roomId);
+  }
+  if (!outcome?.shouldCleanup) {
+    return outcome?.result || { ok: true, deleted: false, status: "left" };
+  }
+
+  await cleanupMorpionRoom(roomRefDoc);
+  return { ok: true, deleted: true, status: "deleted" };
+}, { invoker: "public" });
+
+exports.submitActionMorpion = publicOnCall("submitActionMorpion", async (request) => {
+  const { uid } = assertAuth(request);
+  const payload = request.data && typeof request.data === "object" ? request.data : {};
+  const roomId = String(payload.roomId || "").trim();
+  const clientActionId = sanitizeText(payload.clientActionId || "", 80);
+  const action = payload.action && typeof payload.action === "object" ? payload.action : null;
+
+  if (!roomId || !action) {
+    throw new HttpsError("invalid-argument", "roomId et action morpion sont requis.");
+  }
+  if (!clientActionId) {
+    throw new HttpsError("invalid-argument", "clientActionId requis.");
+  }
+
+  const cellIndex = safeInt(action.cellIndex, -1);
+  if (cellIndex < 0 || cellIndex >= 225) {
+    throw new HttpsError("invalid-argument", "Case morpion invalide.");
+  }
+
+  const roomRefDoc = morpionRoomRef(roomId);
+  const stateRef = morpionGameStateRef(roomId);
+  const result = await db.runTransaction(async (tx) => {
+    const [roomSnap, stateSnap] = await Promise.all([
+      tx.get(roomRefDoc),
+      tx.get(stateRef),
+    ]);
+    if (!roomSnap.exists) {
+      throw new HttpsError("not-found", "Salle morpion introuvable.");
+    }
+
+    const room = roomSnap.data() || {};
+    if (room.status !== "playing") {
+      throw new HttpsError("failed-precondition", "Le morpion n'est pas en cours.");
+    }
+    if (room.startRevealPending === true) {
+      throw new HttpsError("failed-precondition", "Le morpion se synchronise encore.");
+    }
+    const localSeat = getSeatForUser(room, uid);
+    if (localSeat < 0) {
+      throw new HttpsError("permission-denied", "Tu ne fais pas partie de ce morpion.");
+    }
+    if (typeof room.currentPlayer === "number" && room.currentPlayer !== localSeat) {
+      throw new HttpsError("failed-precondition", `Hors tour morpion. Joueur attendu: ${room.currentPlayer + 1}`);
+    }
+
+    const currentState = stateSnap.exists ? normalizeMorpionGameState(stateSnap.data(), room) : createInitialMorpionGameState(room);
+    if (currentState.endedReason) {
+      throw new HttpsError("failed-precondition", "Le morpion est deja termine.");
+    }
+    if (safeSignedInt(currentState.currentPlayer, -1) !== localSeat) {
+      throw new HttpsError("failed-precondition", `Hors tour morpion. Joueur attendu: ${currentState.currentPlayer + 1}`);
+    }
+    if (currentState.idempotencyKeys[clientActionId] === true) {
+      return {
+        ok: true,
+        duplicate: true,
+        seq: safeSignedInt(currentState.appliedActionSeq),
+        nextPlayer: currentState.currentPlayer,
+        status: room.status,
+      };
+    }
+
+    const applied = applyMorpionMove(currentState, room, { seat: localSeat, cellIndex }, uid);
+    applied.state.idempotencyKeys[clientActionId] = true;
+
+    tx.set(stateRef, buildMorpionGameStateWrite(applied.state), { merge: true });
+    const roomUpdate = buildMorpionRoomUpdateFromGameState(room, applied.state, [applied.record]);
+    tx.update(roomRefDoc, roomUpdate);
+    tx.set(roomRefDoc.collection("actions").doc(String(applied.record.seq)), {
+      ...applied.record,
+      roomId,
+      createdAt: admin.firestore.FieldValue.serverTimestamp(),
+    }, { merge: true });
+    writeMorpionRoomResultIfEndedTx(tx, roomRefDoc, room, roomUpdate);
+
+    return {
+      ok: true,
+      duplicate: false,
+      seq: applied.record.seq,
+      nextPlayer: applied.state.currentPlayer,
+      status: applied.state.endedReason ? "ended" : "playing",
+      winnerSeat: applied.state.winnerSeat,
+      winnerUid: applied.state.winnerUid,
+      endedReason: applied.state.endedReason,
+      record: applied.record,
+    };
+  });
+
+  if (result?.status === "playing" && typeof result.nextPlayer === "number") {
+    await processPendingBotTurnsMorpion(roomId);
+  }
+  if (result?.status === "ended") {
+    await recordMorpionBotOutcomeProfilesIfNeeded(roomId);
+  }
+  return result;
+}, { invoker: "public" });
+
+exports.claimWinRewardMorpion = publicOnCall("claimWinRewardMorpion", async (request) => {
+  const { uid, email } = assertAuth(request);
+  const payload = request.data && typeof request.data === "object" ? request.data : {};
+  const roomId = String(payload.roomId || "").trim();
+  if (!roomId) {
+    throw new HttpsError("invalid-argument", "roomId requis.");
+  }
+
+  const roomRefDoc = morpionRoomRef(roomId);
+  const settlementRef = roomRefDoc.collection("settlements").doc(uid);
+
+  const result = await db.runTransaction(async (tx) => {
+    const [roomSnap, settlementSnap, stateSnap] = await Promise.all([
+      tx.get(roomRefDoc),
+      tx.get(settlementRef),
+      tx.get(morpionGameStateRef(roomId)),
+    ]);
+    if (!roomSnap.exists) {
+      throw new HttpsError("not-found", "Salle morpion introuvable.");
+    }
+
+    const room = roomSnap.data() || {};
+    const seat = getSeatForUser(room, uid);
+    const state = stateSnap.exists ? normalizeMorpionGameState(stateSnap.data(), room) : null;
+    const winnerSeat = typeof room.winnerSeat === "number"
+      ? room.winnerSeat
+      : (state && typeof state.winnerSeat === "number" ? state.winnerSeat : -1);
+    const winnerUid = String(room.winnerUid || state?.winnerUid || "").trim();
+
+    if (winnerUid) {
+      if (winnerUid !== uid) {
+        throw new HttpsError("permission-denied", "Ce compte n'est pas gagnant de ce morpion.");
+      }
+    } else if (seat < 0) {
+      throw new HttpsError("permission-denied", "Ce compte ne fait pas partie de ce morpion.");
+    } else if (winnerSeat < 0 || seat !== winnerSeat) {
+      throw new HttpsError("permission-denied", "Ce compte n'est pas gagnant de ce morpion.");
+    }
+
+    const settlementData = settlementSnap.exists ? (settlementSnap.data() || {}) : {};
+    if (settlementData.rewardPaid === true) {
+      return {
+        ok: true,
+        rewardGranted: false,
+        reason: "already_paid",
+        rewardAmountDoes: safeInt(settlementData.rewardAmountDoes) || safeInt(room.rewardAmountDoes),
+      };
+    }
+
+    const rewardAmountDoes = safeInt(room.rewardAmountDoes);
+    if (rewardAmountDoes <= 0) {
+      tx.set(settlementRef, {
+        uid,
+        roomId,
+        rewardPaid: true,
+        rewardAmountDoes: 0,
+        reason: "no_reward",
+        settledAt: admin.firestore.FieldValue.serverTimestamp(),
+      }, { merge: true });
+      return {
+        ok: true,
+        rewardGranted: false,
+        reason: "no_reward",
+        rewardAmountDoes: 0,
+      };
+    }
+
+    const entryFundingRaw = room.entryFundingByUid && typeof room.entryFundingByUid === "object"
+      ? (room.entryFundingByUid[uid] || null)
+      : null;
+    const provisionalSources = normalizeFundingSources(entryFundingRaw?.provisionalSources);
+    const approvedEntryDoes = safeInt(entryFundingRaw?.approvedDoes);
+    const provisionalEntryDoes = safeInt(entryFundingRaw?.provisionalDoes);
+    const welcomeEntryDoes = safeInt(entryFundingRaw?.welcomeDoes);
+    let approvedRewardDoes = rewardAmountDoes;
+    let provisionalRewardDoes = 0;
+    let welcomeRewardDoes = 0;
+
+    if ((provisionalEntryDoes > 0 && provisionalSources.length > 0) || welcomeEntryDoes > 0) {
+      const totalEntryDoes = Math.max(approvedEntryDoes + provisionalEntryDoes + welcomeEntryDoes, provisionalEntryDoes + welcomeEntryDoes);
+      const provisionalRewardPool = Math.min(
+        rewardAmountDoes,
+        Math.round((rewardAmountDoes * provisionalEntryDoes) / Math.max(1, totalEntryDoes))
+      );
+      welcomeRewardDoes = Math.min(
+        rewardAmountDoes - provisionalRewardPool,
+        Math.round((rewardAmountDoes * welcomeEntryDoes) / Math.max(1, totalEntryDoes))
+      );
+      provisionalRewardDoes = provisionalRewardPool;
+      approvedRewardDoes = Math.max(0, rewardAmountDoes - provisionalRewardPool - welcomeRewardDoes) + welcomeRewardDoes;
+    } else if (approvedEntryDoes <= 0 && provisionalEntryDoes > 0) {
+      approvedRewardDoes = 0;
+      provisionalRewardDoes = rewardAmountDoes;
+    }
+
+    const walletMutation = await applyWalletMutationTx(tx, {
+      uid,
+      email,
+      type: "game_reward",
+      note: `Gain de morpion (${roomId})`,
+      amountDoes: rewardAmountDoes,
+      approvedRewardDoes,
+      provisionalRewardDoes,
+      welcomeRewardDoes,
+      amountGourdes: 0,
+      deltaDoes: rewardAmountDoes,
+      deltaExchangedGourdes: 0,
+    });
+
+    tx.set(settlementRef, {
+      uid,
+      roomId,
+      rewardPaid: true,
+      rewardAmountDoes,
+      claimedAt: admin.firestore.FieldValue.serverTimestamp(),
+      updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+    }, { merge: true });
+
+    return {
+      ok: true,
+      rewardGranted: true,
+      rewardAmountDoes,
+      does: walletMutation.afterDoes,
+    };
+  });
+
+  return result;
+}, { invoker: "public" });
+
 exports.getPublicDuelStakeOptionsSecure = publicOnCall("getPublicDuelStakeOptionsSecure", async () => {
   return {
     ok: true,
@@ -11285,6 +14160,48 @@ exports.sweepDuelRoomPresence = onSchedule("every 1 minutes", async () => {
   }
 });
 
+exports.sweepMorpionRoomPresence = onSchedule("every 1 minutes", async () => {
+  const nowMs = Date.now();
+  const roomsSnap = await db
+    .collection(MORPION_ROOMS_COLLECTION)
+    .where("status", "in", ["waiting", "playing"])
+    .limit(200)
+    .get();
+
+  const roomsToNudge = [];
+
+  for (const docSnap of roomsSnap.docs) {
+    const roomId = docSnap.id;
+    try {
+      const result = await db.runTransaction(async (tx) => {
+        const freshSnap = await tx.get(docSnap.ref);
+        if (!freshSnap.exists) return { changed: false, shouldNudgeBots: false };
+
+        const room = freshSnap.data() || {};
+        const playerUids = Array.from({ length: 2 }, (_, idx) => String((room.playerUids || [])[idx] || ""));
+        if (!playerUids.some(Boolean)) return { changed: false, shouldNudgeBots: false };
+
+        const presenceResult = buildMorpionPresenceUpdates(room, "", nowMs);
+        tx.update(docSnap.ref, presenceResult.updates);
+        return {
+          changed: true,
+          shouldNudgeBots: presenceResult.shouldNudgeBots === true || presenceResult.shouldResolveExpiredHumanTurn === true,
+        };
+      });
+
+      if (result?.shouldNudgeBots === true) {
+        roomsToNudge.push(roomId);
+      }
+    } catch (error) {
+      console.warn("[SWEEP_MORPION_PRESENCE]", roomId, error?.message || error);
+    }
+  }
+
+  for (const targetRoomId of roomsToNudge) {
+    await processPendingBotTurnsMorpion(targetRoomId);
+  }
+});
+
 exports.capturePresenceAnalytics = onSchedule("every 30 minutes", async () => {
   const bucketMs = getPresenceBucketStartMs(Date.now());
   const localKeys = getPresenceLocalKeys(bucketMs);
@@ -11995,6 +14912,22 @@ exports.getDuelAnalyticsSnapshot = publicOnCall(
     assertFinanceAdmin(request);
     const payload = request.data && typeof request.data === "object" ? request.data : {};
     const snapshot = await computeDuelAnalyticsSnapshot(payload);
+    return {
+      ok: true,
+      snapshot,
+    };
+  },
+  {
+    memory: "1GiB",
+  }
+);
+
+exports.getMorpionAnalyticsSnapshot = publicOnCall(
+  "getMorpionAnalyticsSnapshot",
+  async (request) => {
+    assertFinanceAdmin(request);
+    const payload = request.data && typeof request.data === "object" ? request.data : {};
+    const snapshot = await computeMorpionAnalyticsSnapshot(payload);
     return {
       ok: true,
       snapshot,
@@ -14432,6 +17365,149 @@ exports.refreshBotPilotAuto = onSchedule("every 10 minutes", async () => {
       recommendedLevel: normalizeBotDifficulty(snapshot.recommendedLevel),
       recommendedBand: String(snapshot.recommendedBand || ""),
       recommendedReason: String(snapshot.recommendedReason || ""),
+      computedAtMs: nowMs,
+    },
+  }, { merge: true });
+});
+
+exports.getMorpionPilotSnapshot = publicOnCall("getMorpionPilotSnapshot", async (request) => {
+  assertFinanceAdmin(request);
+  const payload = request.data && typeof request.data === "object" ? request.data : {};
+  const nowMs = Date.now();
+  const settingsSnap = await adminBootstrapRef().get();
+  const settings = settingsSnap.exists ? (settingsSnap.data() || {}) : {};
+  const mode = normalizeMorpionPilotMode(settings.morpionPilotMode || "manual");
+  const windowKey = normalizeMorpionPilotWindow(payload.window || settings.morpionPilotWindow || "today");
+  const snapshot = await computeMorpionPilotSnapshot({ nowMs, window: windowKey });
+  const manualForceBotOnly = settings.morpionPilotForceBotOnly === true;
+  const autoHumanOnlyEnabled = settings.morpionPilotAutoHumanOnlyEnabled !== false;
+  const appliedHumanOnlyEnabled = mode === "auto" ? autoHumanOnlyEnabled : !manualForceBotOnly;
+
+  return {
+    ok: true,
+    mode,
+    window: windowKey,
+    manualForceBotOnly,
+    autoHumanOnlyEnabled,
+    appliedHumanOnlyEnabled,
+    snapshot,
+  };
+});
+
+exports.setMorpionPilotControl = publicOnCall("setMorpionPilotControl", async (request) => {
+  assertFinanceAdmin(request);
+  const payload = request.data && typeof request.data === "object" ? request.data : {};
+  const currentSnap = await adminBootstrapRef().get();
+  const current = currentSnap.exists ? (currentSnap.data() || {}) : {};
+  const mode = normalizeMorpionPilotMode(payload.mode || current.morpionPilotMode || "manual");
+  const windowKey = normalizeMorpionPilotWindow(payload.window || current.morpionPilotWindow || "today");
+  const manualForceBotOnly = payload.manualForceBotOnly === true;
+  let autoHumanOnlyEnabled = current.morpionPilotAutoHumanOnlyEnabled !== false;
+  let snapshot = null;
+
+  if (mode === "auto") {
+    snapshot = await computeMorpionPilotSnapshot({ nowMs: Date.now(), window: windowKey });
+    autoHumanOnlyEnabled = snapshot.recommendedHumanOnlyEnabled !== false;
+  }
+
+  const appliedHumanOnlyEnabled = mode === "auto" ? autoHumanOnlyEnabled : !manualForceBotOnly;
+
+  await adminBootstrapRef().set({
+    email: FINANCE_ADMIN_EMAIL,
+    morpionPilotMode: mode,
+    morpionPilotWindow: windowKey,
+    morpionPilotForceBotOnly: manualForceBotOnly,
+    morpionPilotAutoHumanOnlyEnabled: autoHumanOnlyEnabled,
+    morpionPilotAppliedHumanOnlyEnabled: appliedHumanOnlyEnabled,
+    morpionPilotLastComputedAtMs: Date.now(),
+    morpionPilotUpdatedAt: admin.firestore.FieldValue.serverTimestamp(),
+    morpionPilotMetricsSnapshot: snapshot ? {
+      window: snapshot.window,
+      startMs: snapshot.startMs,
+      endMs: snapshot.endMs,
+      roomsCount: safeInt(snapshot.roomsCount),
+      collectedDoes: safeInt(snapshot.collectedDoes),
+      payoutDoes: safeInt(snapshot.payoutDoes),
+      netDoes: safeSignedInt(snapshot.netDoes),
+      grossCollectedDoes: safeInt(snapshot.grossCollectedDoes),
+      grossPayoutDoes: safeInt(snapshot.grossPayoutDoes),
+      grossNetDoes: safeSignedInt(snapshot.grossNetDoes),
+      promoExposureDoes: safeInt(snapshot.promoExposureDoes),
+      marginPct: Number(snapshot.marginPct || 0),
+      currentEquityDoes: safeSignedInt(snapshot.currentEquityDoes),
+      highWaterMarkDoes: safeSignedInt(snapshot.highWaterMarkDoes),
+      drawdownDoes: safeInt(snapshot.drawdownDoes),
+      drawdownPct: Number(snapshot.drawdownPct || 0),
+      lastPeakAtMs: safeSignedInt(snapshot.lastPeakAtMs),
+      humanOnlyRooms: safeInt(snapshot.humanOnlyRooms),
+      withBotRooms: safeInt(snapshot.withBotRooms),
+      humanOnlySharePct: Number(snapshot.humanOnlySharePct || 0),
+      withBotSharePct: Number(snapshot.withBotSharePct || 0),
+      recommendedDecision: normalizeMorpionPilotDecision(snapshot.recommendedDecision),
+      recommendedBand: String(snapshot.recommendedBand || ""),
+      recommendedReason: String(snapshot.recommendedReason || ""),
+      recommendedHumanOnlyEnabled: snapshot.recommendedHumanOnlyEnabled !== false,
+      computedAtMs: Date.now(),
+    } : admin.firestore.FieldValue.delete(),
+  }, { merge: true });
+
+  return {
+    ok: true,
+    mode,
+    window: windowKey,
+    manualForceBotOnly,
+    autoHumanOnlyEnabled,
+    appliedHumanOnlyEnabled,
+    snapshot,
+  };
+});
+
+exports.refreshMorpionPilotAuto = onSchedule("every 10 minutes", async () => {
+  const settingsSnap = await adminBootstrapRef().get();
+  if (!settingsSnap.exists) return;
+  const settings = settingsSnap.data() || {};
+  const mode = normalizeMorpionPilotMode(settings.morpionPilotMode || "manual");
+  if (mode !== "auto") return;
+
+  const nowMs = Date.now();
+  const windowKey = normalizeMorpionPilotWindow(settings.morpionPilotWindow || "today");
+  const snapshot = await computeMorpionPilotSnapshot({ nowMs, window: windowKey });
+  const autoHumanOnlyEnabled = snapshot.recommendedHumanOnlyEnabled !== false;
+
+  await adminBootstrapRef().set({
+    email: FINANCE_ADMIN_EMAIL,
+    morpionPilotMode: "auto",
+    morpionPilotWindow: windowKey,
+    morpionPilotAutoHumanOnlyEnabled: autoHumanOnlyEnabled,
+    morpionPilotAppliedHumanOnlyEnabled: autoHumanOnlyEnabled,
+    morpionPilotLastComputedAtMs: nowMs,
+    morpionPilotUpdatedAt: admin.firestore.FieldValue.serverTimestamp(),
+    morpionPilotMetricsSnapshot: {
+      window: snapshot.window,
+      startMs: snapshot.startMs,
+      endMs: snapshot.endMs,
+      roomsCount: safeInt(snapshot.roomsCount),
+      collectedDoes: safeInt(snapshot.collectedDoes),
+      payoutDoes: safeInt(snapshot.payoutDoes),
+      netDoes: safeSignedInt(snapshot.netDoes),
+      grossCollectedDoes: safeInt(snapshot.grossCollectedDoes),
+      grossPayoutDoes: safeInt(snapshot.grossPayoutDoes),
+      grossNetDoes: safeSignedInt(snapshot.grossNetDoes),
+      promoExposureDoes: safeInt(snapshot.promoExposureDoes),
+      marginPct: Number(snapshot.marginPct || 0),
+      currentEquityDoes: safeSignedInt(snapshot.currentEquityDoes),
+      highWaterMarkDoes: safeSignedInt(snapshot.highWaterMarkDoes),
+      drawdownDoes: safeInt(snapshot.drawdownDoes),
+      drawdownPct: Number(snapshot.drawdownPct || 0),
+      lastPeakAtMs: safeSignedInt(snapshot.lastPeakAtMs),
+      humanOnlyRooms: safeInt(snapshot.humanOnlyRooms),
+      withBotRooms: safeInt(snapshot.withBotRooms),
+      humanOnlySharePct: Number(snapshot.humanOnlySharePct || 0),
+      withBotSharePct: Number(snapshot.withBotSharePct || 0),
+      recommendedDecision: normalizeMorpionPilotDecision(snapshot.recommendedDecision),
+      recommendedBand: String(snapshot.recommendedBand || ""),
+      recommendedReason: String(snapshot.recommendedReason || ""),
+      recommendedHumanOnlyEnabled: snapshot.recommendedHumanOnlyEnabled !== false,
       computedAtMs: nowMs,
     },
   }, { merge: true });

@@ -1,0 +1,809 @@
+<!doctype html>
+<html lang="fr">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <meta
+      name="description"
+      content="Morpion 5 multijoueur par Dominoes Lakay. Plateau 15x15, alignement de 5, timer par tour et duel en temps reel."
+    />
+    <link rel="icon" type="image/png" href="/favicon-96x96.png" sizes="96x96" />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <link rel="shortcut icon" href="/favicon.ico" />
+    <link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png" />
+    <link rel="manifest" href="/site.webmanifest" />
+    <meta name="theme-color" content="#09111e" />
+    <title>Morpion 5 | Dominoes Lakay</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Manrope:wght@500;700;800&family=Sora:wght@600;700;800&display=swap"
+      rel="stylesheet"
+    />
+    <style>
+      :root {
+        --bg-0: #06101e;
+        --bg-1: #0c1628;
+        --bg-2: #15233a;
+        --panel: rgba(9, 17, 31, 0.84);
+        --panel-soft: rgba(255, 255, 255, 0.05);
+        --line: rgba(148, 163, 184, 0.16);
+        --text: #f3f8ff;
+        --muted: #93a5c7;
+        --accent-x: #ff8d42;
+        --accent-o: #58ddff;
+        --accent-win: #f6d36e;
+        --danger: #fb7185;
+        --shadow: 0 28px 54px rgba(2, 8, 23, 0.42);
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      html,
+      body {
+        margin: 0;
+        min-height: 100%;
+        background:
+          radial-gradient(circle at top left, rgba(88, 221, 255, 0.11), transparent 30%),
+          radial-gradient(circle at bottom right, rgba(255, 141, 66, 0.13), transparent 28%),
+          linear-gradient(180deg, var(--bg-0) 0%, var(--bg-1) 48%, var(--bg-2) 100%);
+        color: var(--text);
+        font-family: "Manrope", system-ui, sans-serif;
+      }
+
+      body {
+        padding:
+          max(6px, env(safe-area-inset-top))
+          max(6px, env(safe-area-inset-right))
+          max(10px, env(safe-area-inset-bottom))
+          max(6px, env(safe-area-inset-left));
+      }
+
+      button,
+      a {
+        font: inherit;
+      }
+
+      .app {
+        width: min(100%, 1120px);
+        margin: 0 auto;
+      }
+
+      .glass {
+        border: 1px solid var(--line);
+        background: var(--panel);
+        backdrop-filter: blur(18px);
+        -webkit-backdrop-filter: blur(18px);
+        box-shadow: var(--shadow);
+      }
+
+      .arena {
+        border-radius: 22px;
+        padding: 8px;
+      }
+
+      .arena__top {
+        position: sticky;
+        top: max(0px, env(safe-area-inset-top));
+        z-index: 20;
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+        gap: 10px;
+        align-items: stretch;
+        margin-bottom: 8px;
+      }
+
+      .player-card {
+        min-width: 0;
+        border: 1px solid var(--line);
+        border-radius: 18px;
+        background: rgba(9, 17, 31, 0.88);
+        padding: 8px;
+        display: grid;
+        gap: 6px;
+        transition: border-color 160ms ease, box-shadow 160ms ease;
+      }
+
+      .player-card.is-active {
+        border-color: rgba(246, 211, 110, 0.4);
+        box-shadow: 0 0 0 1px rgba(246, 211, 110, 0.14) inset;
+      }
+
+      .player-card.is-danger {
+        animation: pulse-danger 1s ease-in-out infinite;
+      }
+
+      @keyframes pulse-danger {
+        0%, 100% { box-shadow: 0 0 0 0 rgba(251, 113, 133, 0); }
+        50% { box-shadow: 0 0 0 1px rgba(251, 113, 133, 0.18) inset, 0 0 0 8px rgba(251, 113, 133, 0.04); }
+      }
+
+      .player-card__top {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 10px;
+      }
+
+      .player-card__identity {
+        min-width: 0;
+      }
+
+      .player-card__label {
+        font-size: 0.6rem;
+        font-weight: 800;
+        letter-spacing: 0.16em;
+        text-transform: uppercase;
+        color: var(--muted);
+      }
+
+      .player-card__name {
+        margin-top: 4px;
+        font-size: 0.74rem;
+        font-weight: 800;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+
+      .player-card__badge {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        width: 32px;
+        height: 32px;
+        border-radius: 11px;
+        font-family: "Sora", sans-serif;
+        font-size: 0.92rem;
+        font-weight: 800;
+      }
+
+      .player-card__badge[data-symbol="X"] {
+        background: rgba(255, 141, 66, 0.14);
+        color: var(--accent-x);
+      }
+
+      .player-card__badge[data-symbol="O"] {
+        background: rgba(88, 221, 255, 0.14);
+        color: var(--accent-o);
+      }
+
+      .timer {
+        display: grid;
+        gap: 5px;
+      }
+
+      .timer__label {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        gap: 8px;
+        font-size: 0.62rem;
+        color: var(--muted);
+      }
+
+      .timer__value {
+        font-size: 0.8rem;
+        font-weight: 800;
+        color: var(--text);
+      }
+
+      .timer__track {
+        height: 6px;
+        border-radius: 999px;
+        background: rgba(255, 255, 255, 0.06);
+        overflow: hidden;
+      }
+
+      .timer__fill {
+        width: 100%;
+        height: 100%;
+        border-radius: inherit;
+        background: linear-gradient(90deg, rgba(88, 221, 255, 0.95), rgba(255, 141, 66, 0.95));
+        transition: width 220ms linear, background 160ms ease;
+      }
+
+      .player-card.is-danger .timer__fill {
+        background: linear-gradient(90deg, rgba(251, 113, 133, 0.95), rgba(255, 141, 66, 0.95));
+      }
+
+      .quit-wrap {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+      }
+
+      .center-stack {
+        display: grid;
+        align-content: center;
+        justify-items: center;
+        gap: 6px;
+      }
+
+      .quit-btn {
+        min-height: 44px;
+        min-width: 88px;
+        padding: 0 12px;
+        border: 1px solid rgba(255, 255, 255, 0.18);
+        border-radius: 16px;
+        background: rgba(255, 255, 255, 0.06);
+        color: var(--text);
+        font-weight: 800;
+        font-size: 0.76rem;
+        line-height: 1.15;
+        cursor: pointer;
+        transition: transform 160ms ease, border-color 160ms ease, background 160ms ease;
+      }
+
+      .quit-btn:hover {
+        transform: translateY(-1px);
+        border-color: rgba(255, 255, 255, 0.28);
+        background: rgba(255, 255, 255, 0.08);
+      }
+
+      .wallet-pill {
+        min-width: 88px;
+        padding: 7px 10px;
+        border-radius: 14px;
+        border: 1px solid rgba(255, 255, 255, 0.12);
+        background: rgba(255, 255, 255, 0.05);
+        display: grid;
+        gap: 2px;
+        text-align: center;
+      }
+
+      .wallet-pill__label {
+        font-size: 0.56rem;
+        font-weight: 800;
+        letter-spacing: 0.14em;
+        text-transform: uppercase;
+        color: var(--muted);
+      }
+
+      .wallet-pill__value {
+        font-size: 0.8rem;
+        font-weight: 800;
+        color: var(--text);
+        white-space: nowrap;
+      }
+
+      .board-wrap {
+        position: relative;
+        overflow: auto;
+        -webkit-overflow-scrolling: touch;
+        border-radius: 20px;
+        padding: 2px;
+        overscroll-behavior: contain;
+        touch-action: pan-x pan-y pinch-zoom;
+      }
+
+      .board {
+        --board-size: 15;
+        position: relative;
+        width: min(100%, 860px);
+        min-width: 280px;
+        margin: 0 auto;
+        aspect-ratio: 1;
+        display: grid;
+        grid-template-columns: repeat(var(--board-size), minmax(0, 1fr));
+        gap: 3px;
+        padding: 8px;
+        border-radius: 20px;
+        background:
+          linear-gradient(180deg, rgba(255, 255, 255, 0.06), rgba(255, 255, 255, 0.03)),
+          rgba(3, 8, 20, 0.7);
+        border: 1px solid rgba(107, 226, 255, 0.14);
+      }
+
+      .cell {
+        appearance: none;
+        position: relative;
+        border: 1px solid rgba(148, 163, 184, 0.12);
+        border-radius: 10px;
+        background: rgba(255, 255, 255, 0.03);
+        cursor: pointer;
+        transition: transform 120ms ease, border-color 120ms ease, background 120ms ease;
+        aspect-ratio: 1;
+        min-width: 0;
+        min-height: 0;
+        padding: 0;
+      }
+
+      .cell:hover {
+        border-color: rgba(107, 226, 255, 0.42);
+        background: rgba(107, 226, 255, 0.08);
+        transform: translateY(-1px);
+      }
+
+      .cell:disabled {
+        cursor: default;
+      }
+
+      .cell.is-occupied {
+        border-color: rgba(148, 163, 184, 0.18);
+        background: rgba(255, 255, 255, 0.02);
+      }
+
+      .cell.is-win {
+        border-color: rgba(246, 211, 110, 0.84);
+        background: rgba(246, 211, 110, 0.18);
+        box-shadow: 0 0 0 1px rgba(246, 211, 110, 0.22) inset, 0 0 26px rgba(246, 211, 110, 0.12);
+      }
+
+      .board-win-line {
+        position: absolute;
+        left: 0;
+        top: 0;
+        height: 8px;
+        border-radius: 999px;
+        background: linear-gradient(90deg, rgba(246, 211, 110, 0.85), rgba(255, 255, 255, 0.96), rgba(246, 211, 110, 0.85));
+        box-shadow: 0 0 20px rgba(246, 211, 110, 0.34);
+        transform-origin: left center;
+        pointer-events: none;
+        z-index: 4;
+      }
+
+      .board-win-line.hidden {
+        display: none;
+      }
+
+      .reveal-result-btn {
+        position: sticky;
+        left: calc(100% - 112px);
+        bottom: 14px;
+        z-index: 6;
+        min-height: 44px;
+        min-width: 96px;
+        margin: 0 12px 12px auto;
+        padding: 0 16px;
+        border: 1px solid rgba(246, 211, 110, 0.42);
+        border-radius: 14px;
+        background: rgba(9, 17, 31, 0.9);
+        color: var(--text);
+        font-size: 0.78rem;
+        font-weight: 800;
+        letter-spacing: 0.04em;
+        cursor: pointer;
+        box-shadow: 0 18px 30px rgba(2, 8, 23, 0.34);
+      }
+
+      .reveal-result-btn.hidden {
+        display: none;
+      }
+
+      .cell.is-last-move {
+        z-index: 2;
+        border-color: rgba(107, 226, 255, 0.92);
+        background: rgba(107, 226, 255, 0.14);
+        box-shadow: 0 0 0 1px rgba(107, 226, 255, 0.34) inset, 0 0 28px rgba(107, 226, 255, 0.16);
+      }
+
+      .cell.is-last-move::after {
+        content: "";
+        position: absolute;
+        inset: 4px;
+        border-radius: 8px;
+        border: 1px solid rgba(107, 226, 255, 0.62);
+        pointer-events: none;
+      }
+
+      .cell__symbol {
+        position: absolute;
+        inset: 10%;
+        display: block;
+        transform: scale(0.6);
+        opacity: 0;
+        animation: place-symbol 220ms cubic-bezier(0.2, 0.8, 0.2, 1) forwards;
+      }
+
+      @keyframes place-symbol {
+        0% { transform: scale(0.56); opacity: 0; }
+        72% { transform: scale(1.04); opacity: 1; }
+        100% { transform: scale(1); opacity: 1; }
+      }
+
+      .cell__symbol--x::before,
+      .cell__symbol--x::after {
+        content: "";
+        position: absolute;
+        left: 50%;
+        top: 50%;
+        width: 14%;
+        height: 76%;
+        border-radius: 999px;
+        background: var(--accent-x);
+        box-shadow: 0 0 18px rgba(255, 141, 66, 0.24);
+      }
+
+      .cell__symbol--x::before {
+        transform: translate(-50%, -50%) rotate(45deg);
+      }
+
+      .cell__symbol--x::after {
+        transform: translate(-50%, -50%) rotate(-45deg);
+      }
+
+      .cell__symbol--o::before {
+        content: "";
+        position: absolute;
+        inset: 14%;
+        border-radius: 50%;
+        border: max(4px, 0.18vw) solid var(--accent-o);
+        box-shadow: 0 0 18px rgba(88, 221, 255, 0.24);
+      }
+
+      .modal {
+        position: fixed;
+        inset: 0;
+        display: flex;
+        align-items: flex-end;
+        justify-content: center;
+        padding:
+          max(12px, env(safe-area-inset-top))
+          max(12px, env(safe-area-inset-right))
+          max(12px, env(safe-area-inset-bottom))
+          max(12px, env(safe-area-inset-left));
+        z-index: 50;
+      }
+
+      .modal.hidden {
+        display: none;
+      }
+
+      .modal__backdrop {
+        position: absolute;
+        inset: 0;
+        background: rgba(6, 10, 20, 0.72);
+        backdrop-filter: blur(8px);
+      }
+
+      .modal__card {
+        position: relative;
+        width: min(100%, 420px);
+        border: 1px solid rgba(148, 163, 184, 0.18);
+        border-radius: 28px;
+        background: rgba(10, 16, 30, 0.94);
+        padding: 22px 18px max(18px, calc(env(safe-area-inset-bottom) + 12px));
+        box-shadow: var(--shadow);
+        display: grid;
+        gap: 14px;
+      }
+
+      .modal__eyebrow {
+        font-size: 0.72rem;
+        font-weight: 800;
+        letter-spacing: 0.16em;
+        text-transform: uppercase;
+        color: var(--muted);
+      }
+
+      .modal__title {
+        font-family: "Sora", sans-serif;
+        font-size: clamp(1.35rem, 6vw, 1.9rem);
+      }
+
+      .modal__copy {
+        color: var(--muted);
+        line-height: 1.65;
+        font-size: 0.96rem;
+      }
+
+      .modal__actions {
+        display: grid;
+        gap: 10px;
+      }
+
+      .btn {
+        appearance: none;
+        border: 1px solid transparent;
+        border-radius: 16px;
+        min-height: 50px;
+        padding: 0 16px;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        text-decoration: none;
+        color: var(--text);
+        font-weight: 800;
+        cursor: pointer;
+        transition: transform 160ms ease, border-color 160ms ease, background 160ms ease;
+      }
+
+      .btn:hover {
+        transform: translateY(-1px);
+      }
+
+      .btn--primary {
+        background: linear-gradient(135deg, rgba(255, 141, 66, 0.96), rgba(255, 105, 52, 0.96));
+        color: #fff7f0;
+      }
+
+      .btn--ghost {
+        border-color: rgba(255, 255, 255, 0.18);
+        background: rgba(255, 255, 255, 0.05);
+      }
+
+      @media (max-width: 699px) {
+        body {
+          min-height: 100svh;
+          padding: 0;
+        }
+
+        .app {
+          width: 100%;
+          min-height: 100svh;
+        }
+
+        .glass {
+          border: 0;
+          box-shadow: none;
+          backdrop-filter: none;
+          -webkit-backdrop-filter: none;
+        }
+
+        .arena {
+          min-height: 100svh;
+          height: 100svh;
+          border-radius: 0;
+          padding: max(4px, env(safe-area-inset-top)) 0 max(4px, env(safe-area-inset-bottom));
+          display: flex;
+          flex-direction: column;
+        }
+
+        .arena__top {
+          grid-template-columns: minmax(0, 1fr) minmax(88px, auto) minmax(0, 1fr);
+          gap: 6px;
+          padding: 0 max(6px, env(safe-area-inset-right)) 0 max(6px, env(safe-area-inset-left));
+        }
+
+        .player-card {
+          padding: 7px;
+        }
+
+        .player-card__name {
+          font-size: 0.7rem;
+        }
+
+        .player-card__top {
+          gap: 6px;
+        }
+
+        .player-card__label {
+          font-size: 0.54rem;
+        }
+
+        .timer__label {
+          font-size: 0.56rem;
+        }
+
+        .timer__value {
+          font-size: 0.74rem;
+        }
+
+        .quit-btn {
+          min-height: 40px;
+          min-width: 80px;
+          font-size: 0.72rem;
+          padding: 0 10px;
+        }
+
+        .wallet-pill {
+          min-width: 80px;
+          padding: 6px 8px;
+        }
+
+        .wallet-pill__value {
+          font-size: 0.72rem;
+        }
+
+        .board-wrap {
+          flex: 1;
+          min-height: 0;
+          width: 100%;
+          padding: 0;
+          border-radius: 0;
+        }
+
+        .board {
+          width: 720px;
+          min-width: 720px;
+          margin: 0;
+          gap: 4px;
+          padding: 10px;
+          border-radius: 20px;
+        }
+
+        .cell {
+          border-radius: 10px;
+        }
+
+        .cell__symbol {
+          inset: 10%;
+        }
+
+        .cell.is-last-move::after {
+          inset: 4px;
+          border-radius: 8px;
+        }
+
+        .modal__card {
+          border-radius: 24px;
+          padding: 20px 16px max(16px, calc(env(safe-area-inset-bottom) + 10px));
+        }
+      }
+
+      @media (min-width: 720px) {
+        .arena {
+          padding: 14px;
+        }
+
+        .board {
+          width: min(100%, 860px);
+          gap: 4px;
+          padding: 10px;
+          border-radius: 26px;
+        }
+
+        .player-card {
+          padding: 10px;
+          gap: 8px;
+          border-radius: 22px;
+        }
+
+        .player-card__label {
+          font-size: 0.66rem;
+        }
+
+        .player-card__name {
+          font-size: 0.88rem;
+        }
+
+        .player-card__badge {
+          width: 38px;
+          height: 38px;
+          border-radius: 14px;
+          font-size: 1.05rem;
+        }
+
+        .timer {
+          gap: 6px;
+        }
+
+        .timer__label {
+          font-size: 0.7rem;
+        }
+
+        .timer__value {
+          font-size: 0.88rem;
+        }
+
+        .timer__track {
+          height: 7px;
+        }
+
+        .quit-btn {
+          min-height: 48px;
+          min-width: 100px;
+          padding: 0 14px;
+          border-radius: 18px;
+          font-size: 0.84rem;
+        }
+
+        .wallet-pill {
+          min-width: 100px;
+        }
+
+        .wallet-pill__value {
+          font-size: 0.86rem;
+        }
+
+        .modal {
+          align-items: center;
+        }
+
+        .modal__actions {
+          grid-template-columns: repeat(2, minmax(0, 1fr));
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <main class="app">
+      <section class="arena glass">
+        <div class="arena__top">
+          <article class="player-card" data-player-side="opponent">
+            <div class="player-card__top">
+              <div class="player-card__identity">
+                <div class="player-card__label" id="morpionOpponentLabel">Joueur ID-000000</div>
+                <div class="player-card__name" id="morpionOpponentName">En attente...</div>
+              </div>
+              <span class="player-card__badge" id="morpionOpponentSymbol" data-symbol="X">X</span>
+            </div>
+            <div class="timer">
+              <div class="timer__label">
+                <span>Temps</span>
+                <strong class="timer__value" id="morpionOpponentTimerLabel">15s</strong>
+              </div>
+              <div class="timer__track">
+                <div class="timer__fill" id="morpionOpponentTimerFill"></div>
+              </div>
+            </div>
+          </article>
+
+          <div class="quit-wrap">
+            <div class="center-stack">
+              <button id="morpionQuitBtn" class="quit-btn" type="button">Quitter la salle</button>
+              <div class="wallet-pill" aria-live="polite">
+                <div class="wallet-pill__label">Mes Does</div>
+                <div class="wallet-pill__value" id="morpionWalletValue">--</div>
+              </div>
+            </div>
+          </div>
+
+          <article class="player-card" data-player-side="self">
+            <div class="player-card__top">
+              <div class="player-card__identity">
+                <div class="player-card__label">Moi</div>
+                <div class="player-card__name" id="morpionSelfName">Moi</div>
+              </div>
+              <span class="player-card__badge" id="morpionSelfSymbol" data-symbol="O">O</span>
+            </div>
+            <div class="timer">
+              <div class="timer__label">
+                <span>Temps</span>
+                <strong class="timer__value" id="morpionSelfTimerLabel">15s</strong>
+              </div>
+              <div class="timer__track">
+                <div class="timer__fill" id="morpionSelfTimerFill"></div>
+              </div>
+            </div>
+          </article>
+        </div>
+
+        <div class="board-wrap">
+          <div id="morpionBoard" class="board" role="grid" aria-label="Plateau du morpion cinq en ligne"></div>
+          <button id="morpionRevealResultBtn" class="reveal-result-btn hidden" type="button">Aller</button>
+        </div>
+      </section>
+    </main>
+
+    <div id="morpionWaitingModal" class="modal" role="dialog" aria-modal="true" aria-labelledby="morpionWaitingTitle">
+      <div class="modal__backdrop"></div>
+      <div class="modal__card">
+        <div class="modal__eyebrow">Morpion 5</div>
+        <h2 class="modal__title" id="morpionWaitingTitle">Recherche d'un adversaire...</h2>
+        <p class="modal__copy" id="morpionWaitingCopy">La salle se prépare.</p>
+      </div>
+    </div>
+
+    <div id="morpionResultModal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="morpionResultTitle">
+      <div class="modal__backdrop"></div>
+      <div class="modal__card">
+        <div class="modal__eyebrow" id="morpionResultEyebrow">Fin de partie</div>
+        <h2 class="modal__title" id="morpionResultTitle">Victoire</h2>
+        <p class="modal__copy" id="morpionResultCopy"></p>
+        <div class="modal__actions">
+          <button class="btn btn--primary" id="morpionResultReplayBtn" type="button">Rejouer</button>
+          <button class="btn btn--ghost" id="morpionResultHomeBtn" type="button">Accueil</button>
+        </div>
+      </div>
+    </div>
+
+    <div id="morpionQuitModal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="morpionQuitTitle">
+      <div class="modal__backdrop" data-quit-close></div>
+      <div class="modal__card">
+        <div class="modal__eyebrow">Morpion 5</div>
+        <h2 class="modal__title" id="morpionQuitTitle">Quitter la salle ?</h2>
+        <p class="modal__copy">Tu peux revenir a l'accueil ou relancer directement une nouvelle partie.</p>
+        <div class="modal__actions">
+          <button class="btn btn--ghost" id="morpionQuitHomeBtn" type="button">Accueil</button>
+          <button class="btn btn--primary" id="morpionQuitReplayBtn" type="button">Rejouer</button>
+        </div>
+      </div>
+    </div>
+
+    <script type="module" src="./logiquejeu-morpion.js"></script>
+  </body>
+</html>

@@ -7,6 +7,7 @@ import {
 } from "./loading-ui.js";
 import {
   getPublicGameStakeOptionsSecure,
+  getPublicMorpionStakeOptionsSecure,
   updateClientProfileSecure,
   getDepositFundingStatusSecure,
   getShareSitePromoStatusSecure,
@@ -54,7 +55,12 @@ const DEFAULT_DUEL_STAKE_OPTIONS = Object.freeze([
   Object.freeze({ id: "duel_500", stakeDoes: 500, rewardDoes: 925, enabled: true, sortOrder: 10 }),
   Object.freeze({ id: "duel_1000", stakeDoes: 1000, rewardDoes: 1850, enabled: true, sortOrder: 20 }),
 ]);
+const DEFAULT_MORPION_STAKE_OPTIONS = Object.freeze([
+  Object.freeze({ id: "morpion_500", stakeDoes: 500, rewardDoes: 900, enabled: true, sortOrder: 10 }),
+  Object.freeze({ id: "morpion_1000", stakeDoes: 1000, rewardDoes: 1800, enabled: true, sortOrder: 20 }),
+]);
 const ALLOWED_DUEL_STAKE_AMOUNTS = Object.freeze([500, 1000]);
+const ALLOWED_MORPION_STAKE_AMOUNTS = Object.freeze([500, 1000]);
 let page2NonCriticalRefreshTimer = null;
 let page2NonCriticalVisibilityHandler = null;
 let page2NonCriticalUid = "";
@@ -124,6 +130,20 @@ async function loadXchangeModule() {
   return xchangeModulePromise;
 }
 
+function getPlayableDoesBalance(state = {}) {
+  return Math.max(
+    0,
+    Number(
+      state?.doesBalance
+      ?? state?.does
+      ?? (
+        (Number(state?.doesApprovedBalance) || 0)
+        + (Number(state?.doesProvisionalBalance) || 0)
+      )
+    ) || 0
+  );
+}
+
 function scheduleNonCriticalTask(runId, task, delayMs = 240) {
   const execute = () => {
     if (runId !== page2BootstrapRunId) return;
@@ -178,6 +198,13 @@ function buildFriendDuelGameUrl(roomId, seatIndex, stakeDoes) {
   params.set("seat", String(Math.max(0, Number.parseInt(String(seatIndex || 0), 10) || 0)));
   params.set("roomMode", "duel_friends");
   return `./jeu-duel.html?${params.toString()}`;
+}
+
+function buildMorpionGameUrl(stakeDoes = 500) {
+  const params = new URLSearchParams();
+  const parsedStake = Number.parseInt(String(stakeDoes ?? 500), 10);
+  params.set("stake", String(Number.isFinite(parsedStake) ? parsedStake : 500));
+  return `./morpion.html?${params.toString()}`;
 }
 
 function hasSeenTournamentIntro() {
@@ -489,6 +516,40 @@ function normalizeGameStakeOptions(rawOptions) {
   return normalized.length ? normalized : DEFAULT_GAME_STAKE_OPTIONS.map((item) => ({ ...item }));
 }
 
+function normalizePublicMorpionStakeOptions(rawOptions) {
+  const source = [
+    ...DEFAULT_MORPION_STAKE_OPTIONS,
+    ...(Array.isArray(rawOptions) ? rawOptions : []),
+  ];
+  const byStake = new Map();
+
+  source.forEach((raw, index) => {
+    const stakeDoes = safeInt(raw?.stakeDoes);
+    if (!ALLOWED_MORPION_STAKE_AMOUNTS.includes(stakeDoes)) return;
+    if (byStake.has(stakeDoes)) return;
+
+    const sortOrderRaw = Number(raw?.sortOrder);
+    const sortOrder = Number.isFinite(sortOrderRaw) ? Math.trunc(sortOrderRaw) : ((index + 1) * 10);
+    const fallbackRewardDoes = stakeDoes > 0 ? Math.round(stakeDoes * 1.8) : 0;
+    const rewardDoes = Math.max(0, safeInt(raw?.rewardDoes, fallbackRewardDoes));
+
+    byStake.set(stakeDoes, {
+      id: String(raw?.id || `morpion_${stakeDoes}`).trim() || `morpion_${stakeDoes}`,
+      stakeDoes,
+      rewardDoes,
+      enabled: raw?.enabled !== false,
+      sortOrder,
+    });
+  });
+
+  const normalized = Array.from(byStake.values()).sort((left, right) => {
+    if (left.sortOrder !== right.sortOrder) return left.sortOrder - right.sortOrder;
+    return left.stakeDoes - right.stakeDoes;
+  });
+
+  return normalized.length ? normalized : DEFAULT_MORPION_STAKE_OPTIONS.map((item) => ({ ...item }));
+}
+
 async function loadPublicGameStakeOptions() {
   try {
     const response = await getPublicGameStakeOptionsSecure();
@@ -496,6 +557,16 @@ async function loadPublicGameStakeOptions() {
   } catch (error) {
     console.warn("[GAME_STAKES] fallback local options", error);
     return normalizeGameStakeOptions();
+  }
+}
+
+async function loadPublicMorpionStakeOptions() {
+  try {
+    const response = await getPublicMorpionStakeOptionsSecure();
+    return normalizePublicMorpionStakeOptions(response?.options);
+  } catch (error) {
+    console.warn("[MORPION_STAKES] fallback local options", error);
+    return normalizePublicMorpionStakeOptions();
   }
 }
 
@@ -683,7 +754,9 @@ function isPage2BlockingOverlayOpen() {
     "financeNoticeOverlay",
     "sharePromoOverlay",
     "sharePromoSuccessOverlay",
+    "gameModeOverlay",
     "stakeSelectionOverlay",
+    "morpionStakeOverlay",
     "duelIntroOverlay",
     "duelStakeOverlay",
     "duelFriendModeOverlay",
@@ -851,6 +924,7 @@ function setPage2FinanceNoticeOpen(isOpen) {
     if (
       document.getElementById("sharePromoOverlay")?.classList.contains("hidden")
       && document.getElementById("sharePromoSuccessOverlay")?.classList.contains("hidden")
+      && document.getElementById("gameModeOverlay")?.classList.contains("hidden")
       && document.getElementById("stakeSelectionOverlay")?.classList.contains("hidden")
       && document.getElementById("duelIntroOverlay")?.classList.contains("hidden")
       && document.getElementById("duelStakeOverlay")?.classList.contains("hidden")
@@ -1452,6 +1526,65 @@ export function renderPage2(user, options = {}) {
   `);
 
   pageShell.insertAdjacentHTML("beforeend", `
+    <div id="gameModeOverlay" class="fixed inset-0 z-[3458] hidden items-end justify-center bg-[#12192b]/72 px-[max(12px,env(safe-area-inset-left))] pb-[max(12px,env(safe-area-inset-bottom))] pt-[max(12px,env(safe-area-inset-top))] backdrop-blur-sm sm:items-center sm:px-4 sm:py-4">
+      <div id="gameModePanel" class="w-full overflow-hidden rounded-[28px] border border-white/15 bg-[linear-gradient(180deg,rgba(82,94,132,0.98),rgba(55,65,95,0.98))] text-white shadow-[0_-16px_38px_rgba(12,18,31,0.42)] sm:max-w-xl sm:rounded-[30px] sm:border-white/20 sm:shadow-[14px_14px_34px_rgba(16,23,40,0.5),-10px_-10px_24px_rgba(112,126,165,0.2)]">
+        <div class="max-h-[calc(100dvh-max(24px,env(safe-area-inset-top))-max(24px,env(safe-area-inset-bottom)))] overflow-y-auto overscroll-contain px-4 pb-[max(1rem,env(safe-area-inset-bottom))] pt-4 sm:max-h-[min(88vh,760px)] sm:px-6 sm:pb-6 sm:pt-6">
+          <div class="flex items-start justify-between gap-3">
+            <div class="min-w-0 pr-2">
+              <p class="text-xs font-semibold uppercase tracking-[0.24em] text-white/66">Jeux disponibles</p>
+              <h3 class="mt-2 text-[1.2rem] font-bold leading-tight sm:text-[1.45rem]">Choisis un mode de jeu</h3>
+            </div>
+            <button id="gameModeClose" type="button" class="grid h-10 w-10 shrink-0 place-items-center rounded-full border border-white/20 bg-white/10 text-white">
+              <i class="fa-solid fa-xmark"></i>
+            </button>
+          </div>
+          <p class="mt-3 text-[13px] leading-6 text-white/80 sm:text-sm">
+            Sélectionne d'abord le jeu, puis choisis la mise qui correspond à ton mode.
+          </p>
+          <div class="mt-5 grid gap-3">
+            <button id="gameModeClassicCard" type="button" class="flex w-full items-center justify-between gap-3 rounded-[22px] border border-[#ffb26e]/28 bg-[linear-gradient(135deg,rgba(245,124,0,0.18),rgba(72,45,15,0.54))] px-4 py-4 text-left text-white shadow-[8px_8px_20px_rgba(54,32,13,0.3),-6px_-6px_14px_rgba(255,184,111,0.08)] transition hover:-translate-y-0.5 hover:border-[#ffb26e]/42">
+              <span class="flex min-w-0 items-center gap-3">
+                <span class="grid h-11 w-11 shrink-0 place-items-center rounded-2xl border border-white/12 bg-white/10 text-[17px] text-[#ffd4ab]">
+                  <i class="fa-solid fa-table-cells-large"></i>
+                </span>
+                <span class="min-w-0">
+                  <span class="block text-sm font-semibold text-white">Domino 4 joueurs</span>
+                  <span class="mt-1 block text-xs leading-5 text-white/72">Le mode classique multijoueur avec mise et salle privée entre amis.</span>
+                </span>
+              </span>
+              <i class="fa-solid fa-arrow-right text-white/72"></i>
+            </button>
+            <button id="gameModeDuelCard" type="button" class="flex w-full items-center justify-between gap-3 rounded-[22px] border border-[#8de7ff]/28 bg-[linear-gradient(135deg,rgba(18,147,216,0.2),rgba(10,31,62,0.66))] px-4 py-4 text-left text-white shadow-[8px_8px_20px_rgba(10,27,48,0.28),-6px_-6px_14px_rgba(97,186,224,0.08)] transition hover:-translate-y-0.5 hover:border-[#8de7ff]/42">
+              <span class="flex min-w-0 items-center gap-3">
+                <span class="grid h-11 w-11 shrink-0 place-items-center rounded-2xl border border-white/12 bg-white/10 text-[17px] text-[#c8f7ff]">
+                  <i class="fa-solid fa-user-group"></i>
+                </span>
+                <span class="min-w-0">
+                  <span class="block text-sm font-semibold text-white">Domino 1 vs 1</span>
+                  <span class="mt-1 block text-xs leading-5 text-white/72">Affronte un joueur réel en duel direct avec mise rapide.</span>
+                </span>
+              </span>
+              <i class="fa-solid fa-arrow-right text-white/72"></i>
+            </button>
+            <button id="gameModeMorpionCard" type="button" class="flex w-full items-center justify-between gap-3 rounded-[22px] border border-[#8de7ff]/24 bg-[linear-gradient(135deg,rgba(66,171,255,0.16),rgba(17,28,59,0.66))] px-4 py-4 text-left text-white shadow-[8px_8px_20px_rgba(12,27,48,0.28),-6px_-6px_14px_rgba(88,173,232,0.08)] transition hover:-translate-y-0.5 hover:border-[#8de7ff]/38">
+              <span class="flex min-w-0 items-center gap-3">
+                <span class="grid h-11 w-11 shrink-0 place-items-center rounded-2xl border border-white/12 bg-white/10 text-[17px] text-[#cdefff]">
+                  <i class="fa-solid fa-hashtag"></i>
+                </span>
+                <span class="min-w-0">
+                  <span class="block text-sm font-semibold text-white">Morpion 5</span>
+                  <span class="mt-1 block text-xs leading-5 text-white/72">Le nouveau duel tactique en temps réel sur grande grille.</span>
+                </span>
+              </span>
+              <i class="fa-solid fa-arrow-right text-white/72"></i>
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  `);
+
+  pageShell.insertAdjacentHTML("beforeend", `
     <div id="stakeSelectionOverlay" class="fixed inset-0 z-[3460] hidden items-center justify-center bg-black/55 p-4 backdrop-blur-sm">
       <div id="stakeSelectionPanel" class="w-full max-w-lg rounded-3xl border border-white/20 bg-[#3F4766]/80 p-5 text-white shadow-[14px_14px_34px_rgba(16,23,40,0.5),-10px_-10px_24px_rgba(112,126,165,0.2)] backdrop-blur-xl sm:p-6">
         <div class="flex items-center justify-between gap-3">
@@ -1469,15 +1602,37 @@ export function renderPage2(user, options = {}) {
           </div>
         </div>
         <div class="mt-4 border-t border-white/10 pt-4">
-          <button id="duelModeBtn" type="button" class="flex h-12 w-full items-center justify-center gap-2 rounded-2xl border border-[#8de7ff]/30 bg-[#1293d8]/16 text-sm font-semibold text-white transition hover:-translate-y-0.5 hover:bg-[#1293d8]/22">
-            <i class="fa-solid fa-user-ninja text-[15px] text-[#b8f2ff]"></i>
-            <span>Duel 2 joueurs</span>
-          </button>
           <button id="playWithFriendsBtn" type="button" class="flex h-12 w-full items-center justify-center gap-2 rounded-2xl border border-white/20 bg-white/10 text-sm font-semibold text-white transition hover:-translate-y-0.5 hover:bg-white/15">
             <i class="fa-solid fa-user-group text-[15px]"></i>
             <span>Jouer avec des amis</span>
           </button>
           <p class="mt-2 text-center text-xs text-white/62">Crée une salle privée, copie un code et invite 3 amis.</p>
+        </div>
+      </div>
+    </div>
+  `);
+
+  pageShell.insertAdjacentHTML("beforeend", `
+    <div id="morpionStakeOverlay" class="fixed inset-0 z-[3461] hidden items-end justify-center bg-[#12192b]/72 px-[max(12px,env(safe-area-inset-left))] pb-[max(12px,env(safe-area-inset-bottom))] pt-[max(12px,env(safe-area-inset-top))] backdrop-blur-sm sm:items-center sm:px-4 sm:py-4">
+      <div id="morpionStakePanel" class="w-full overflow-hidden rounded-[28px] border border-white/15 bg-[linear-gradient(180deg,rgba(82,94,132,0.98),rgba(55,65,95,0.98))] text-white shadow-[0_-16px_38px_rgba(12,18,31,0.42)] sm:max-w-md sm:rounded-[30px] sm:border-white/20 sm:shadow-[14px_14px_34px_rgba(16,23,40,0.5),-10px_-10px_24px_rgba(112,126,165,0.2)]">
+        <div class="max-h-[calc(100dvh-max(24px,env(safe-area-inset-top))-max(24px,env(safe-area-inset-bottom)))] overflow-y-auto overscroll-contain px-4 pb-[max(1rem,env(safe-area-inset-bottom))] pt-4 sm:max-h-[min(88vh,760px)] sm:px-6 sm:pb-6 sm:pt-6">
+          <div class="flex items-start justify-between gap-3">
+            <div class="min-w-0 pr-2">
+              <p class="text-xs font-semibold uppercase tracking-[0.24em] text-[#9fe8ff]/80">Morpion 5</p>
+              <h3 class="mt-2 text-[1.2rem] font-bold leading-tight sm:text-[1.45rem]">Choisis ta mise</h3>
+            </div>
+            <button id="morpionStakeClose" type="button" class="grid h-10 w-10 shrink-0 place-items-center rounded-full border border-white/20 bg-white/10 text-white">
+              <i class="fa-solid fa-xmark"></i>
+            </button>
+          </div>
+          <p class="mt-3 text-[13px] leading-6 text-white/84 sm:text-sm">
+            Choisis la mise de ton match de morpion. La cote du gagnant est de 1.8.
+          </p>
+          <div id="morpionStakeOptionsGrid" class="mt-5 grid grid-cols-2 gap-3">
+            <div class="col-span-2 rounded-2xl border border-white/15 bg-white/5 px-4 py-4 text-sm text-white/70">
+              Chargement des mises du morpion...
+            </div>
+          </div>
         </div>
       </div>
     </div>
@@ -1777,15 +1932,6 @@ export function renderPage2(user, options = {}) {
   `);
 
   pageShell.insertAdjacentHTML("beforeend", `
-    <div class="fixed bottom-4 left-4 z-[3390]">
-      <button id="discussionFabBtn" type="button" class="relative grid h-14 w-14 place-items-center rounded-full border border-white/25 bg-[#3F4766]/75 text-white shadow-[10px_10px_22px_rgba(16,23,40,0.45),-8px_-8px_18px_rgba(112,126,165,0.2)] backdrop-blur-xl transition hover:-translate-y-0.5" aria-label="Ouvrir la discussion">
-        <i class="fa-solid fa-comments text-xl"></i>
-        <span id="discussionFabBadge" class="hidden absolute -right-1 -top-1 min-w-[1.3rem] rounded-full border border-red-200/60 bg-red-500 px-1 py-0.5 text-[11px] font-bold leading-none text-white">1</span>
-      </button>
-    </div>
-  `);
-
-  pageShell.insertAdjacentHTML("beforeend", `
     <div id="agentSupportAlertWrap" class="hidden fixed bottom-4 right-4 z-[3395]">
       <button
         id="agentSupportAlertBtn"
@@ -1821,6 +1967,12 @@ export function renderPage2(user, options = {}) {
   const profileBtn = document.getElementById("p2Profile");
   const soldBadgeBtn = document.getElementById("soldBadge");
   const startGameBtn = document.getElementById("startGameBtn");
+  const gameModeOverlay = document.getElementById("gameModeOverlay");
+  const gameModePanel = document.getElementById("gameModePanel");
+  const gameModeClose = document.getElementById("gameModeClose");
+  const gameModeClassicCard = document.getElementById("gameModeClassicCard");
+  const gameModeDuelCard = document.getElementById("gameModeDuelCard");
+  const gameModeMorpionCard = document.getElementById("gameModeMorpionCard");
   const tournamentIntroOverlay = document.getElementById("tournamentIntroOverlay");
   const tournamentIntroPanel = document.getElementById("tournamentIntroPanel");
   const tournamentIntroContinueBtn = document.getElementById("tournamentIntroContinueBtn");
@@ -1831,7 +1983,10 @@ export function renderPage2(user, options = {}) {
   const stakeSelectionPanel = document.getElementById("stakeSelectionPanel");
   const stakeSelectionClose = document.getElementById("stakeSelectionClose");
   const stakeOptionsGrid = document.getElementById("stakeOptionsGrid");
-  const duelModeBtn = document.getElementById("duelModeBtn");
+  const morpionStakeOverlay = document.getElementById("morpionStakeOverlay");
+  const morpionStakePanel = document.getElementById("morpionStakePanel");
+  const morpionStakeClose = document.getElementById("morpionStakeClose");
+  const morpionStakeOptionsGrid = document.getElementById("morpionStakeOptionsGrid");
   const duelIntroOverlay = document.getElementById("duelIntroOverlay");
   const duelIntroPanel = document.getElementById("duelIntroPanel");
   const duelIntroClose = document.getElementById("duelIntroClose");
@@ -2735,6 +2890,7 @@ export function renderPage2(user, options = {}) {
     if (
       sharePromoOverlay?.classList.contains("hidden")
       && sharePromoSuccessOverlay?.classList.contains("hidden")
+      && gameModeOverlay?.classList.contains("hidden")
       && stakeSelectionOverlay?.classList.contains("hidden")
       && duelIntroOverlay?.classList.contains("hidden")
       && duelStakeOverlay?.classList.contains("hidden")
@@ -2916,6 +3072,38 @@ export function renderPage2(user, options = {}) {
     stakeSelectionOverlay.classList.add("hidden");
     stakeSelectionOverlay.classList.remove("flex");
     document.body.classList.remove("overflow-hidden");
+  };
+
+  const openGameModeSelection = () => {
+    if (!gameModeOverlay) return;
+    gameModeOverlay.classList.remove("hidden");
+    gameModeOverlay.classList.add("flex");
+    document.body.classList.add("overflow-hidden");
+  };
+
+  const closeGameModeSelection = () => {
+    if (!gameModeOverlay) return;
+    gameModeOverlay.classList.add("hidden");
+    gameModeOverlay.classList.remove("flex");
+    if (!isPage2BlockingOverlayOpen()) {
+      document.body.classList.remove("overflow-hidden");
+    }
+  };
+
+  const openMorpionStakeSelection = () => {
+    if (!morpionStakeOverlay) return;
+    morpionStakeOverlay.classList.remove("hidden");
+    morpionStakeOverlay.classList.add("flex");
+    document.body.classList.add("overflow-hidden");
+  };
+
+  const closeMorpionStakeSelection = () => {
+    if (!morpionStakeOverlay) return;
+    morpionStakeOverlay.classList.add("hidden");
+    morpionStakeOverlay.classList.remove("flex");
+    if (!isPage2BlockingOverlayOpen()) {
+      document.body.classList.remove("overflow-hidden");
+    }
   };
 
   const normalizeDuelStakeOptions = (options = []) => {
@@ -3183,6 +3371,7 @@ export function renderPage2(user, options = {}) {
 
   let currentStakeOptions = normalizeGameStakeOptions();
   let currentDuelStakeOptions = normalizeDuelStakeOptions();
+  let currentMorpionStakeOptions = DEFAULT_MORPION_STAKE_OPTIONS.map((item) => ({ ...item }));
 
   const renderStakeOptions = (options = []) => {
     currentStakeOptions = normalizeGameStakeOptions(options);
@@ -3236,6 +3425,50 @@ export function renderPage2(user, options = {}) {
     renderDuelFriendCreateStakeOptions(currentDuelStakeOptions);
   };
 
+  const normalizeMorpionStakeOptions = (options = []) => {
+    const source = Array.isArray(options) && options.length ? options : DEFAULT_MORPION_STAKE_OPTIONS;
+    const normalized = source
+      .map((entry, index) => {
+        const parsedStake = Number.parseInt(String(entry?.stakeDoes ?? 0), 10);
+        const stakeDoes = Number.isFinite(parsedStake) ? parsedStake : 0;
+        if (!ALLOWED_MORPION_STAKE_AMOUNTS.includes(stakeDoes)) return null;
+        const fallbackRewardDoes = stakeDoes > 0 ? Math.round(stakeDoes * 1.8) : 0;
+        return {
+          id: String(entry?.id || `morpion_${stakeDoes}_${index}`),
+          stakeDoes,
+          rewardDoes: Math.max(0, Number.parseInt(String(entry?.rewardDoes ?? fallbackRewardDoes), 10) || fallbackRewardDoes),
+          enabled: entry?.enabled !== false,
+          sortOrder: Number.parseInt(String(entry?.sortOrder || (index + 1) * 10), 10) || (index + 1) * 10,
+        };
+      })
+      .filter(Boolean)
+      .sort((left, right) => left.sortOrder - right.sortOrder);
+    return normalized.length ? normalized : DEFAULT_MORPION_STAKE_OPTIONS.map((item) => ({ ...item }));
+  };
+
+  const renderMorpionStakeOptions = (options = []) => {
+    currentMorpionStakeOptions = normalizeMorpionStakeOptions(options);
+    if (!morpionStakeOptionsGrid) return;
+    morpionStakeOptionsGrid.innerHTML = currentMorpionStakeOptions.map((option) => {
+      const enabled = option.enabled === true;
+      const classes = enabled
+        ? "morpion-stake-option-btn h-14 rounded-2xl border border-[#8de7ff]/35 bg-[linear-gradient(135deg,rgba(18,147,216,0.2),rgba(10,31,62,0.74))] text-sm font-semibold text-white shadow-[8px_8px_20px_rgba(10,27,48,0.28),-6px_-6px_14px_rgba(97,186,224,0.1)] transition hover:-translate-y-0.5"
+        : "morpion-stake-option-btn h-14 rounded-2xl border border-white/20 bg-white/10 text-sm font-semibold text-white/65 opacity-55 cursor-not-allowed";
+      const secondaryLine = `Gain ${option.rewardDoes} Does`;
+      return `
+        <button
+          data-stake="${option.stakeDoes}"
+          data-available="${enabled ? "1" : "0"}"
+          type="button"
+          class="${classes}"
+        >
+          <span class="block">${option.stakeDoes} Does</span>
+          <span class="text-[11px] font-medium ${enabled ? "text-white/75" : "text-white/55"}">${secondaryLine}</span>
+        </button>
+      `;
+    }).join("");
+  };
+
   const renderDuelFriendCreateStakeOptions = (options = []) => {
     const normalized = normalizeDuelStakeOptions(options);
     if (!duelFriendCreateStakeGrid) return;
@@ -3265,8 +3498,8 @@ export function renderPage2(user, options = {}) {
     const normalizedStakeAmount = Math.max(1, Number.parseInt(String(stakeAmount || 0), 10) || 0);
     const xchangeMod = await loadXchangeModule().catch(() => null);
     const state = xchangeMod?.getXchangeState?.() || {};
-    const doesApprovedBalance = Math.max(0, Number(state?.doesApprovedBalance) || 0);
-    if (doesApprovedBalance < normalizedStakeAmount) {
+    const playableDoesBalance = getPlayableDoesBalance(state);
+    if (playableDoesBalance < normalizedStakeAmount) {
       closeDuelStakeSelection();
       if (doesRequiredOverlay) {
         doesRequiredOverlay.classList.remove("hidden");
@@ -3278,6 +3511,32 @@ export function renderPage2(user, options = {}) {
     closeDuelStakeSelection();
     showGlobalLoading("Ouverture du duel...");
     window.location.href = buildDuelGameUrl(normalizedStakeAmount);
+  };
+
+  const continueToMorpion = async (stakeAmount = 500) => {
+    const parsedStakeAmount = Number.parseInt(String(stakeAmount ?? 500), 10);
+    const normalizedStakeAmount = Number.isFinite(parsedStakeAmount) ? parsedStakeAmount : 500;
+    if (normalizedStakeAmount <= 0) {
+      closeMorpionStakeSelection();
+      showGlobalLoading("Ouverture du Morpion...");
+      window.location.href = buildMorpionGameUrl(0);
+      return;
+    }
+    const xchangeMod = await loadXchangeModule().catch(() => null);
+    const state = xchangeMod?.getXchangeState?.() || {};
+    const playableDoesBalance = getPlayableDoesBalance(state);
+    if (playableDoesBalance < normalizedStakeAmount) {
+      closeMorpionStakeSelection();
+      if (doesRequiredOverlay) {
+        doesRequiredOverlay.classList.remove("hidden");
+        doesRequiredOverlay.classList.add("flex");
+        document.body.classList.add("overflow-hidden");
+      }
+      return;
+    }
+    closeMorpionStakeSelection();
+    showGlobalLoading("Ouverture du Morpion...");
+    window.location.href = buildMorpionGameUrl(normalizedStakeAmount);
   };
 
   let stakeOptionsHydrationPromise = null;
@@ -3299,10 +3558,73 @@ export function renderPage2(user, options = {}) {
     return stakeOptionsHydrationPromise;
   };
 
+  let morpionStakeOptionsHydrationPromise = null;
+  const ensureMorpionStakeOptionsLoaded = () => {
+    if (morpionStakeOptionsHydrationPromise) return morpionStakeOptionsHydrationPromise;
+    morpionStakeOptionsHydrationPromise = loadPublicMorpionStakeOptions()
+      .then((options) => {
+        renderMorpionStakeOptions(options);
+        return options;
+      })
+      .catch((error) => {
+        console.warn("[MORPION_STAKES] render fallback", error);
+        const fallback = normalizePublicMorpionStakeOptions();
+        renderMorpionStakeOptions(fallback);
+        return fallback;
+      });
+    return morpionStakeOptionsHydrationPromise;
+  };
+
   renderStakeOptions(currentStakeOptions);
+  renderMorpionStakeOptions(currentMorpionStakeOptions);
   renderDuelStakeOptions(currentDuelStakeOptions);
   renderDuelFriendCreateStakeOptions(currentDuelStakeOptions);
   renderFriendCreateStakeOptions(currentStakeOptions);
+
+  const handleDuelEntry = async () => {
+    if (page2AccountFrozen) return;
+    if (!isAuthenticated) {
+      showGlobalLoading("Redirection vers la connexion...");
+      window.location.href = "./auth.html";
+      return;
+    }
+    if (isOptimisticAuth) {
+      showGlobalLoading("Finalisation de la session...");
+      window.setTimeout(() => {
+        hideGlobalLoading();
+      }, 1600);
+      return;
+    }
+    closeGameModeSelection();
+    closeStakeSelection();
+    const duelIntroUid = String(page2PresenceUser?.uid || auth.currentUser?.uid || "");
+    renderDuelStakeOptions();
+    if (hasSeenDuelIntro(duelIntroUid)) {
+      openDuelStakeSelection();
+      return;
+    }
+    openDuelIntro();
+  };
+
+  const handleMorpionEntry = async () => {
+    if (page2AccountFrozen) return;
+    if (!isAuthenticated) {
+      showGlobalLoading("Redirection vers la connexion...");
+      window.location.href = "./auth.html";
+      return;
+    }
+    if (isOptimisticAuth) {
+      showGlobalLoading("Finalisation de la session...");
+      window.setTimeout(() => {
+        hideGlobalLoading();
+      }, 1600);
+      return;
+    }
+    closeGameModeSelection();
+    closeStakeSelection();
+    await ensureMorpionStakeOptionsLoaded();
+    openMorpionStakeSelection();
+  };
 
   if (startGameBtn) {
     startGameBtn.addEventListener("click", () => {
@@ -3319,33 +3641,22 @@ export function renderPage2(user, options = {}) {
         }, 1600);
         return;
       }
-      void ensureStakeOptionsLoaded();
-      openStakeSelection();
+      openGameModeSelection();
     });
   }
 
-  duelModeBtn?.addEventListener("click", async () => {
-    if (page2AccountFrozen) return;
-    if (!isAuthenticated) {
-      showGlobalLoading("Redirection vers la connexion...");
-      window.location.href = "./auth.html";
-      return;
-    }
-    if (isOptimisticAuth) {
-      showGlobalLoading("Finalisation de la session...");
-      window.setTimeout(() => {
-        hideGlobalLoading();
-      }, 1600);
-      return;
-    }
-    closeStakeSelection();
-    const duelIntroUid = String(page2PresenceUser?.uid || auth.currentUser?.uid || "");
-    renderDuelStakeOptions();
-    if (hasSeenDuelIntro(duelIntroUid)) {
-      openDuelStakeSelection();
-      return;
-    }
-    openDuelIntro();
+  gameModeClassicCard?.addEventListener("click", async () => {
+    closeGameModeSelection();
+    void ensureStakeOptionsLoaded();
+    openStakeSelection();
+  });
+
+  gameModeDuelCard?.addEventListener("click", async () => {
+    await handleDuelEntry();
+  });
+
+  gameModeMorpionCard?.addEventListener("click", async () => {
+    await handleMorpionEntry();
   });
 
   duelFriendModeOpenBtn?.addEventListener("click", () => {
@@ -3425,8 +3736,8 @@ export function renderPage2(user, options = {}) {
       await withButtonLoading(btn, async () => {
         const xchangeMod = await loadXchangeModule().catch(() => null);
         const state = xchangeMod?.getXchangeState?.() || {};
-        const doesApprovedBalance = Math.max(0, Number(state?.doesApprovedBalance) || 0);
-        if (doesApprovedBalance < stakeAmount) {
+        const playableDoesBalance = getPlayableDoesBalance(state);
+        if (playableDoesBalance < stakeAmount) {
           closeDuelFriendCreate();
           if (doesRequiredOverlay) {
             doesRequiredOverlay.classList.remove("hidden");
@@ -3572,7 +3883,7 @@ export function renderPage2(user, options = {}) {
         const xchangeModule = await loadXchangeModule();
         await xchangeModule.ensureXchangeState(user?.uid);
         const state = xchangeModule.getXchangeState(window.__userBaseBalance || window.__userBalance || 0, user?.uid);
-        if ((state?.does || 0) < stakeAmount) {
+        if (getPlayableDoesBalance(state) < stakeAmount) {
           closeFriendCreate();
           if (doesRequiredOverlay) {
             doesRequiredOverlay.classList.remove("hidden");
@@ -3695,6 +4006,11 @@ export function renderPage2(user, options = {}) {
   });
 
   if (stakeSelectionClose) stakeSelectionClose.addEventListener("click", closeStakeSelection);
+  if (gameModeClose) gameModeClose.addEventListener("click", closeGameModeSelection);
+  gameModeOverlay?.addEventListener("click", (ev) => {
+    if (ev.target === gameModeOverlay) closeGameModeSelection();
+  });
+  gameModePanel?.addEventListener("click", (ev) => ev.stopPropagation());
   if (stakeSelectionOverlay) {
     stakeSelectionOverlay.addEventListener("click", (ev) => {
       if (ev.target === stakeSelectionOverlay) closeStakeSelection();
@@ -3703,6 +4019,28 @@ export function renderPage2(user, options = {}) {
   if (stakeSelectionPanel) {
     stakeSelectionPanel.addEventListener("click", (ev) => ev.stopPropagation());
   }
+  if (morpionStakeClose) morpionStakeClose.addEventListener("click", closeMorpionStakeSelection);
+  morpionStakeOverlay?.addEventListener("click", (ev) => {
+    if (ev.target === morpionStakeOverlay) closeMorpionStakeSelection();
+  });
+  morpionStakePanel?.addEventListener("click", (ev) => ev.stopPropagation());
+  morpionStakeOptionsGrid?.addEventListener("click", async (event) => {
+    const origin = event.target instanceof HTMLElement ? event.target : null;
+    const btn = origin ? origin.closest(".morpion-stake-option-btn") : null;
+    if (!(btn instanceof HTMLElement) || !morpionStakeOptionsGrid.contains(btn)) return;
+    if (btn.getAttribute("data-available") !== "1") {
+      openUnavailable({
+        title: "Mise indisponible",
+        message: "Cette mise morpion sera active prochainement.",
+      });
+      return;
+    }
+    const parsedStakeAmount = Number.parseInt(String(btn.getAttribute("data-stake") ?? 500), 10);
+    const stakeAmount = Number.isFinite(parsedStakeAmount) ? parsedStakeAmount : 500;
+    await withButtonLoading(btn, async () => {
+      await continueToMorpion(stakeAmount);
+    }, { loadingLabel: "Verification..." });
+  });
   if (duelIntroClose) duelIntroClose.addEventListener("click", closeDuelIntro);
   duelIntroUnderstoodBtn?.addEventListener("click", () => {
     const duelIntroUid = String(page2PresenceUser?.uid || auth.currentUser?.uid || "");
@@ -3911,7 +4249,7 @@ export function renderPage2(user, options = {}) {
         const xchangeModule = await loadXchangeModule();
         await xchangeModule.ensureXchangeState(user?.uid);
         const state = xchangeModule.getXchangeState(window.__userBaseBalance || window.__userBalance || 0, user?.uid);
-        if ((state?.does || 0) < stakeAmount) {
+        if (getPlayableDoesBalance(state) < stakeAmount) {
           closeStakeSelection();
           if (doesRequiredOverlay) {
             doesRequiredOverlay.classList.remove("hidden");
@@ -4059,6 +4397,7 @@ export function renderPage2(user, options = {}) {
   setPendingShareSource("");
   applySharePromoState(null);
   scheduleNonCriticalTask(runId, () => ensureStakeOptionsLoaded(), 360);
+  scheduleNonCriticalTask(runId, () => ensureMorpionStakeOptionsLoaded(), 390);
   scheduleNonCriticalTask(runId, () => loadSharePromoStatus(), 420);
   scheduleNonCriticalTask(runId, () => loadSurveyPrompt(), 520);
   scheduleNonCriticalTask(runId, () => {

@@ -128,6 +128,10 @@ export async function getPublicDuelStakeOptionsSecure(payload = {}) {
   return invokeCallable("getPublicDuelStakeOptionsSecure", payload, "Impossible de charger les mises duel.");
 }
 
+export async function getPublicMorpionStakeOptionsSecure(payload = {}) {
+  return invokeCallable("getPublicMorpionStakeOptionsSecure", payload, "Impossible de charger les mises morpion.");
+}
+
 export async function joinMatchmakingDuelSecure(payload = {}) {
   return invokeCallable("joinMatchmakingDuel", payload, "Impossible de rejoindre un duel.");
 }
@@ -162,6 +166,34 @@ export async function submitActionDuelSecure(payload = {}) {
 
 export async function claimWinRewardDuelSecure(payload = {}) {
   return invokeCallable("claimWinRewardDuel", payload, "Impossible de valider le gain duel.");
+}
+
+export async function joinMatchmakingMorpionSecure(payload = {}) {
+  return invokeCallable("joinMatchmakingMorpion", payload, "Impossible de rejoindre une partie de morpion.");
+}
+
+export async function ensureRoomReadyMorpionSecure(payload = {}) {
+  return invokeCallable("ensureRoomReadyMorpion", payload, "Impossible de demarrer la partie de morpion.");
+}
+
+export async function touchRoomPresenceMorpionSecure(payload = {}) {
+  return invokeCallable("touchRoomPresenceMorpion", payload, "Impossible de mettre a jour la presence morpion.");
+}
+
+export async function ackRoomStartSeenMorpionSecure(payload = {}) {
+  return invokeCallable("ackRoomStartSeenMorpion", payload, "Impossible de synchroniser le demarrage du morpion.");
+}
+
+export async function leaveRoomMorpionSecure(payload = {}) {
+  return invokeCallable("leaveRoomMorpion", payload, "Impossible de quitter la salle morpion.");
+}
+
+export async function submitActionMorpionSecure(payload = {}) {
+  return invokeCallable("submitActionMorpion", payload, "Impossible d'envoyer l'action morpion.");
+}
+
+export async function claimWinRewardMorpionSecure(payload = {}) {
+  return invokeCallable("claimWinRewardMorpion", payload, "Impossible de valider le gain morpion.");
 }
 
 export async function getRecruitmentCampaignSnapshotSecure(payload = {}) {
