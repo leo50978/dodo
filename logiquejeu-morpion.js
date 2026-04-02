@@ -87,6 +87,8 @@ let endResultTimer = null;
 let lastHandledEndKey = "";
 let pendingEndModalPayload = null;
 let winLineVisible = false;
+let fallbackOpponentAlias = "";
+let fallbackOpponentAliasRoomId = "";
 
 function morpionDebug(event, payload = {}) {
   try {
@@ -115,7 +117,14 @@ function makePlayerId(seed = "") {
   for (let index = 0; index < source.length; index += 1) {
     hash = ((hash * 31) + source.charCodeAt(index)) % 1_000_000;
   }
-  return `Joueur ID-${String(Math.abs(hash)).padStart(6, "0")}`;
+  const normalizedHash = Math.max(0, Math.abs(hash));
+  const safeCode = ((normalizedHash % 900000) + 100000);
+  return `Joueur ID-${String(safeCode).padStart(6, "0")}`;
+}
+
+function randomPlayerIdLabel() {
+  const value = Math.floor(Math.random() * 900000) + 100000;
+  return `Joueur ID-${String(value)}`;
 }
 
 function readAbandonedRoomIds() {
@@ -178,7 +187,14 @@ function getOpponentName() {
 function getOpponentLabel() {
   const opponentSeat = getOpponentSeat();
   const opponentUid = Array.isArray(currentRoomData?.playerUids) ? String(currentRoomData.playerUids[opponentSeat] || "").trim() : "";
-  if (!opponentUid) return "Joueur ID-000000";
+  if (!opponentUid) {
+    const roomKey = String(currentRoomId || "").trim();
+    if (!fallbackOpponentAlias || fallbackOpponentAliasRoomId !== roomKey) {
+      fallbackOpponentAlias = randomPlayerIdLabel();
+      fallbackOpponentAliasRoomId = roomKey;
+    }
+    return fallbackOpponentAlias;
+  }
   return makePlayerId(`${currentRoomId}:${opponentUid}:${opponentSeat}`);
 }
 
