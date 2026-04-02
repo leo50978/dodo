@@ -22,6 +22,7 @@ const TURN_LIMIT_SECONDS = 15;
 const TURN_LIMIT_MS = TURN_LIMIT_SECONDS * 1000;
 const PRESENCE_PING_MS = 20 * 1000;
 const ABANDONED_ROOMS_STORAGE_KEY = "domino_morpion_abandoned_rooms_v1";
+const MORPION_BOT_NUMERIC_IDS = Object.freeze([35601379, 40507232, 41752992]);
 
 const URL_PARAMS = new URLSearchParams(window.location.search);
 const parsedRequestedStake = Number.parseInt(String(URL_PARAMS.get("stake") ?? 500), 10);
@@ -32,6 +33,8 @@ const dom = {
   board: document.getElementById("morpionBoard"),
   winLine: null,
   waitingModal: document.getElementById("morpionWaitingModal"),
+  ruleModal: document.getElementById("morpionRuleModal"),
+  ruleContinueBtn: document.getElementById("morpionRuleContinueBtn"),
   waitingTitle: document.getElementById("morpionWaitingTitle"),
   waitingCopy: document.getElementById("morpionWaitingCopy"),
   resultModal: document.getElementById("morpionResultModal"),
@@ -89,6 +92,7 @@ let pendingEndModalPayload = null;
 let winLineVisible = false;
 let fallbackOpponentAlias = "";
 let fallbackOpponentAliasRoomId = "";
+let turnRuleAccepted = false;
 
 function morpionDebug(event, payload = {}) {
   try {
@@ -125,6 +129,18 @@ function makePlayerId(seed = "") {
 function randomPlayerIdLabel() {
   const value = Math.floor(Math.random() * 900000) + 100000;
   return `Joueur ID-${String(value)}`;
+}
+
+function pickBotNumericId() {
+  const roomSeed = String(currentRoomId || "").trim();
+  let hash = 0;
+  for (let index = 0; index < roomSeed.length; index += 1) {
+    hash = ((hash * 31) + roomSeed.charCodeAt(index)) >>> 0;
+  }
+  const slot = MORPION_BOT_NUMERIC_IDS.length > 0
+    ? (hash % MORPION_BOT_NUMERIC_IDS.length)
+    : 0;
+  return MORPION_BOT_NUMERIC_IDS[slot] || MORPION_BOT_NUMERIC_IDS[0];
 }
 
 function readAbandonedRoomIds() {
@@ -181,6 +197,10 @@ function getSelfName() {
 function getOpponentName() {
   const opponentSeat = getOpponentSeat();
   const roomName = Array.isArray(currentRoomData?.playerNames) ? String(currentRoomData.playerNames[opponentSeat] || "").trim() : "";
+  const opponentUid = Array.isArray(currentRoomData?.playerUids) ? String(currentRoomData.playerUids[opponentSeat] || "").trim() : "";
+  if (!opponentUid && safeInt(currentRoomData?.botCount, 0) > 0 && safeInt(currentRoomData?.humanCount, 0) <= 1) {
+    return `Joueur ${pickBotNumericId()}`;
+  }
   return roomName || "En attente...";
 }
 
@@ -188,6 +208,9 @@ function getOpponentLabel() {
   const opponentSeat = getOpponentSeat();
   const opponentUid = Array.isArray(currentRoomData?.playerUids) ? String(currentRoomData.playerUids[opponentSeat] || "").trim() : "";
   if (!opponentUid) {
+    if (safeInt(currentRoomData?.botCount, 0) > 0 && safeInt(currentRoomData?.humanCount, 0) <= 1) {
+      return `Joueur ID-${pickBotNumericId()}`;
+    }
     const roomKey = String(currentRoomId || "").trim();
     if (!fallbackOpponentAlias || fallbackOpponentAliasRoomId !== roomKey) {
       fallbackOpponentAlias = randomPlayerIdLabel();
@@ -226,6 +249,14 @@ function openWaitingModal(title = "", copy = "") {
 
 function closeWaitingModal() {
   dom.waitingModal?.classList.add("hidden");
+}
+
+function openRuleModal() {
+  dom.ruleModal?.classList.remove("hidden");
+}
+
+function closeRuleModal() {
+  dom.ruleModal?.classList.add("hidden");
 }
 
 function openResultModal(eyebrow = "", title = "", copy = "") {
@@ -951,6 +982,13 @@ function bindEvents() {
   dom.revealResultBtn?.addEventListener("click", openPendingEndModal);
   dom.resultReplayBtn?.addEventListener("click", () => { void abandonAndNavigate("replay"); });
   dom.resultHomeBtn?.addEventListener("click", () => { void abandonAndNavigate("home"); });
+  dom.ruleContinueBtn?.addEventListener("click", () => {
+    turnRuleAccepted = true;
+    closeRuleModal();
+    if (currentUser?.uid) {
+      void joinOrResumeRoom();
+    }
+  });
 
   window.addEventListener("pagehide", () => {
     if (currentRoomId) {
@@ -972,6 +1010,7 @@ function init() {
   bindEvents();
   startTurnTicker();
   renderWalletValue();
+  openRuleModal();
   onAuthStateChanged(auth, (user) => {
     currentUser = user || null;
     if (!currentUser) {
@@ -980,6 +1019,10 @@ function init() {
       return;
     }
     subscribeToClient(currentUser.uid);
+    if (!turnRuleAccepted) {
+      openRuleModal();
+      return;
+    }
     void joinOrResumeRoom();
   });
 }
