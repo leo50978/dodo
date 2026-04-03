@@ -10797,9 +10797,9 @@ function scoreMorpionMoveCandidate(board = [], index = 0, seat = 0) {
 }
 
 const MORPION_SEARCH_WIN_SCORE = 10_000_000;
-const MORPION_ULTRA_SEARCH_DEPTH = 4;
-const MORPION_ULTRA_ROOT_CANDIDATES = 24;
-const MORPION_ULTRA_CHILD_CANDIDATES = 14;
+const MORPION_ULTRA_SEARCH_DEPTH = 5;
+const MORPION_ULTRA_ROOT_CANDIDATES = 28;
+const MORPION_ULTRA_CHILD_CANDIDATES = 18;
 
 function scoreMorpionThreatPattern(result = {}) {
   const lineLength = safeInt(result.lineLength);
@@ -10930,6 +10930,33 @@ function getCriticalOpponentThreatMoves(board = [], botSeat = 0) {
     severity: item.severity,
     analysis: item.analysis,
   }));
+}
+
+function analyzeOpponentForcedPressure(board = [], botSeat = 0) {
+  const opponentSeat = botSeat === 0 ? 1 : 0;
+  const opponentImmediateWins = getImmediateWinningMorpionMoves(board, opponentSeat);
+  const criticalThreats = getCriticalOpponentThreatMoves(board, botSeat);
+  const openFourThreats = criticalThreats.filter((item) => safeInt(item?.analysis?.openFourCount) >= 1);
+  const doubleOpenThreeThreats = criticalThreats.filter((item) => safeInt(item?.analysis?.openThreeCount) >= 2);
+  const closedFourThreats = criticalThreats.filter((item) => safeInt(item?.analysis?.closedFourCount) >= 1);
+  const maxSeverity = criticalThreats.length ? safeInt(criticalThreats[0].severity) : 0;
+
+  const isCatastrophic =
+    opponentImmediateWins.length > 0
+    || openFourThreats.length > 0
+    || doubleOpenThreeThreats.length > 0
+    || (closedFourThreats.length >= 2)
+    || maxSeverity >= 5_000_000;
+
+  return {
+    opponentImmediateWins,
+    criticalThreats,
+    openFourThreats,
+    doubleOpenThreeThreats,
+    closedFourThreats,
+    maxSeverity,
+    isCatastrophic,
+  };
 }
 
 function chooseForcedDefensiveMorpionMove(board = [], botSeat = 0) {
@@ -11178,26 +11205,40 @@ function chooseUltraMorpionBotMove(state = {}, botSeat = 0) {
       || safeInt(threat.closedFourCount) >= 1
       || safeInt(threat.openThreeCount) >= 2;
   });
-  const searchDepth = moveCount < 6 ? 4 : (isDangerPhase ? 5 : MORPION_ULTRA_SEARCH_DEPTH);
+  const searchDepth = moveCount < 6 ? 5 : (isDangerPhase ? 6 : MORPION_ULTRA_SEARCH_DEPTH);
   const transposition = new Map();
   let bestMove = rootMoves[0];
   let bestScore = -Infinity;
   let alpha = -Infinity;
   const scoredRoot = [];
+  const safeRootMoves = [];
 
   for (const move of rootMoves) {
     const analysis = analyzeMorpionPlacement(board, move, botSeat);
+    const pressure = analyzeOpponentForcedPressure(analysis.board, botSeat);
+    const botImmediateWinsAfterMove = getImmediateWinningMorpionMoves(analysis.board, botSeat).length;
+    const catastrophicWithoutCompensation = pressure.isCatastrophic && botImmediateWinsAfterMove <= 0;
+    if (!catastrophicWithoutCompensation) {
+      safeRootMoves.push(move);
+    }
+
     let score = analysis.isWin
       ? MORPION_SEARCH_WIN_SCORE
       : searchMorpionMinimax(analysis.board, opponentSeat, botSeat, searchDepth - 1, alpha, Infinity, 1, transposition);
-    const nextOpponentThreats = getCriticalOpponentThreatMoves(analysis.board, botSeat);
-    const nextImmediateWins = getImmediateWinningMorpionMoves(analysis.board, opponentSeat).length;
+    const nextOpponentThreats = pressure.criticalThreats;
+    const nextImmediateWins = pressure.opponentImmediateWins.length;
     if (nextImmediateWins > 0) {
-      score -= 30_000_000 * nextImmediateWins;
+      score -= 50_000_000 * nextImmediateWins;
     } else if (nextOpponentThreats.length > 0) {
-      const topSeverity = safeInt(nextOpponentThreats[0].severity);
-      score -= topSeverity * 0.8;
-      score -= nextOpponentThreats.length * 180_000;
+      const topSeverity = safeInt(pressure.maxSeverity);
+      score -= topSeverity * 1.1;
+      score -= nextOpponentThreats.length * 240_000;
+      if (pressure.openFourThreats.length > 0) score -= 18_000_000;
+      if (pressure.doubleOpenThreeThreats.length > 0) score -= 8_000_000;
+      if (pressure.closedFourThreats.length >= 2) score -= 4_000_000;
+    }
+    if (catastrophicWithoutCompensation) {
+      score -= 120_000_000;
     }
     scoredRoot.push({ move, score, threatScore: analysis.threatScore });
     if (score > bestScore) {
@@ -11211,6 +11252,12 @@ function chooseUltraMorpionBotMove(state = {}, botSeat = 0) {
     if (right.score !== left.score) return right.score - left.score;
     return right.threatScore - left.threatScore;
   });
+  if (safeRootMoves.length > 0) {
+    const safest = scoredRoot.find((item) => safeRootMoves.includes(item.move));
+    if (safest) {
+      return { seat: botSeat, cellIndex: safest.move };
+    }
+  }
   return { seat: botSeat, cellIndex: scoredRoot[0]?.move ?? bestMove };
 }
 
