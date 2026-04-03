@@ -10432,7 +10432,7 @@ function buildMorpionPresenceUpdates(room = {}, actorUid = "", nowMs = Date.now(
   };
 }
 
-function applyMorpionLeaveForUidTx(tx, roomRefDoc, room = {}, uid = "") {
+async function applyMorpionLeaveForUidTx(tx, roomRefDoc, room = {}, uid = "", userEmail = "") {
   const safeUid = String(uid || "").trim();
   const currentUids = Array.from({ length: 2 }, (_, idx) => String((room.playerUids || [])[idx] || ""));
   if (!safeUid || !currentUids.includes(safeUid)) {
@@ -10467,6 +10467,33 @@ function applyMorpionLeaveForUidTx(tx, roomRefDoc, room = {}, uid = "") {
     ? { ...room.botGraceUntilMs }
     : {};
   delete nextGraceUntil[String(seatIndex)];
+  const currentEntryFundingByUid = room.entryFundingByUid && typeof room.entryFundingByUid === "object"
+    ? { ...room.entryFundingByUid }
+    : {};
+  const leavingEntryFunding = currentEntryFundingByUid[safeUid] && typeof currentEntryFundingByUid[safeUid] === "object"
+    ? currentEntryFundingByUid[safeUid]
+    : null;
+  delete currentEntryFundingByUid[safeUid];
+  const leavingApprovedDoes = safeInt(leavingEntryFunding?.approvedDoes);
+  const leavingProvisionalDoes = safeInt(leavingEntryFunding?.provisionalDoes);
+  const leavingWelcomeDoes = Math.max(0, Math.min(leavingApprovedDoes, safeInt(leavingEntryFunding?.welcomeDoes)));
+  const refundAmountDoes = Math.max(0, leavingApprovedDoes + leavingProvisionalDoes);
+
+  if (status === "waiting" && refundAmountDoes > 0) {
+    await applyWalletMutationTx(tx, {
+      uid: safeUid,
+      email: String(userEmail || ""),
+      type: "game_reward",
+      note: `Remboursement morpion (${roomRefDoc.id})`,
+      amountDoes: refundAmountDoes,
+      approvedRewardDoes: leavingApprovedDoes,
+      provisionalRewardDoes: leavingProvisionalDoes,
+      welcomeRewardDoes: leavingWelcomeDoes,
+      amountGourdes: 0,
+      deltaDoes: refundAmountDoes,
+      deltaExchangedGourdes: 0,
+    });
+  }
   const humans = nextPlayerUids.filter(Boolean).length;
 
   if (humans <= 0) {
@@ -10479,6 +10506,7 @@ function applyMorpionLeaveForUidTx(tx, roomRefDoc, room = {}, uid = "") {
       roomPresenceMs: nextPresence,
       humanCount: 0,
       botCount: 0,
+      entryFundingByUid: currentEntryFundingByUid,
       botTakeoverSeats: [],
       botGraceUntilMs: admin.firestore.FieldValue.delete(),
       updatedAt: admin.firestore.FieldValue.serverTimestamp(),
@@ -10506,6 +10534,7 @@ function applyMorpionLeaveForUidTx(tx, roomRefDoc, room = {}, uid = "") {
     blockedRejoinUids,
     seats: nextSeats,
     roomPresenceMs: nextPresence,
+    entryFundingByUid: currentEntryFundingByUid,
     humanCount: humans,
     botCount: nextBotCount,
     botTakeoverSeats: [],
@@ -10552,7 +10581,7 @@ function applyMorpionLeaveForUidTx(tx, roomRefDoc, room = {}, uid = "") {
   };
 }
 
-async function forceRemoveUserFromMorpionRoom(roomId = "", uid = "") {
+async function forceRemoveUserFromMorpionRoom(roomId = "", uid = "", userEmail = "") {
   const safeRoomId = String(roomId || "").trim();
   const safeUid = String(uid || "").trim();
   if (!safeRoomId || !safeUid) return { ok: true, deleted: false, status: "skipped" };
@@ -10567,7 +10596,7 @@ async function forceRemoveUserFromMorpionRoom(roomId = "", uid = "") {
         shouldNudgeBots: false,
       };
     }
-    return applyMorpionLeaveForUidTx(tx, roomRefDoc, roomSnap.data() || {}, safeUid);
+    return await applyMorpionLeaveForUidTx(tx, roomRefDoc, roomSnap.data() || {}, safeUid, userEmail);
   });
 
   if (outcome?.shouldNudgeBots) {
@@ -11712,13 +11741,13 @@ exports.joinMatchmakingMorpion = publicOnCall("joinMatchmakingMorpion", async (r
   const allowHumanOnlyMatchmaking = true;
 
   for (const excludedRoomId of excludedRoomIds) {
-    await forceRemoveUserFromMorpionRoom(excludedRoomId, uid).catch(() => null);
+    await forceRemoveUserFromMorpionRoom(excludedRoomId, uid, email).catch(() => null);
   }
 
   const activeRoom = await findActiveMorpionRoomForUser(uid);
   if (activeRoom) {
     if (excludedRoomIdSet.has(String(activeRoom.roomId || "").trim())) {
-      await forceRemoveUserFromMorpionRoom(activeRoom.roomId, uid).catch(() => null);
+      await forceRemoveUserFromMorpionRoom(activeRoom.roomId, uid, email).catch(() => null);
     } else {
       return {
         ok: true,
@@ -12173,7 +12202,7 @@ exports.ackRoomStartSeenMorpion = publicOnCall("ackRoomStartSeenMorpion", async 
 }, { invoker: "public" });
 
 exports.leaveRoomMorpion = publicOnCall("leaveRoomMorpion", async (request) => {
-  const { uid } = assertAuth(request);
+  const { uid, email } = assertAuth(request);
   const payload = request.data && typeof request.data === "object" ? request.data : {};
   const roomId = String(payload.roomId || "").trim();
   if (!roomId) {
@@ -12191,7 +12220,7 @@ exports.leaveRoomMorpion = publicOnCall("leaveRoomMorpion", async (request) => {
       };
     }
     const roomData = roomSnap.data() || {};
-    const result = applyMorpionLeaveForUidTx(tx, roomRefDoc, roomData, uid);
+    const result = await applyMorpionLeaveForUidTx(tx, roomRefDoc, roomData, uid, email);
     tx.set(morpionWaitingRequestRef(uid), {
       uid,
       roomId,
