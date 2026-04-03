@@ -19,6 +19,7 @@ import {
   submitActionDuelSecure,
   claimWinRewardDuelSecure,
 } from "./secure-functions.js";
+import { startMorpionLiveNotice } from "./morpion-live-notice.js";
 
 const DUEL_ROOMS = "duelRooms";
 const ALLOWED_DUEL_STAKE_AMOUNTS = Object.freeze([500, 1000]);
@@ -101,6 +102,8 @@ const ONLINE_USERS_MAX = 100000;
 const ONLINE_USERS_STEP_MS = 30000;
 const ONLINE_USERS_WAVE_PERIOD = 29;
 const ONLINE_USERS_SEED = 0x9e3779b9;
+
+startMorpionLiveNotice();
 
 function duelDebug(label, payload = {}) {
   if (!DUEL_DEBUG) return;

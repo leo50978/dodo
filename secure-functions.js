@@ -204,6 +204,10 @@ export async function respondMorpionPlayInviteSecure(payload = {}) {
   return invokeCallable("respondMorpionPlayInvite", payload, "Impossible de repondre a l'invitation.");
 }
 
+export async function getMorpionLiveMatchmakingSignalSecure(payload = {}) {
+  return invokeCallable("getMorpionLiveMatchmakingSignal", payload, "Impossible de charger le signal Morpion.");
+}
+
 export async function getRecruitmentCampaignSnapshotSecure(payload = {}) {
   return invokeCallable("getRecruitmentCampaignSnapshotSecure", payload, "Impossible de charger la campagne de recrutement.");
 }

@@ -22,6 +22,7 @@ import {
   claimWinRewardSecure,
   submitActionSecure,
 } from "./secure-functions.js";
+import { startMorpionLiveNotice } from "./morpion-live-notice.js";
 
 const ROOMS = "rooms";
 const TURN_LIMIT_SECONDS = 15;
@@ -53,6 +54,8 @@ const START_CINEMATIC_REVEAL_MS = 1000;
 const START_CINEMATIC_TILE_COUNT = 28;
 const START_CINEMATIC_DEAL_GAP_MS = 46;
 const START_CINEMATIC_TILE_TRAVEL_MS = 310;
+
+startMorpionLiveNotice();
 
 function resolveEntryCostDoes(searchParams) {
   const rawStake = searchParams.get("stake");

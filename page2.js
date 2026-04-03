@@ -23,6 +23,7 @@ import {
   respondMorpionPlayInviteSecure,
 } from "./secure-functions.js";
 import { auth, db, collection, query, orderBy, limit, doc, getDoc, getDocs, setDoc, serverTimestamp, onSnapshot } from "./firebase-init.js";
+import { startMorpionLiveNotice } from "./morpion-live-notice.js";
 
 const CHAT_COLLECTION = "globalChannelMessages";
 const SUPPORT_THREADS_COLLECTION = "supportThreads";
@@ -97,6 +98,8 @@ let page2MorpionInvitePollTimer = null;
 let page2MorpionInvitePollInFlight = false;
 let page2MorpionInviteActiveId = "";
 let page2MorpionInviteModal = null;
+
+startMorpionLiveNotice();
 
 async function runPage2Animations() {
   try {

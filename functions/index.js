@@ -12380,6 +12380,52 @@ exports.getMorpionWaitingQueueDashboard = publicOnCall("getMorpionWaitingQueueDa
   };
 }, { invoker: "public" });
 
+exports.getMorpionLiveMatchmakingSignal = publicOnCall("getMorpionLiveMatchmakingSignal", async (request) => {
+  const { uid } = assertAuth(request);
+  const nowMs = Date.now();
+  const queueSnap = await db.collection(MORPION_WAITING_REQUESTS_COLLECTION)
+    .where("status", "in", ["pending", "accepted_invite"])
+    .orderBy("updatedAtMs", "desc")
+    .limit(40)
+    .get();
+
+  const rows = [];
+  queueSnap.forEach((docSnap) => {
+    const data = docSnap.data() || {};
+    if (!isMorpionWaitingRequestOnline(data, nowMs)) return;
+    const rowUid = String(data.uid || docSnap.id || "").trim();
+    if (!rowUid) return;
+    rows.push({
+      uid: rowUid,
+      updatedAtMs: safeSignedInt(data.updatedAtMs),
+      lastSeenMs: safeSignedInt(data.lastSeenMs),
+      lastAttemptAtMs: safeSignedInt(data.lastAttemptAtMs),
+      createdAtMs: safeSignedInt(data.createdAtMs),
+    });
+  });
+
+  const activeOthers = rows.filter((row) => row.uid !== uid);
+  const newest = activeOthers[0] || null;
+  const signalTsMs = newest
+    ? Math.max(
+      safeSignedInt(newest.updatedAtMs),
+      safeSignedInt(newest.lastSeenMs),
+      safeSignedInt(newest.lastAttemptAtMs),
+      safeSignedInt(newest.createdAtMs)
+    )
+    : 0;
+
+  return {
+    ok: true,
+    active: activeOthers.length > 0,
+    activeCount: activeOthers.length,
+    signalTsMs,
+    message: activeOthers.length > 0
+      ? "Des joueurs sont disponibles sur Morpion."
+      : "",
+  };
+}, { invoker: "public" });
+
 exports.inviteMorpionWaitingPlayer = publicOnCall("inviteMorpionWaitingPlayer", async (request) => {
   const { uid: adminUid, email: adminEmail } = assertFinanceAdmin(request);
   const payload = request.data && typeof request.data === "object" ? request.data : {};
