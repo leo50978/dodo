@@ -46,6 +46,8 @@ const MATCHMAKING_POOLS_COLLECTION = "matchmakingPools";
 const DUEL_MATCHMAKING_POOLS_COLLECTION = "duelMatchmakingPools";
 const MORPION_MATCHMAKING_POOLS_COLLECTION = "morpionMatchmakingPools";
 const MORPION_PLAYER_PROFILES_COLLECTION = "morpionPlayerProfiles";
+const MORPION_WAITING_REQUESTS_COLLECTION = "morpionWaitingRequests";
+const MORPION_PLAY_INVITATIONS_COLLECTION = "morpionPlayInvitations";
 const ANALYTICS_META_COLLECTION = "analyticsMeta";
 const ANALYTICS_PRESENCE_SNAPSHOTS_COLLECTION = "analyticsPresenceSnapshots";
 const ANALYTICS_PRESENCE_DAILY_COLLECTION = "analyticsPresenceDaily";
@@ -105,7 +107,7 @@ const DEFAULT_DUEL_STAKE_OPTIONS = Object.freeze([
 ]);
 const DEFAULT_MORPION_STAKE_OPTIONS = Object.freeze([
   Object.freeze({ id: "morpion_500", stakeDoes: 500, rewardDoes: 900, enabled: true, sortOrder: 10 }),
-  Object.freeze({ id: "morpion_1000", stakeDoes: 1000, rewardDoes: 1800, enabled: true, sortOrder: 20 }),
+  Object.freeze({ id: "morpion_1000", stakeDoes: 1000, rewardDoes: 1800, enabled: false, sortOrder: 20 }),
 ]);
 
 function computeDepositBonusSnapshot(amountHtg = 0) {
@@ -149,6 +151,9 @@ const MORPION_BOT_BLOCK_MIN_GAMES = 5;
 const MORPION_BOT_BLOCK_MIN_WIN_RATE = 0.6;
 const MORPION_BOT_BLOCK_WIN_STREAK = 2;
 const MORPION_MATCHMAKING_REASON_SKILLED_WAIT_ONLY = "morpion-skilled-wait-human-only";
+const MORPION_WAITING_ONLINE_WINDOW_MS = 45 * 1000;
+const MORPION_INVITATION_TTL_MS = 90 * 1000;
+const MORPION_WAITING_QUEUE_FETCH_LIMIT = 220;
 const ACQUISITION_DEFAULT_WINDOW_MS = 30 * 24 * 60 * 60 * 1000;
 const ACQUISITION_MAX_WINDOW_MS = 180 * 24 * 60 * 60 * 1000;
 const ACQUISITION_ACTIVE_LOOKBACK_MS = 7 * 24 * 60 * 60 * 1000;
@@ -10153,6 +10158,39 @@ function morpionPlayerProfileRef(uid = "") {
   return db.collection(MORPION_PLAYER_PROFILES_COLLECTION).doc(String(uid || "").trim());
 }
 
+function morpionWaitingRequestRef(uid = "") {
+  return db.collection(MORPION_WAITING_REQUESTS_COLLECTION).doc(String(uid || "").trim());
+}
+
+function morpionPlayInvitationRef(invitationId = "") {
+  const safeId = String(invitationId || "").trim();
+  return safeId
+    ? db.collection(MORPION_PLAY_INVITATIONS_COLLECTION).doc(safeId)
+    : db.collection(MORPION_PLAY_INVITATIONS_COLLECTION).doc();
+}
+
+function isMorpionWaitingRequestOnline(requestData = {}, nowMs = Date.now()) {
+  const lastSeenMs = safeSignedInt(requestData.lastSeenMs);
+  return lastSeenMs > 0 && (nowMs - lastSeenMs) <= MORPION_WAITING_ONLINE_WINDOW_MS;
+}
+
+async function upsertMorpionWaitingRequest(uid = "", payload = {}) {
+  const safeUid = String(uid || "").trim();
+  if (!safeUid) return;
+  const nowMs = Date.now();
+  await morpionWaitingRequestRef(safeUid).set({
+    uid: safeUid,
+    roomId: String(payload.roomId || "").trim(),
+    stakeDoes: safeInt(payload.stakeDoes),
+    status: String(payload.status || "pending").trim() || "pending",
+    createdAtMs: safeSignedInt(payload.createdAtMs) > 0 ? safeSignedInt(payload.createdAtMs) : nowMs,
+    lastAttemptAtMs: nowMs,
+    lastSeenMs: safeSignedInt(payload.lastSeenMs) > 0 ? safeSignedInt(payload.lastSeenMs) : nowMs,
+    updatedAtMs: nowMs,
+    updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+  }, { merge: true });
+}
+
 function computeMorpionBotBlockingState(profile = {}, didWinVsBot = false) {
   const prevGames = safeInt(profile.botGames);
   const prevWins = safeInt(profile.botWins);
@@ -11671,8 +11709,7 @@ exports.joinMatchmakingMorpion = publicOnCall("joinMatchmakingMorpion", async (r
     throw new HttpsError("invalid-argument", "Mise morpion non autorisee.");
   }
 
-  const morpionPolicy = await getConfiguredMorpionMatchmakingPolicy();
-  const allowHumanOnlyMatchmaking = morpionPolicy.allowHumanOnly !== false;
+  const allowHumanOnlyMatchmaking = true;
 
   for (const excludedRoomId of excludedRoomIds) {
     await forceRemoveUserFromMorpionRoom(excludedRoomId, uid).catch(() => null);
@@ -11700,14 +11737,11 @@ exports.joinMatchmakingMorpion = publicOnCall("joinMatchmakingMorpion", async (r
 
   const created = await db.runTransaction(async (tx) => {
     const nowMs = Date.now();
-    const [poolSnap, walletSnap, profileSnap] = await Promise.all([
+    const [poolSnap, walletSnap] = await Promise.all([
       tx.get(poolRef),
       tx.get(walletRef(uid)),
-      tx.get(morpionPlayerProfileRef(uid)),
     ]);
     const walletData = walletSnap.exists ? (walletSnap.data() || {}) : {};
-    const profileData = profileSnap.exists ? (profileSnap.data() || {}) : {};
-    const botBlockedForUser = profileData.botBlocked === true;
     assertWalletNotFrozen(walletData);
     if (stakeDoes > 0 && safeInt(walletData.doesBalance) < stakeDoes) {
       throw new HttpsError("failed-precondition", "Solde Does insuffisant.");
@@ -11778,6 +11812,19 @@ exports.joinMatchmakingMorpion = publicOnCall("joinMatchmakingMorpion", async (r
 
             if (nextHumans >= 2) {
               clearMorpionMatchmakingPool(tx, poolRef);
+              nextPlayerUids
+                .map((playerUid) => String(playerUid || "").trim())
+                .filter(Boolean)
+                .forEach((playerUid) => {
+                  tx.set(morpionWaitingRequestRef(playerUid), {
+                    uid: playerUid,
+                    roomId: openRoomRef.id,
+                    stakeDoes,
+                    status: "matched",
+                    updatedAtMs: nowMs,
+                    updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+                  }, { merge: true });
+                });
               logMorpionServerDebug("joinMatchmaking:matchedHuman", {
                 roomId: openRoomRef.id,
                 uid,
@@ -11808,24 +11855,6 @@ exports.joinMatchmakingMorpion = publicOnCall("joinMatchmakingMorpion", async (r
           }
         }
       }
-    }
-
-    if (botBlockedForUser) {
-      logMorpionServerDebug("joinMatchmaking:blockedFromBot", {
-        uid,
-        stakeDoes,
-        reason: String(profileData.botBlockedReason || ""),
-        botGames: safeInt(profileData.botGames),
-        botWins: safeInt(profileData.botWins),
-      });
-      throw new HttpsError(
-        "failed-precondition",
-        "Aucun adversaire humain disponible pour le moment.",
-        {
-          code: MORPION_MATCHMAKING_REASON_SKILLED_WAIT_ONLY,
-          reason: MORPION_MATCHMAKING_REASON_SKILLED_WAIT_ONLY,
-        }
-      );
     }
 
     const walletMutation = stakeDoes > 0
@@ -11883,6 +11912,17 @@ exports.joinMatchmakingMorpion = publicOnCall("joinMatchmakingMorpion", async (r
       rewardAmountDoes,
       stakeConfigId: selectedStakeConfig.id,
     });
+    tx.set(morpionWaitingRequestRef(uid), {
+      uid,
+      roomId: newRoomRef.id,
+      stakeDoes,
+      status: "pending",
+      createdAtMs: nowMs,
+      lastAttemptAtMs: nowMs,
+      lastSeenMs: nowMs,
+      updatedAtMs: nowMs,
+      updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+    }, { merge: true });
     setMorpionMatchmakingPoolOpen(tx, poolRef, newRoomRef.id, selectedStakeConfig.id, stakeDoes);
     logMorpionServerDebug("joinMatchmaking:createdWaitingRoom", {
       roomId: newRoomRef.id,
@@ -11979,6 +12019,19 @@ exports.ensureRoomReadyMorpion = publicOnCall("ensureRoomReadyMorpion", async (r
     }
 
     clearMorpionMatchmakingPool(tx, morpionMatchmakingPoolRef(String(room.stakeConfigId || ""), safeInt(room.entryCostDoes || room.stakeDoes)));
+    (Array.isArray(room.playerUids) ? room.playerUids : [])
+      .map((playerUid) => String(playerUid || "").trim())
+      .filter(Boolean)
+      .forEach((playerUid) => {
+        tx.set(morpionWaitingRequestRef(playerUid), {
+          uid: playerUid,
+          roomId,
+          stakeDoes: safeInt(room.entryCostDoes || room.stakeDoes),
+          status: "matched",
+          updatedAtMs: nowMs,
+          updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+        }, { merge: true });
+      });
     logMorpionServerDebug("ensureRoomReady:startingRoom", {
       roomId,
       uid,
@@ -12029,6 +12082,15 @@ exports.touchRoomPresenceMorpion = publicOnCall("touchRoomPresenceMorpion", asyn
     shouldNudgeBots = presenceResult.shouldNudgeBots === true;
     shouldResolveExpiredHumanTurn = presenceResult.shouldResolveExpiredHumanTurn === true;
     tx.update(roomRefDoc, presenceResult.updates);
+    tx.set(morpionWaitingRequestRef(uid), {
+      uid,
+      roomId,
+      stakeDoes: safeInt(room.entryCostDoes || room.stakeDoes),
+      status: String(room.status || "") === "waiting" ? "pending" : "matched",
+      lastSeenMs: nowMs,
+      updatedAtMs: nowMs,
+      updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+    }, { merge: true });
 
     logMorpionServerDebug("touchPresence", {
       roomId,
@@ -12128,7 +12190,16 @@ exports.leaveRoomMorpion = publicOnCall("leaveRoomMorpion", async (request) => {
         shouldNudgeBots: false,
       };
     }
-    return applyMorpionLeaveForUidTx(tx, roomRefDoc, roomSnap.data() || {}, uid);
+    const roomData = roomSnap.data() || {};
+    const result = applyMorpionLeaveForUidTx(tx, roomRefDoc, roomData, uid);
+    tx.set(morpionWaitingRequestRef(uid), {
+      uid,
+      roomId,
+      status: "closed",
+      updatedAtMs: Date.now(),
+      updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+    }, { merge: true });
+    return result;
   });
 
   if (outcome?.shouldNudgeBots) {
@@ -12140,6 +12211,219 @@ exports.leaveRoomMorpion = publicOnCall("leaveRoomMorpion", async (request) => {
 
   await cleanupMorpionRoom(roomRefDoc);
   return { ok: true, deleted: true, status: "deleted" };
+}, { invoker: "public" });
+
+exports.getMyActiveMorpionInvite = publicOnCall("getMyActiveMorpionInvite", async (request) => {
+  const { uid } = assertAuth(request);
+  const nowMs = Date.now();
+  const inviteSnap = await db.collection(MORPION_PLAY_INVITATIONS_COLLECTION)
+    .where("targetUid", "==", uid)
+    .where("status", "==", "pending")
+    .orderBy("createdAtMs", "desc")
+    .limit(4)
+    .get();
+
+  if (inviteSnap.empty) {
+    return { ok: true, invitation: null };
+  }
+
+  const activeDoc = inviteSnap.docs.find((docSnap) => safeSignedInt(docSnap.data()?.expiresAtMs) > nowMs);
+  if (!activeDoc) {
+    return { ok: true, invitation: null };
+  }
+
+  const data = activeDoc.data() || {};
+  return {
+    ok: true,
+    invitation: {
+      invitationId: activeDoc.id,
+      createdAtMs: safeSignedInt(data.createdAtMs),
+      expiresAtMs: safeSignedInt(data.expiresAtMs),
+      stakeDoes: safeInt(data.stakeDoes),
+      gameLabel: String(data.gameLabel || "domino"),
+      message: String(data.message || "Il y a actuellement des joueurs disponibles. Veux-tu jouer maintenant ?"),
+    },
+  };
+}, { invoker: "public" });
+
+exports.respondMorpionPlayInvite = publicOnCall("respondMorpionPlayInvite", async (request) => {
+  const { uid } = assertAuth(request);
+  const payload = request.data && typeof request.data === "object" ? request.data : {};
+  const invitationId = String(payload.invitationId || "").trim();
+  const action = String(payload.action || "").trim().toLowerCase();
+  if (!invitationId || !["accept", "refuse"].includes(action)) {
+    throw new HttpsError("invalid-argument", "invitationId et action requis.");
+  }
+
+  const invitationRef = morpionPlayInvitationRef(invitationId);
+  const nowMs = Date.now();
+  return db.runTransaction(async (tx) => {
+    const invitationSnap = await tx.get(invitationRef);
+    if (!invitationSnap.exists) {
+      throw new HttpsError("not-found", "Invitation introuvable.");
+    }
+    const invitation = invitationSnap.data() || {};
+    if (String(invitation.targetUid || "").trim() !== uid) {
+      throw new HttpsError("permission-denied", "Invitation invalide.");
+    }
+
+    const currentStatus = String(invitation.status || "").trim().toLowerCase();
+    const expiresAtMs = safeSignedInt(invitation.expiresAtMs);
+    if (currentStatus !== "pending") {
+      return { ok: true, status: currentStatus };
+    }
+    if (expiresAtMs > 0 && expiresAtMs <= nowMs) {
+      tx.update(invitationRef, {
+        status: "expired",
+        respondedAtMs: nowMs,
+        updatedAtMs: nowMs,
+        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      });
+      return { ok: true, status: "expired" };
+    }
+
+    const nextStatus = action === "accept" ? "accepted" : "refused";
+    tx.update(invitationRef, {
+      status: nextStatus,
+      respondedAtMs: nowMs,
+      updatedAtMs: nowMs,
+      updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+    });
+    tx.set(morpionWaitingRequestRef(uid), {
+      uid,
+      status: nextStatus === "accepted" ? "accepted_invite" : "pending",
+      lastInviteResponseAtMs: nowMs,
+      updatedAtMs: nowMs,
+      updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+    }, { merge: true });
+    return { ok: true, status: nextStatus };
+  });
+}, { invoker: "public" });
+
+exports.getMorpionWaitingQueueDashboard = publicOnCall("getMorpionWaitingQueueDashboard", async (request) => {
+  assertFinanceAdmin(request);
+  const nowMs = Date.now();
+  const queueSnap = await db.collection(MORPION_WAITING_REQUESTS_COLLECTION)
+    .orderBy("updatedAtMs", "desc")
+    .limit(MORPION_WAITING_QUEUE_FETCH_LIMIT)
+    .get();
+
+  const rows = [];
+  queueSnap.forEach((docSnap) => {
+    const data = docSnap.data() || {};
+    const uid = String(data.uid || docSnap.id || "").trim();
+    if (!uid) return;
+    const status = String(data.status || "pending").trim().toLowerCase();
+    if (!["pending", "accepted_invite"].includes(status)) return;
+
+    const online = isMorpionWaitingRequestOnline(data, nowMs);
+    const lastInviteAtMs = safeSignedInt(data.lastInviteAtMs);
+    const canInvite = online && (lastInviteAtMs <= 0 || (nowMs - lastInviteAtMs) >= MORPION_INVITATION_TTL_MS);
+
+    rows.push({
+      uid,
+      roomId: String(data.roomId || "").trim(),
+      stakeDoes: safeInt(data.stakeDoes),
+      status,
+      online,
+      canInvite,
+      createdAtMs: safeSignedInt(data.createdAtMs),
+      updatedAtMs: safeSignedInt(data.updatedAtMs),
+      lastAttemptAtMs: safeSignedInt(data.lastAttemptAtMs),
+      lastSeenMs: safeSignedInt(data.lastSeenMs),
+      lastInviteAtMs,
+      lastInviteResponseAtMs: safeSignedInt(data.lastInviteResponseAtMs),
+      lastInvitationId: String(data.lastInvitationId || "").trim(),
+    });
+  });
+
+  rows.sort((a, b) => {
+    if (a.online !== b.online) return a.online ? -1 : 1;
+    return safeSignedInt(b.updatedAtMs) - safeSignedInt(a.updatedAtMs);
+  });
+
+  return {
+    ok: true,
+    nowMs,
+    onlineWindowMs: MORPION_WAITING_ONLINE_WINDOW_MS,
+    invitationTtlMs: MORPION_INVITATION_TTL_MS,
+    rows,
+  };
+}, { invoker: "public" });
+
+exports.inviteMorpionWaitingPlayer = publicOnCall("inviteMorpionWaitingPlayer", async (request) => {
+  const { uid: adminUid, email: adminEmail } = assertFinanceAdmin(request);
+  const payload = request.data && typeof request.data === "object" ? request.data : {};
+  const targetUid = String(payload.targetUid || "").trim();
+  if (!targetUid) {
+    throw new HttpsError("invalid-argument", "targetUid requis.");
+  }
+
+  const nowMs = Date.now();
+  return db.runTransaction(async (tx) => {
+    const waitingRef = morpionWaitingRequestRef(targetUid);
+    const waitingSnap = await tx.get(waitingRef);
+    if (!waitingSnap.exists) {
+      throw new HttpsError("not-found", "Ce joueur n'est plus en attente.");
+    }
+
+    const waitingData = waitingSnap.data() || {};
+    const status = String(waitingData.status || "pending").trim().toLowerCase();
+    if (!["pending", "accepted_invite"].includes(status)) {
+      throw new HttpsError("failed-precondition", "Le joueur n'est plus disponible.");
+    }
+    if (!isMorpionWaitingRequestOnline(waitingData, nowMs)) {
+      throw new HttpsError("failed-precondition", "Le joueur est hors ligne.");
+    }
+
+    const lastInviteAtMs = safeSignedInt(waitingData.lastInviteAtMs);
+    if (lastInviteAtMs > 0 && (nowMs - lastInviteAtMs) < MORPION_INVITATION_TTL_MS) {
+      throw new HttpsError("failed-precondition", "Une invitation est deja active.");
+    }
+
+    const inviteRef = morpionPlayInvitationRef();
+    const lastSeenMs = safeSignedInt(waitingData.lastSeenMs);
+    const onlineExpiryCapMs = lastSeenMs > 0 ? (lastSeenMs + MORPION_WAITING_ONLINE_WINDOW_MS) : 0;
+    const fallbackExpiryMs = nowMs + MORPION_INVITATION_TTL_MS;
+    const expiresAtMs = Math.max(
+      nowMs + 20_000,
+      Math.min(fallbackExpiryMs, onlineExpiryCapMs > 0 ? onlineExpiryCapMs : fallbackExpiryMs)
+    );
+    const stakeDoes = 500;
+
+    tx.set(inviteRef, {
+      invitationId: inviteRef.id,
+      targetUid,
+      status: "pending",
+      gameLabel: "domino",
+      stakeDoes,
+      message: "Il y a actuellement des joueurs disponibles sur Domino. Veux-tu jouer maintenant ?",
+      createdAtMs: nowMs,
+      expiresAtMs,
+      createdByUid: adminUid,
+      createdByEmail: String(adminEmail || ""),
+      updatedAtMs: nowMs,
+      createdAt: admin.firestore.FieldValue.serverTimestamp(),
+      updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+    }, { merge: true });
+
+    tx.set(waitingRef, {
+      uid: targetUid,
+      status: "pending",
+      lastInviteAtMs: nowMs,
+      lastInvitationId: inviteRef.id,
+      updatedAtMs: nowMs,
+      updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+    }, { merge: true });
+
+    return {
+      ok: true,
+      invitationId: inviteRef.id,
+      targetUid,
+      expiresAtMs,
+      stakeDoes,
+    };
+  });
 }, { invoker: "public" });
 
 exports.submitActionMorpion = publicOnCall("submitActionMorpion", async (request) => {

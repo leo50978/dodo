@@ -13,14 +13,17 @@ import {
   leaveRoomMorpionSecure,
   submitActionMorpionSecure,
   claimWinRewardMorpionSecure,
+  getMyActiveMorpionInviteSecure,
+  respondMorpionPlayInviteSecure,
 } from "./secure-functions.js";
 
 const MORPION_ROOMS = "morpionRooms";
 const MORPION_GAME_STATES = "morpionGameStates";
-const ALLOWED_MORPION_STAKE_AMOUNTS = Object.freeze([500, 1000]);
+const ALLOWED_MORPION_STAKE_AMOUNTS = Object.freeze([500]);
 const TURN_LIMIT_SECONDS = 15;
 const TURN_LIMIT_MS = TURN_LIMIT_SECONDS * 1000;
 const PRESENCE_PING_MS = 20 * 1000;
+const INVITE_POLL_MS = 6 * 1000;
 const ABANDONED_ROOMS_STORAGE_KEY = "domino_morpion_abandoned_rooms_v1";
 const MORPION_BOT_NUMERIC_IDS = Object.freeze([35601379, 40507232, 41752992]);
 
@@ -33,6 +36,11 @@ const dom = {
   board: document.getElementById("morpionBoard"),
   winLine: null,
   waitingModal: document.getElementById("morpionWaitingModal"),
+  inviteModal: document.getElementById("morpionInviteModal"),
+  inviteTitle: document.getElementById("morpionInviteTitle"),
+  inviteCopy: document.getElementById("morpionInviteCopy"),
+  inviteAcceptBtn: document.getElementById("morpionInviteAcceptBtn"),
+  inviteRefuseBtn: document.getElementById("morpionInviteRefuseBtn"),
   ruleModal: document.getElementById("morpionRuleModal"),
   ruleContinueBtn: document.getElementById("morpionRuleContinueBtn"),
   waitingTitle: document.getElementById("morpionWaitingTitle"),
@@ -93,6 +101,9 @@ let winLineVisible = false;
 let fallbackOpponentAlias = "";
 let fallbackOpponentAliasRoomId = "";
 let turnRuleAccepted = false;
+let invitePollTimer = null;
+let invitePollInFlight = false;
+let activeInviteId = "";
 
 function morpionDebug(event, payload = {}) {
   try {
@@ -249,6 +260,16 @@ function openWaitingModal(title = "", copy = "") {
 
 function closeWaitingModal() {
   dom.waitingModal?.classList.add("hidden");
+}
+
+function openInviteModal(title = "", copy = "") {
+  if (dom.inviteTitle) dom.inviteTitle.textContent = String(title || "Invitation disponible");
+  if (dom.inviteCopy) dom.inviteCopy.textContent = String(copy || "");
+  dom.inviteModal?.classList.remove("hidden");
+}
+
+function closeInviteModal() {
+  dom.inviteModal?.classList.add("hidden");
 }
 
 function openRuleModal() {
@@ -543,6 +564,13 @@ function stopTurnTick() {
   }
 }
 
+function stopInvitePoll() {
+  if (invitePollTimer) {
+    window.clearInterval(invitePollTimer);
+    invitePollTimer = null;
+  }
+}
+
 function stopWaitingEnsureTimer() {
   if (waitingEnsureTimer) {
     window.clearTimeout(waitingEnsureTimer);
@@ -589,6 +617,55 @@ function startPresencePing() {
 function startTurnTicker() {
   stopTurnTick();
   turnTick = window.setInterval(renderTimers, 250);
+}
+
+async function pollActiveInvite() {
+  if (!currentUser?.uid || invitePollInFlight) return;
+  invitePollInFlight = true;
+  try {
+    const result = await getMyActiveMorpionInviteSecure({});
+    const invite = result?.invitation && typeof result.invitation === "object" ? result.invitation : null;
+    const invitationId = String(invite?.invitationId || "").trim();
+    if (!invitationId) {
+      activeInviteId = "";
+      closeInviteModal();
+      return;
+    }
+    activeInviteId = invitationId;
+    const gameLabel = String(invite?.gameLabel || "domino").toUpperCase();
+    const copy = String(invite?.message || "Il y a actuellement des joueurs disponibles. Veux-tu jouer maintenant ?");
+    openInviteModal(`Des joueurs sont disponibles sur ${gameLabel}`, copy);
+  } catch (error) {
+    console.warn("[MORPION] invite poll failed", error);
+  } finally {
+    invitePollInFlight = false;
+  }
+}
+
+function startInvitePoll() {
+  stopInvitePoll();
+  invitePollTimer = window.setInterval(() => {
+    void pollActiveInvite();
+  }, INVITE_POLL_MS);
+}
+
+async function respondInvite(action = "refuse") {
+  const invitationId = String(activeInviteId || "").trim();
+  if (!invitationId) {
+    closeInviteModal();
+    return;
+  }
+  try {
+    await respondMorpionPlayInviteSecure({ invitationId, action });
+  } catch (error) {
+    console.warn("[MORPION] invite response failed", error);
+  } finally {
+    activeInviteId = "";
+    closeInviteModal();
+  }
+  if (action === "accept") {
+    window.location.href = "./index.html";
+  }
 }
 
 async function maybeRequestTurnTimeoutResolution() {
@@ -982,6 +1059,8 @@ function bindEvents() {
   dom.revealResultBtn?.addEventListener("click", openPendingEndModal);
   dom.resultReplayBtn?.addEventListener("click", () => { void abandonAndNavigate("replay"); });
   dom.resultHomeBtn?.addEventListener("click", () => { void abandonAndNavigate("home"); });
+  dom.inviteAcceptBtn?.addEventListener("click", () => { void respondInvite("accept"); });
+  dom.inviteRefuseBtn?.addEventListener("click", () => { void respondInvite("refuse"); });
   dom.ruleContinueBtn?.addEventListener("click", () => {
     turnRuleAccepted = true;
     closeRuleModal();
@@ -1009,15 +1088,20 @@ function init() {
   createBoard();
   bindEvents();
   startTurnTicker();
+  startInvitePoll();
   renderWalletValue();
   openRuleModal();
   onAuthStateChanged(auth, (user) => {
     currentUser = user || null;
     if (!currentUser) {
+      stopInvitePoll();
+      closeInviteModal();
       stopClientSubscription();
       window.location.href = "./auth.html";
       return;
     }
+    startInvitePoll();
+    void pollActiveInvite();
     subscribeToClient(currentUser.uid);
     if (!turnRuleAccepted) {
       openRuleModal();

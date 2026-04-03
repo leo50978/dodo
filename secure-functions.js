@@ -196,6 +196,14 @@ export async function claimWinRewardMorpionSecure(payload = {}) {
   return invokeCallable("claimWinRewardMorpion", payload, "Impossible de valider le gain morpion.");
 }
 
+export async function getMyActiveMorpionInviteSecure(payload = {}) {
+  return invokeCallable("getMyActiveMorpionInvite", payload, "Impossible de charger l'invitation morpion.");
+}
+
+export async function respondMorpionPlayInviteSecure(payload = {}) {
+  return invokeCallable("respondMorpionPlayInvite", payload, "Impossible de repondre a l'invitation.");
+}
+
 export async function getRecruitmentCampaignSnapshotSecure(payload = {}) {
   return invokeCallable("getRecruitmentCampaignSnapshotSecure", payload, "Impossible de charger la campagne de recrutement.");
 }

@@ -57,10 +57,9 @@ const DEFAULT_DUEL_STAKE_OPTIONS = Object.freeze([
 ]);
 const DEFAULT_MORPION_STAKE_OPTIONS = Object.freeze([
   Object.freeze({ id: "morpion_500", stakeDoes: 500, rewardDoes: 900, enabled: true, sortOrder: 10 }),
-  Object.freeze({ id: "morpion_1000", stakeDoes: 1000, rewardDoes: 1800, enabled: true, sortOrder: 20 }),
 ]);
 const ALLOWED_DUEL_STAKE_AMOUNTS = Object.freeze([500, 1000]);
-const ALLOWED_MORPION_STAKE_AMOUNTS = Object.freeze([500, 1000]);
+const ALLOWED_MORPION_STAKE_AMOUNTS = Object.freeze([500]);
 let page2NonCriticalRefreshTimer = null;
 let page2NonCriticalVisibilityHandler = null;
 let page2NonCriticalUid = "";
