@@ -52,6 +52,7 @@ const dom = {
   waitingActions: document.getElementById("morpionWaitingActions"),
   waitingHomeBtn: document.getElementById("morpionWaitingHomeBtn"),
   waitingRetryBtn: document.getElementById("morpionWaitingRetryBtn"),
+  waitingNotifyBtn: document.getElementById("morpionWaitingNotifyBtn"),
   resultModal: document.getElementById("morpionResultModal"),
   resultEyebrow: document.getElementById("morpionResultEyebrow"),
   resultTitle: document.getElementById("morpionResultTitle"),
@@ -327,12 +328,55 @@ function renderMatchmakingWaitingModal() {
   if (!matchmakingWaitExpired) {
     matchmakingWaitExpired = true;
   }
+  const notificationsSupported = typeof window !== "undefined" && ("Notification" in window);
+  const notificationsGranted = notificationsSupported && Notification.permission === "granted";
   openWaitingModal(
     "Aucun joueur disponible",
-    "Aucun joueur n'a rejoint dans les 15 secondes."
+    notificationsGranted
+      ? "Aucun joueur n'a rejoint dans les 15 secondes. Les notifications sont deja activees, nous te previendrons quand des joueurs seront disponibles."
+      : "Aucun joueur n'a rejoint dans les 15 secondes. Active les notifications pour etre alerte quand des joueurs sont disponibles."
   );
   if (dom.waitingTimerWrap) dom.waitingTimerWrap.classList.add("hidden");
   if (dom.waitingActions) dom.waitingActions.classList.remove("hidden");
+  if (dom.waitingNotifyBtn) {
+    dom.waitingNotifyBtn.classList.toggle("hidden", !notificationsSupported || notificationsGranted);
+  }
+}
+
+async function requestMatchmakingNotifications() {
+  if (!dom.waitingCopy) return;
+  if (typeof window === "undefined" || !("Notification" in window)) {
+    dom.waitingCopy.textContent = "Les notifications ne sont pas supportees sur cet appareil.";
+    if (dom.waitingNotifyBtn) dom.waitingNotifyBtn.classList.add("hidden");
+    return;
+  }
+  try {
+    if (Notification.permission === "granted") {
+      dom.waitingCopy.textContent = "Notifications deja actives. Nous te prevenirons quand des joueurs sont disponibles.";
+      if (dom.waitingNotifyBtn) dom.waitingNotifyBtn.classList.add("hidden");
+      return;
+    }
+    const permission = await Notification.requestPermission();
+    if (permission === "granted") {
+      dom.waitingCopy.textContent = "Notifications activees. Tu seras alerte quand des joueurs seront disponibles.";
+      if (dom.waitingNotifyBtn) dom.waitingNotifyBtn.classList.add("hidden");
+      try {
+        const note = new Notification("Morpion", {
+          body: "Notifications activees. Nous te prevenirons quand des joueurs arrivent.",
+          tag: "morpion-notify-enabled",
+          icon: "./favicon.ico",
+        });
+        window.setTimeout(() => note.close(), 3000);
+      } catch (_) {
+      }
+      return;
+    }
+    dom.waitingCopy.textContent = "Notifications bloquees. Autorise-les dans les reglages du navigateur.";
+    if (dom.waitingNotifyBtn) dom.waitingNotifyBtn.classList.remove("hidden");
+  } catch (_) {
+    dom.waitingCopy.textContent = "Impossible d'activer les notifications pour le moment.";
+    if (dom.waitingNotifyBtn) dom.waitingNotifyBtn.classList.remove("hidden");
+  }
 }
 
 function openInviteModal(title = "", copy = "") {
@@ -1137,6 +1181,9 @@ function bindEvents() {
   });
   dom.waitingHomeBtn?.addEventListener("click", () => {
     void abandonAndNavigate("home");
+  });
+  dom.waitingNotifyBtn?.addEventListener("click", () => {
+    void requestMatchmakingNotifications();
   });
   dom.ruleContinueBtn?.addEventListener("click", () => {
     turnRuleAccepted = true;
