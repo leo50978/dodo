@@ -1,7 +1,7 @@
 import { auth, onAuthStateChanged } from "./firebase-init.js";
 import { getMorpionLiveMatchmakingSignalSecure } from "./secure-functions.js";
 
-const POLL_MS = 12000;
+const POLL_MS = 5000;
 const SHOW_COOLDOWN_MS = 60000;
 const AUTO_HIDE_MS = 3800;
 
@@ -12,6 +12,7 @@ let lastSeenSignalTsMs = 0;
 let lastShownAtMs = 0;
 let toastEl = null;
 let hideTimer = null;
+let lastBrowserNotificationAtMs = 0;
 
 function ensureToast() {
   if (toastEl?.isConnected) return toastEl;
@@ -65,9 +66,32 @@ function showToast(message = "") {
   }, AUTO_HIDE_MS);
 }
 
+function showBrowserNotification(message = "") {
+  if (typeof window === "undefined" || !("Notification" in window)) return;
+  if (Notification.permission !== "granted") return;
+  const nowMs = Date.now();
+  if ((nowMs - lastBrowserNotificationAtMs) < SHOW_COOLDOWN_MS) return;
+  lastBrowserNotificationAtMs = nowMs;
+  try {
+    const notification = new Notification("Morpion", {
+      body: String(message || "Des joueurs sont disponibles sur Morpion. Jouer maintenant."),
+      tag: "morpion-live-players",
+      icon: "./favicon.ico",
+    });
+    notification.onclick = () => {
+      try { window.focus(); } catch (_) {}
+      window.location.href = "./morpion.html?stake=500";
+      notification.close();
+    };
+    window.setTimeout(() => {
+      try { notification.close(); } catch (_) {}
+    }, 6000);
+  } catch (_) {
+  }
+}
+
 async function pollSignal() {
   if (pollInFlight || !auth.currentUser?.uid) return;
-  if (document.visibilityState === "hidden") return;
   pollInFlight = true;
   try {
     const result = await getMorpionLiveMatchmakingSignalSecure({});
@@ -77,7 +101,9 @@ async function pollSignal() {
     if (!active || signalTsMs <= 0) return;
     if (signalTsMs <= lastSeenSignalTsMs) return;
     lastSeenSignalTsMs = signalTsMs;
-    showToast(message || "Des joueurs sont disponibles sur Morpion. Jouer maintenant.");
+    const safeMessage = message || "Des joueurs sont disponibles sur Morpion. Jouer maintenant.";
+    showToast(safeMessage);
+    showBrowserNotification(safeMessage);
   } catch (_) {
   } finally {
     pollInFlight = false;
