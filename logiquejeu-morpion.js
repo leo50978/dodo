@@ -52,6 +52,8 @@ const dom = {
   waitingActions: document.getElementById("morpionWaitingActions"),
   waitingHomeBtn: document.getElementById("morpionWaitingHomeBtn"),
   waitingRetryBtn: document.getElementById("morpionWaitingRetryBtn"),
+  waitingExtendBtn: document.getElementById("morpionWaitingExtendBtn"),
+  waitingStopExtendBtn: document.getElementById("morpionWaitingStopExtendBtn"),
   waitingNotifyBtn: document.getElementById("morpionWaitingNotifyBtn"),
   resultModal: document.getElementById("morpionResultModal"),
   resultEyebrow: document.getElementById("morpionResultEyebrow"),
@@ -115,6 +117,7 @@ let activeInviteId = "";
 let matchmakingWaitDeadlineMs = 0;
 let matchmakingWaitRoomId = "";
 let matchmakingWaitExpired = false;
+let matchmakingExtendedWaiting = false;
 
 function morpionDebug(event, payload = {}) {
   try {
@@ -276,6 +279,7 @@ function closeWaitingModal() {
 function startMatchmakingWaitCycle() {
   matchmakingWaitDeadlineMs = Date.now() + MATCHMAKING_WAIT_MS;
   matchmakingWaitExpired = false;
+  matchmakingExtendedWaiting = false;
   if (dom.waitingActions) dom.waitingActions.classList.add("hidden");
 }
 
@@ -283,7 +287,22 @@ function resetMatchmakingWaitState() {
   matchmakingWaitDeadlineMs = 0;
   matchmakingWaitRoomId = "";
   matchmakingWaitExpired = false;
+  matchmakingExtendedWaiting = false;
   if (dom.waitingActions) dom.waitingActions.classList.add("hidden");
+}
+
+function setWaitingActionsVisibility({
+  showHome = true,
+  showRetry = true,
+  showExtend = true,
+  showStopExtended = false,
+  showNotify = true,
+} = {}) {
+  if (dom.waitingHomeBtn) dom.waitingHomeBtn.classList.toggle("hidden", !showHome);
+  if (dom.waitingRetryBtn) dom.waitingRetryBtn.classList.toggle("hidden", !showRetry);
+  if (dom.waitingExtendBtn) dom.waitingExtendBtn.classList.toggle("hidden", !showExtend);
+  if (dom.waitingStopExtendBtn) dom.waitingStopExtendBtn.classList.toggle("hidden", !showStopExtended);
+  if (dom.waitingNotifyBtn) dom.waitingNotifyBtn.classList.toggle("hidden", !showNotify);
 }
 
 function renderMatchmakingWaitingModal() {
@@ -330,6 +349,27 @@ function renderMatchmakingWaitingModal() {
   }
   const notificationsSupported = typeof window !== "undefined" && ("Notification" in window);
   const notificationsGranted = notificationsSupported && Notification.permission === "granted";
+  const showNotifyAction = notificationsSupported && !notificationsGranted;
+
+  if (matchmakingExtendedWaiting) {
+    openWaitingModal(
+      "Attente prolongee active",
+      notificationsGranted
+        ? "Tu restes en attente sans limite. Les notifications sont deja actives: on te previendra des qu'un joueur est disponible."
+        : "Tu restes en attente sans limite. Tu peux quitter l'attente a tout moment."
+    );
+    if (dom.waitingTimerWrap) dom.waitingTimerWrap.classList.add("hidden");
+    if (dom.waitingActions) dom.waitingActions.classList.remove("hidden");
+    setWaitingActionsVisibility({
+      showHome: false,
+      showRetry: false,
+      showExtend: false,
+      showStopExtended: true,
+      showNotify: showNotifyAction,
+    });
+    return;
+  }
+
   openWaitingModal(
     "Aucun joueur disponible",
     notificationsGranted
@@ -338,9 +378,13 @@ function renderMatchmakingWaitingModal() {
   );
   if (dom.waitingTimerWrap) dom.waitingTimerWrap.classList.add("hidden");
   if (dom.waitingActions) dom.waitingActions.classList.remove("hidden");
-  if (dom.waitingNotifyBtn) {
-    dom.waitingNotifyBtn.classList.toggle("hidden", !notificationsSupported || notificationsGranted);
-  }
+  setWaitingActionsVisibility({
+    showHome: true,
+    showRetry: true,
+    showExtend: true,
+    showStopExtended: false,
+    showNotify: showNotifyAction,
+  });
 }
 
 async function requestMatchmakingNotifications() {
@@ -1178,6 +1222,14 @@ function bindEvents() {
   dom.waitingRetryBtn?.addEventListener("click", () => {
     startMatchmakingWaitCycle();
     renderMatchmakingWaitingModal();
+  });
+  dom.waitingExtendBtn?.addEventListener("click", () => {
+    matchmakingExtendedWaiting = true;
+    renderMatchmakingWaitingModal();
+  });
+  dom.waitingStopExtendBtn?.addEventListener("click", () => {
+    matchmakingExtendedWaiting = false;
+    void abandonAndNavigate("home");
   });
   dom.waitingHomeBtn?.addEventListener("click", () => {
     void abandonAndNavigate("home");
