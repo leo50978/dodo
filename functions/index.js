@@ -12426,6 +12426,41 @@ exports.getMorpionLiveMatchmakingSignal = publicOnCall("getMorpionLiveMatchmakin
   };
 }, { invoker: "public" });
 
+exports.getMorpionMatchmakingHint = publicOnCall("getMorpionMatchmakingHint", async (request) => {
+  assertAuth(request);
+  const payload = request.data && typeof request.data === "object" ? request.data : {};
+  const roomId = String(payload.roomId || "").trim();
+
+  const roomsSnap = await db.collection(MORPION_ROOMS_COLLECTION)
+    .where("status", "==", "playing")
+    .limit(220)
+    .get();
+
+  let activePlayingHumans = 0;
+  let activePlayingRooms = 0;
+  roomsSnap.forEach((docSnap) => {
+    const data = docSnap.data() || {};
+    const thisRoomId = String(docSnap.id || "").trim();
+    if (roomId && thisRoomId === roomId) return;
+    const humans = Math.max(0, Math.min(2, safeInt(data.humanCount)));
+    if (humans <= 0) return;
+    activePlayingHumans += humans;
+    activePlayingRooms += 1;
+  });
+
+  const hasOddActivePlayingHumans = activePlayingHumans > 0 && (activePlayingHumans % 2) === 1;
+  return {
+    ok: true,
+    activePlayingHumans,
+    activePlayingRooms,
+    hasOddActivePlayingHumans,
+    message: hasOddActivePlayingHumans
+      ? "Il y a des joueurs qui jouent en ce moment, mais leur nombre est impair. Reste en attente prolongee pour jouer avec un joueur qui terminera bientot."
+      : "",
+    checkedAtMs: Date.now(),
+  };
+}, { invoker: "public" });
+
 exports.inviteMorpionWaitingPlayer = publicOnCall("inviteMorpionWaitingPlayer", async (request) => {
   const { uid: adminUid, email: adminEmail } = assertFinanceAdmin(request);
   const payload = request.data && typeof request.data === "object" ? request.data : {};

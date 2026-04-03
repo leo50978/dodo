@@ -208,6 +208,10 @@ export async function getMorpionLiveMatchmakingSignalSecure(payload = {}) {
   return invokeCallable("getMorpionLiveMatchmakingSignal", payload, "Impossible de charger le signal Morpion.");
 }
 
+export async function getMorpionMatchmakingHintSecure(payload = {}) {
+  return invokeCallable("getMorpionMatchmakingHint", payload, "Impossible de charger l'indication de file Morpion.");
+}
+
 export async function getRecruitmentCampaignSnapshotSecure(payload = {}) {
   return invokeCallable("getRecruitmentCampaignSnapshotSecure", payload, "Impossible de charger la campagne de recrutement.");
 }

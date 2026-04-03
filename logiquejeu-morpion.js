@@ -15,6 +15,7 @@ import {
   claimWinRewardMorpionSecure,
   getMyActiveMorpionInviteSecure,
   respondMorpionPlayInviteSecure,
+  getMorpionMatchmakingHintSecure,
 } from "./secure-functions.js";
 
 const MORPION_ROOMS = "morpionRooms";
@@ -118,6 +119,11 @@ let matchmakingWaitDeadlineMs = 0;
 let matchmakingWaitRoomId = "";
 let matchmakingWaitExpired = false;
 let matchmakingExtendedWaiting = false;
+let matchmakingHintInFlight = false;
+let matchmakingHintRoomId = "";
+let matchmakingHintCheckedAtMs = 0;
+let matchmakingHintHasOddPlayingHumans = false;
+let matchmakingHintMessage = "";
 
 function morpionDebug(event, payload = {}) {
   try {
@@ -280,6 +286,11 @@ function startMatchmakingWaitCycle() {
   matchmakingWaitDeadlineMs = Date.now() + MATCHMAKING_WAIT_MS;
   matchmakingWaitExpired = false;
   matchmakingExtendedWaiting = false;
+  matchmakingHintInFlight = false;
+  matchmakingHintRoomId = "";
+  matchmakingHintCheckedAtMs = 0;
+  matchmakingHintHasOddPlayingHumans = false;
+  matchmakingHintMessage = "";
   if (dom.waitingActions) dom.waitingActions.classList.add("hidden");
 }
 
@@ -288,7 +299,33 @@ function resetMatchmakingWaitState() {
   matchmakingWaitRoomId = "";
   matchmakingWaitExpired = false;
   matchmakingExtendedWaiting = false;
+  matchmakingHintInFlight = false;
+  matchmakingHintRoomId = "";
+  matchmakingHintCheckedAtMs = 0;
+  matchmakingHintHasOddPlayingHumans = false;
+  matchmakingHintMessage = "";
   if (dom.waitingActions) dom.waitingActions.classList.add("hidden");
+}
+
+async function refreshMatchmakingHintIfNeeded(force = false) {
+  if (!currentRoomId) return;
+  if (matchmakingHintInFlight) return;
+  const nowMs = Date.now();
+  const stale = (nowMs - matchmakingHintCheckedAtMs) > 10_000;
+  if (!force && !stale && matchmakingHintRoomId === currentRoomId) return;
+
+  matchmakingHintInFlight = true;
+  try {
+    const result = await getMorpionMatchmakingHintSecure({ roomId: currentRoomId });
+    matchmakingHintRoomId = currentRoomId;
+    matchmakingHintCheckedAtMs = Number(result?.checkedAtMs || nowMs);
+    matchmakingHintHasOddPlayingHumans = result?.hasOddActivePlayingHumans === true;
+    matchmakingHintMessage = String(result?.message || "").trim();
+  } catch (_) {
+  } finally {
+    matchmakingHintInFlight = false;
+    renderMatchmakingWaitingModal();
+  }
 }
 
 function setWaitingActionsVisibility({
@@ -350,13 +387,20 @@ function renderMatchmakingWaitingModal() {
   const notificationsSupported = typeof window !== "undefined" && ("Notification" in window);
   const notificationsGranted = notificationsSupported && Notification.permission === "granted";
   const showNotifyAction = notificationsSupported && !notificationsGranted;
+  const oddPlayingHint = matchmakingHintHasOddPlayingHumans && String(matchmakingHintMessage || "").trim();
+
+  if ((Date.now() - matchmakingHintCheckedAtMs) > 10_000 || matchmakingHintRoomId !== roomKey) {
+    void refreshMatchmakingHintIfNeeded();
+  }
 
   if (matchmakingExtendedWaiting) {
     openWaitingModal(
       "Attente prolongee active",
-      notificationsGranted
-        ? "Tu restes en attente sans limite. Les notifications sont deja actives: on te previendra des qu'un joueur est disponible."
-        : "Tu restes en attente sans limite. Tu peux quitter l'attente a tout moment."
+      oddPlayingHint
+        ? matchmakingHintMessage
+        : (notificationsGranted
+          ? "Tu restes en attente sans limite. Les notifications sont deja actives: on te previendra des qu'un joueur est disponible."
+          : "Tu restes en attente sans limite. Tu peux quitter l'attente a tout moment.")
     );
     if (dom.waitingTimerWrap) dom.waitingTimerWrap.classList.add("hidden");
     if (dom.waitingActions) dom.waitingActions.classList.remove("hidden");
@@ -372,9 +416,11 @@ function renderMatchmakingWaitingModal() {
 
   openWaitingModal(
     "Aucun joueur disponible",
-    notificationsGranted
-      ? "Aucun joueur n'a rejoint dans les 15 secondes. Les notifications sont deja activees, nous te previendrons quand des joueurs seront disponibles."
-      : "Aucun joueur n'a rejoint dans les 15 secondes. Active les notifications pour etre alerte quand des joueurs sont disponibles."
+    oddPlayingHint
+      ? matchmakingHintMessage
+      : (notificationsGranted
+        ? "Aucun joueur n'a rejoint dans les 15 secondes. Les notifications sont deja activees, nous te previendrons quand des joueurs seront disponibles."
+        : "Aucun joueur n'a rejoint dans les 15 secondes. Active les notifications pour etre alerte quand des joueurs sont disponibles.")
   );
   if (dom.waitingTimerWrap) dom.waitingTimerWrap.classList.add("hidden");
   if (dom.waitingActions) dom.waitingActions.classList.remove("hidden");
