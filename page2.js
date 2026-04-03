@@ -19,6 +19,8 @@ import {
   getActiveSurveyForUserSecure,
   submitSurveyResponseSecure,
   ackClientFinanceNoticeSecure,
+  getMyActiveMorpionInviteSecure,
+  respondMorpionPlayInviteSecure,
 } from "./secure-functions.js";
 import { auth, db, collection, query, orderBy, limit, doc, getDoc, getDocs, setDoc, serverTimestamp, onSnapshot } from "./firebase-init.js";
 
@@ -89,6 +91,12 @@ let page2FinanceNoticeActive = null;
 const page2FinanceNoticeSessionSeen = new Set();
 const PAGE2_PRESENCE_PING_MS = 10 * 60 * 1000;
 const PAGE2_NON_CRITICAL_REFRESH_MS = 2 * 60 * 1000;
+const PAGE2_MORPION_INVITE_POLL_MS = 5000;
+const PAGE2_MORPION_STAKE_DOES = 500;
+let page2MorpionInvitePollTimer = null;
+let page2MorpionInvitePollInFlight = false;
+let page2MorpionInviteActiveId = "";
+let page2MorpionInviteModal = null;
 
 async function runPage2Animations() {
   try {
@@ -164,6 +172,117 @@ function scheduleNonCriticalTask(runId, task, delayMs = 240) {
 function openProfilePage() {
   showGlobalLoading("Ouverture du profil...");
   window.location.href = "./profil.html";
+}
+
+function ensurePage2MorpionInviteModal() {
+  if (page2MorpionInviteModal?.isConnected) return page2MorpionInviteModal;
+  const wrapper = document.createElement("div");
+  wrapper.id = "page2MorpionInviteModal";
+  wrapper.className = "fixed inset-0 z-[3495] hidden items-center justify-center bg-black/55 p-4 backdrop-blur-sm";
+  wrapper.innerHTML = `
+    <div class="w-full max-w-sm rounded-3xl border border-white/20 bg-[#3F4766]/85 p-5 text-white shadow-[14px_14px_34px_rgba(16,23,40,0.5),-10px_-10px_24px_rgba(112,126,165,0.2)] backdrop-blur-xl sm:p-6">
+      <h3 id="page2MorpionInviteTitle" class="text-lg font-bold">Des joueurs sont disponibles</h3>
+      <p id="page2MorpionInviteCopy" class="mt-2 text-sm text-white/90">Veux-tu lancer une partie maintenant ?</p>
+      <div class="mt-4 grid grid-cols-2 gap-3">
+        <button id="page2MorpionInviteAcceptBtn" type="button" class="h-11 rounded-2xl border border-[#ffb26e] bg-[#F57C00] text-sm font-semibold text-white shadow-[8px_8px_18px_rgba(163,82,27,0.45),-6px_-6px_14px_rgba(255,175,102,0.22)]">
+          Lancer la partie
+        </button>
+        <button id="page2MorpionInviteRefuseBtn" type="button" class="h-11 rounded-2xl border border-white/20 bg-white/10 text-sm font-semibold text-white">
+          Plus tard
+        </button>
+      </div>
+    </div>
+  `;
+  document.body.appendChild(wrapper);
+  wrapper.addEventListener("click", (event) => {
+    if (event.target === wrapper) {
+      void respondPage2MorpionInvite("refuse");
+    }
+  });
+  const acceptBtn = wrapper.querySelector("#page2MorpionInviteAcceptBtn");
+  const refuseBtn = wrapper.querySelector("#page2MorpionInviteRefuseBtn");
+  acceptBtn?.addEventListener("click", () => {
+    void respondPage2MorpionInvite("accept");
+  });
+  refuseBtn?.addEventListener("click", () => {
+    void respondPage2MorpionInvite("refuse");
+  });
+  page2MorpionInviteModal = wrapper;
+  return wrapper;
+}
+
+function openPage2MorpionInviteModal(title = "Des joueurs sont disponibles", copy = "Veux-tu lancer une partie maintenant ?") {
+  const modal = ensurePage2MorpionInviteModal();
+  const titleEl = modal.querySelector("#page2MorpionInviteTitle");
+  const copyEl = modal.querySelector("#page2MorpionInviteCopy");
+  if (titleEl) titleEl.textContent = String(title || "Des joueurs sont disponibles");
+  if (copyEl) copyEl.textContent = String(copy || "");
+  modal.classList.remove("hidden");
+  modal.classList.add("flex");
+}
+
+function closePage2MorpionInviteModal() {
+  if (!page2MorpionInviteModal) return;
+  page2MorpionInviteModal.classList.add("hidden");
+  page2MorpionInviteModal.classList.remove("flex");
+}
+
+function stopPage2MorpionInvitePoll() {
+  if (page2MorpionInvitePollTimer) {
+    window.clearInterval(page2MorpionInvitePollTimer);
+    page2MorpionInvitePollTimer = null;
+  }
+  page2MorpionInviteActiveId = "";
+  closePage2MorpionInviteModal();
+}
+
+async function respondPage2MorpionInvite(action = "refuse") {
+  const invitationId = String(page2MorpionInviteActiveId || "").trim();
+  if (!invitationId) {
+    closePage2MorpionInviteModal();
+    return;
+  }
+  try {
+    await respondMorpionPlayInviteSecure({ invitationId, action });
+  } catch (error) {
+    console.warn("[PAGE2] morpion invite response failed", error);
+  } finally {
+    page2MorpionInviteActiveId = "";
+    closePage2MorpionInviteModal();
+  }
+  if (action === "accept") {
+    window.location.href = buildMorpionGameUrl(PAGE2_MORPION_STAKE_DOES);
+  }
+}
+
+async function pollPage2MorpionInvite() {
+  if (!auth.currentUser?.uid || page2MorpionInvitePollInFlight) return;
+  page2MorpionInvitePollInFlight = true;
+  try {
+    const result = await getMyActiveMorpionInviteSecure({});
+    const invite = result?.invitation && typeof result.invitation === "object" ? result.invitation : null;
+    const invitationId = String(invite?.invitationId || "").trim();
+    if (!invitationId) {
+      page2MorpionInviteActiveId = "";
+      closePage2MorpionInviteModal();
+      return;
+    }
+    page2MorpionInviteActiveId = invitationId;
+    const copy = String(invite?.message || "Il y a actuellement des joueurs disponibles pour le morpion. Veux-tu lancer la partie ?");
+    openPage2MorpionInviteModal("Des joueurs sont disponibles", copy);
+  } catch (error) {
+    console.warn("[PAGE2] morpion invite poll failed", error);
+  } finally {
+    page2MorpionInvitePollInFlight = false;
+  }
+}
+
+function startPage2MorpionInvitePoll() {
+  stopPage2MorpionInvitePoll();
+  void pollPage2MorpionInvite();
+  page2MorpionInvitePollTimer = window.setInterval(() => {
+    void pollPage2MorpionInvite();
+  }, PAGE2_MORPION_INVITE_POLL_MS);
 }
 
 function normalizeInviteCode(value = "") {
@@ -1159,6 +1278,7 @@ function initAgentSupportAlert(user) {
 export function renderPage2(user, options = {}) {
   stopPage2ChatWatchers();
   stopPage2FinanceNoticeWatchers();
+  stopPage2MorpionInvitePoll();
   stopPage2HeroRotation();
   clearPage2SupportMigrationNoticeTimer();
   clearPage2WelcomeBonusPromptTimer();
@@ -1182,8 +1302,10 @@ export function renderPage2(user, options = {}) {
 
   if (hasConfirmedAuth) {
     startPage2PresenceHeartbeat(page2PresenceUser);
+    startPage2MorpionInvitePoll();
   } else {
     stopPage2PresenceHeartbeat();
+    stopPage2MorpionInvitePoll();
   }
 
   const headerActions = isAuthenticated
