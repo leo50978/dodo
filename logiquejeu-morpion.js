@@ -22,6 +22,8 @@ const MORPION_GAME_STATES = "morpionGameStates";
 const ALLOWED_MORPION_STAKE_AMOUNTS = Object.freeze([500]);
 const TURN_LIMIT_SECONDS = 15;
 const TURN_LIMIT_MS = TURN_LIMIT_SECONDS * 1000;
+const MATCHMAKING_WAIT_SECONDS = 15;
+const MATCHMAKING_WAIT_MS = MATCHMAKING_WAIT_SECONDS * 1000;
 const PRESENCE_PING_MS = 20 * 1000;
 const INVITE_POLL_MS = 6 * 1000;
 const ABANDONED_ROOMS_STORAGE_KEY = "domino_morpion_abandoned_rooms_v1";
@@ -45,6 +47,11 @@ const dom = {
   ruleContinueBtn: document.getElementById("morpionRuleContinueBtn"),
   waitingTitle: document.getElementById("morpionWaitingTitle"),
   waitingCopy: document.getElementById("morpionWaitingCopy"),
+  waitingTimerWrap: document.getElementById("morpionWaitingTimerWrap"),
+  waitingTimerValue: document.getElementById("morpionWaitingTimerValue"),
+  waitingActions: document.getElementById("morpionWaitingActions"),
+  waitingHomeBtn: document.getElementById("morpionWaitingHomeBtn"),
+  waitingRetryBtn: document.getElementById("morpionWaitingRetryBtn"),
   resultModal: document.getElementById("morpionResultModal"),
   resultEyebrow: document.getElementById("morpionResultEyebrow"),
   resultTitle: document.getElementById("morpionResultTitle"),
@@ -104,6 +111,9 @@ let turnRuleAccepted = false;
 let invitePollTimer = null;
 let invitePollInFlight = false;
 let activeInviteId = "";
+let matchmakingWaitDeadlineMs = 0;
+let matchmakingWaitRoomId = "";
+let matchmakingWaitExpired = false;
 
 function morpionDebug(event, payload = {}) {
   try {
@@ -262,6 +272,69 @@ function closeWaitingModal() {
   dom.waitingModal?.classList.add("hidden");
 }
 
+function startMatchmakingWaitCycle() {
+  matchmakingWaitDeadlineMs = Date.now() + MATCHMAKING_WAIT_MS;
+  matchmakingWaitExpired = false;
+  if (dom.waitingActions) dom.waitingActions.classList.add("hidden");
+}
+
+function resetMatchmakingWaitState() {
+  matchmakingWaitDeadlineMs = 0;
+  matchmakingWaitRoomId = "";
+  matchmakingWaitExpired = false;
+  if (dom.waitingActions) dom.waitingActions.classList.add("hidden");
+}
+
+function renderMatchmakingWaitingModal() {
+  if (String(currentRoomData?.status || "") !== "waiting") {
+    resetMatchmakingWaitState();
+    return;
+  }
+
+  const humans = safeInt(currentRoomData?.humanCount, 0);
+  if (humans >= 2) {
+    openWaitingModal("Adversaire trouve", "La partie demarre...");
+    if (dom.waitingTimerWrap) dom.waitingTimerWrap.classList.add("hidden");
+    if (dom.waitingActions) dom.waitingActions.classList.add("hidden");
+    return;
+  }
+
+  const roomKey = String(currentRoomId || "").trim();
+  if (!roomKey) return;
+  if (matchmakingWaitRoomId !== roomKey) {
+    matchmakingWaitRoomId = roomKey;
+    startMatchmakingWaitCycle();
+  } else if (matchmakingWaitDeadlineMs <= 0) {
+    startMatchmakingWaitCycle();
+  }
+
+  const now = Date.now();
+  const remainingMs = Math.max(0, matchmakingWaitDeadlineMs - now);
+  const remainingSeconds = Math.ceil(remainingMs / 1000);
+
+  if (remainingMs > 0) {
+    openWaitingModal(
+      "Recherche d'un joueur...",
+      "Nous cherchons un joueur reel. Si personne ne rejoint dans 15 secondes, il n'y aura pas de partie."
+    );
+    if (dom.waitingTimerWrap) dom.waitingTimerWrap.classList.remove("hidden");
+    if (dom.waitingTimerValue) dom.waitingTimerValue.textContent = `${Math.max(1, remainingSeconds)}s`;
+    if (dom.waitingActions) dom.waitingActions.classList.add("hidden");
+    matchmakingWaitExpired = false;
+    return;
+  }
+
+  if (!matchmakingWaitExpired) {
+    matchmakingWaitExpired = true;
+  }
+  openWaitingModal(
+    "Aucun joueur disponible",
+    "Aucun joueur n'a rejoint dans les 15 secondes."
+  );
+  if (dom.waitingTimerWrap) dom.waitingTimerWrap.classList.add("hidden");
+  if (dom.waitingActions) dom.waitingActions.classList.remove("hidden");
+}
+
 function openInviteModal(title = "", copy = "") {
   if (dom.inviteTitle) dom.inviteTitle.textContent = String(title || "Invitation disponible");
   if (dom.inviteCopy) dom.inviteCopy.textContent = String(copy || "");
@@ -348,6 +421,8 @@ function renderTimers() {
   if (currentRoomData?.status === "playing" && currentRoomData?.startRevealPending !== true && deadlineMs > 0 && now >= deadlineMs) {
     maybeRequestTurnTimeoutResolution();
   }
+
+  renderMatchmakingWaitingModal();
 }
 
 function buildWinningSet() {
@@ -866,31 +941,26 @@ function renderFromRoom() {
   if (!currentRoomData) return;
   if (currentRoomData.status === "waiting") {
     clearEndStateDecorations();
-    const humans = safeInt(currentRoomData.humanCount, 1);
-    openWaitingModal(
-      "Recherche d'un adversaire...",
-      humans >= 2
-        ? "Le match se prepare. La salle va demarrer."
-        : `Personne ne joue actuellement pour la mise de ${selectedStakeDoes} Does. Veuillez changer de somme ou de jeu. Cet etat est temporaire, lie au lancement du site. Vous pouvez inviter des amis pour trouver des joueurs plus vite.`
-    );
-    scheduleEnsureRoomReady();
+    renderMatchmakingWaitingModal();
     return;
   }
 
   if (currentRoomData.status === "playing" && currentRoomData.startRevealPending === true) {
     clearEndStateDecorations();
-    openWaitingModal("Preparation de la partie...", "Le plateau se synchronise avant le debut du match.");
+    closeWaitingModal();
     void maybeAckStartReveal();
     return;
   }
 
   if (currentRoomData.status === "playing") {
+    resetMatchmakingWaitState();
     clearEndStateDecorations();
     closeWaitingModal();
     return;
   }
 
   if (currentRoomData.status === "ended") {
+    resetMatchmakingWaitState();
     handleEndedState();
   }
 }
@@ -1024,7 +1094,7 @@ async function joinOrResumeRoom() {
     startTurnTicker();
     void pingPresence();
     if (String(result?.status || "") === "waiting") {
-      void ensureRoomReady();
+      startMatchmakingWaitCycle();
     }
   } catch (error) {
     console.error("[MORPION] join failed", error);
@@ -1061,6 +1131,13 @@ function bindEvents() {
   dom.resultHomeBtn?.addEventListener("click", () => { void abandonAndNavigate("home"); });
   dom.inviteAcceptBtn?.addEventListener("click", () => { void respondInvite("accept"); });
   dom.inviteRefuseBtn?.addEventListener("click", () => { void respondInvite("refuse"); });
+  dom.waitingRetryBtn?.addEventListener("click", () => {
+    startMatchmakingWaitCycle();
+    renderMatchmakingWaitingModal();
+  });
+  dom.waitingHomeBtn?.addEventListener("click", () => {
+    void abandonAndNavigate("home");
+  });
   dom.ruleContinueBtn?.addEventListener("click", () => {
     turnRuleAccepted = true;
     closeRuleModal();
