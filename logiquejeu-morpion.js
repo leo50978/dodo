@@ -794,7 +794,7 @@ function renderFromRoom() {
       "Recherche d'un adversaire...",
       humans >= 2
         ? "Le match se prepare. La salle va demarrer."
-        : ""
+        : `Personne ne joue actuellement pour la mise de ${selectedStakeDoes} Does. Veuillez changer de somme ou de jeu. Cet etat est temporaire, lie au lancement du site. Vous pouvez inviter des amis pour trouver des joueurs plus vite.`
     );
     scheduleEnsureRoomReady();
     return;

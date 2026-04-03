@@ -6957,8 +6957,8 @@ function buildStartedDuelRoomTransaction(tx, roomRefDoc, room = {}, options = {}
     startRevealPending: finalState.winnerSeat < 0,
     startRevealAckUids: [],
     startedHumanCount: humans,
-    startedBotCount: Math.max(0, 2 - humans),
-    botCount: Math.max(0, 2 - humans),
+    startedBotCount: 0,
+    botCount: 0,
     botDifficulty: configuredBotDifficulty,
     startedAt: admin.firestore.FieldValue.serverTimestamp(),
     startedAtMs: nowMs,
@@ -10368,95 +10368,23 @@ function buildMorpionPresenceUpdates(room = {}, actorUid = "", nowMs = Date.now(
   const currentPresence = room.roomPresenceMs && typeof room.roomPresenceMs === "object"
     ? { ...room.roomPresenceMs }
     : {};
-  const playerUids = Array.from({ length: 2 }, (_, idx) => String((room.playerUids || [])[idx] || ""));
-  const playerNames = Array.from({ length: 2 }, (_, idx) => String((room.playerNames || [])[idx] || ""));
-  const seats = { ...getRoomSeats(room) };
-  const takeoverSeats = getBotTakeoverSeatSet(room);
-  const graceUntil = room.botGraceUntilMs && typeof room.botGraceUntilMs === "object"
-    ? { ...room.botGraceUntilMs }
-    : {};
-  const blockedRejoinUids = Array.from(getBlockedRejoinSet(room));
   const actor = String(actorUid || "").trim();
-  const actorSeat = actor ? getSeatForUser(room, actor) : -1;
-  let removedAny = false;
-
-  if (actor) {
-    currentPresence[actor] = nowMs;
-    if (takeoverSeats.has(actorSeat)) {
-      takeoverSeats.delete(actorSeat);
-      delete graceUntil[String(actorSeat)];
-    }
-  }
-
-  for (let seat = 0; seat < 2; seat += 1) {
-    const seatUid = String(playerUids[seat] || "").trim();
-    if (!seatUid || seatUid === actor) continue;
-    const lastSeen = safeSignedInt(currentPresence[seatUid]);
-    if (lastSeen <= 0) continue;
-    const offlineForMs = nowMs - lastSeen;
-    if (offlineForMs < ROOM_DISCONNECT_TAKEOVER_MS) continue;
-
-    if (!takeoverSeats.has(seat)) {
-      takeoverSeats.add(seat);
-      graceUntil[String(seat)] = lastSeen + ROOM_DISCONNECT_GRACE_MS;
-    }
-
-    const seatGraceUntil = safeSignedInt(graceUntil[String(seat)]);
-    if (seatGraceUntil > 0 && nowMs > seatGraceUntil) {
-      removedAny = true;
-      playerUids[seat] = "";
-      playerNames[seat] = String(room.status || "") === "playing" ? botSeatLabel(seat) : "";
-      delete seats[seatUid];
-      delete currentPresence[seatUid];
-      takeoverSeats.delete(seat);
-      delete graceUntil[String(seat)];
-      if (!blockedRejoinUids.includes(seatUid)) {
-        blockedRejoinUids.push(seatUid);
-      }
-    }
-  }
+  if (actor) currentPresence[actor] = nowMs;
 
   const updates = {
     roomPresenceMs: currentPresence,
-    botTakeoverSeats: Array.from(takeoverSeats),
+    botTakeoverSeats: [],
+    botCount: 0,
+    botGraceUntilMs: admin.firestore.FieldValue.delete(),
     updatedAt: admin.firestore.FieldValue.serverTimestamp(),
   };
-
-  if (Object.keys(graceUntil).length > 0) {
-    updates.botGraceUntilMs = graceUntil;
-  } else {
-    updates.botGraceUntilMs = admin.firestore.FieldValue.delete();
-  }
-
-  if (removedAny) {
-    const humans = playerUids.filter(Boolean).length;
-    updates.playerUids = playerUids;
-    updates.playerNames = playerNames;
-    updates.seats = seats;
-    updates.humanCount = humans;
-    updates.botCount = Math.max(0, 2 - humans);
-    updates.blockedRejoinUids = blockedRejoinUids;
-    updates.playerEmails = admin.firestore.FieldValue.delete();
-  }
-
-  const effectiveRoom = {
-    ...room,
-    playerUids: updates.playerUids || room.playerUids,
-    playerNames: updates.playerNames || room.playerNames,
-    seats: updates.seats || room.seats,
-    botTakeoverSeats: updates.botTakeoverSeats,
-  };
   const currentPlayerSeat = safeInt(room.currentPlayer);
-  const shouldNudgeBots = String(room.status || "") === "playing"
-    && room.startRevealPending !== true
-    && currentPlayerSeat >= 0
-    && currentPlayerSeat < 2
-    && !isMorpionSeatHuman(effectiveRoom, currentPlayerSeat);
+  const shouldNudgeBots = false;
   const shouldResolveExpiredHumanTurn = String(room.status || "") === "playing"
     && room.startRevealPending !== true
     && currentPlayerSeat >= 0
     && currentPlayerSeat < 2
-    && isMorpionSeatHuman(effectiveRoom, currentPlayerSeat)
+    && isMorpionSeatHuman(room, currentPlayerSeat)
     && resolveMorpionTurnDeadlineMs(room, nowMs) <= nowMs;
 
   return {
@@ -10483,7 +10411,7 @@ function applyMorpionLeaveForUidTx(tx, roomRefDoc, room = {}, uid = "") {
   if (seatIndex >= 0) nextPlayerUids[seatIndex] = "";
   const nextPlayerNames = Array.from({ length: 2 }, (_, idx) => String((room.playerNames || [])[idx] || ""));
   if (seatIndex >= 0) {
-    nextPlayerNames[seatIndex] = status === "playing" ? botSeatLabel(seatIndex) : "";
+    nextPlayerNames[seatIndex] = "";
   }
   const nextSeats = { ...getRoomSeats(room) };
   delete nextSeats[safeUid];
@@ -10512,7 +10440,7 @@ function applyMorpionLeaveForUidTx(tx, roomRefDoc, room = {}, uid = "") {
       seats: {},
       roomPresenceMs: nextPresence,
       humanCount: 0,
-      botCount: 2,
+      botCount: 0,
       botTakeoverSeats: [],
       botGraceUntilMs: admin.firestore.FieldValue.delete(),
       updatedAt: admin.firestore.FieldValue.serverTimestamp(),
@@ -10530,7 +10458,10 @@ function applyMorpionLeaveForUidTx(tx, roomRefDoc, room = {}, uid = "") {
   const revealPending = room.startRevealPending === true;
   const revealReady = revealPending === true
     && nextPlayerUids.filter(Boolean).every((playerUid) => nextAckUids.includes(playerUid));
-  const nextBotCount = Math.max(0, 2 - humans);
+  const nextBotCount = 0;
+  const winnerSeatOnLeave = status === "playing" && humans === 1
+    ? nextPlayerUids.findIndex((candidate) => String(candidate || "").trim())
+    : -1;
   const updates = {
     playerUids: nextPlayerUids,
     playerNames: nextPlayerNames,
@@ -10539,11 +10470,21 @@ function applyMorpionLeaveForUidTx(tx, roomRefDoc, room = {}, uid = "") {
     roomPresenceMs: nextPresence,
     humanCount: humans,
     botCount: nextBotCount,
-    botTakeoverSeats: Array.from(nextBotTakeoverSeats),
+    botTakeoverSeats: [],
     botGraceUntilMs: Object.keys(nextGraceUntil).length > 0 ? nextGraceUntil : admin.firestore.FieldValue.delete(),
     startRevealAckUids: nextAckUids,
     startRevealPending: revealPending === true ? !revealReady : false,
     ownerUid: room.ownerUid === safeUid ? String(nextPlayerUids.find(Boolean) || "") : String(room.ownerUid || ""),
+    ...(winnerSeatOnLeave >= 0
+      ? {
+        status: "ended",
+        winnerSeat: winnerSeatOnLeave,
+        winnerUid: String(nextPlayerUids[winnerSeatOnLeave] || "").trim(),
+        endedReason: "opponent_left",
+        endedAt: admin.firestore.FieldValue.serverTimestamp(),
+        endedAtMs: Date.now(),
+      }
+      : {}),
     updatedAt: admin.firestore.FieldValue.serverTimestamp(),
   };
 
@@ -10557,11 +10498,7 @@ function applyMorpionLeaveForUidTx(tx, roomRefDoc, room = {}, uid = "") {
     botTakeoverSeats: updates.botTakeoverSeats,
   };
   const currentPlayerSeat = safeInt(room.currentPlayer);
-  const shouldNudgeBots = status === "playing"
-    && updates.startRevealPending !== true
-    && currentPlayerSeat >= 0
-    && currentPlayerSeat < 2
-    && !isMorpionSeatHuman(effectiveRoom, currentPlayerSeat);
+  const shouldNudgeBots = false;
 
   return {
     result: {
@@ -11528,7 +11465,7 @@ function buildStartedMorpionRoomTransaction(tx, roomRefDoc, room = {}, options =
   logMorpionServerDebug("buildStartedRoom", {
     roomId: roomRefDoc.id,
     humans,
-    botCount: Math.max(0, 2 - humans),
+    botCount: 0,
     initialCurrentPlayer: initialState.currentPlayer,
     startRevealPending: true,
     turnDeadlineMs,
@@ -11543,7 +11480,7 @@ function buildStartedMorpionRoomTransaction(tx, roomRefDoc, room = {}, options =
     status: "playing",
     startRevealPending: true,
     humanCount: humans,
-    botCount: Math.max(0, 2 - humans),
+    botCount: 0,
     waitingDeadlineMs: 0,
   };
 }
@@ -11797,23 +11734,6 @@ exports.joinMatchmakingMorpion = publicOnCall("joinMatchmakingMorpion", async (r
           && roomEntryCostDoes === stakeDoes
           && roomRewardAmountDoes === rewardAmountDoes
         ) {
-          if (nowMs >= waitingDeadlineMs) {
-            clearMorpionMatchmakingPool(tx, poolRef);
-            return {
-              ok: true,
-              resumed: false,
-              charged: false,
-              roomId: openRoomRef.id,
-              seatIndex: 0,
-              ...buildStartedMorpionRoomTransaction(tx, openRoomRef, {
-                ...room,
-                humanCount: humans,
-                botCount: Math.max(0, 2 - humans),
-                waitingDeadlineMs,
-              }, { nowMs }),
-            };
-          }
-
           const currentSeats = room.seats && typeof room.seats === "object" ? room.seats : {};
           const usedSeats = new Set(
             Object.values(currentSeats)
@@ -11947,8 +11867,7 @@ exports.joinMatchmakingMorpion = publicOnCall("joinMatchmakingMorpion", async (r
       humanCount: 1,
       seats: { [uid]: 0 },
       roomPresenceMs: { [uid]: nowMs },
-      botCount: 1,
-      botDifficulty: "ultra",
+      botCount: 0,
       startRevealPending: false,
       startRevealAckUids: [],
       waitingDeadlineMs: nowMs + ROOM_WAIT_MS,
@@ -11982,7 +11901,7 @@ exports.joinMatchmakingMorpion = publicOnCall("joinMatchmakingMorpion", async (r
       does: walletMutation ? walletMutation.afterDoes : safeInt(walletData.doesBalance),
       waitingDeadlineMs: nowMs + ROOM_WAIT_MS,
       humanCount: 1,
-      botCount: 1,
+      botCount: 0,
     };
   });
 
@@ -12040,7 +11959,7 @@ exports.ensureRoomReadyMorpion = publicOnCall("ensureRoomReadyMorpion", async (r
       tx.update(roomRefDoc, { waitingDeadlineMs, updatedAt: admin.firestore.FieldValue.serverTimestamp() });
     }
 
-    if (humans < 2 && nowMs < waitingDeadlineMs) {
+    if (humans < 2) {
       logMorpionServerDebug("ensureRoomReady:stillWaiting", {
         roomId,
         uid,
@@ -12055,7 +11974,7 @@ exports.ensureRoomReadyMorpion = publicOnCall("ensureRoomReadyMorpion", async (r
         startRevealPending: false,
         waitingDeadlineMs,
         humanCount: humans,
-        botCount: Math.max(0, 2 - humans),
+        botCount: 0,
       };
     }
 
@@ -12070,7 +11989,7 @@ exports.ensureRoomReadyMorpion = publicOnCall("ensureRoomReadyMorpion", async (r
     return buildStartedMorpionRoomTransaction(tx, roomRefDoc, {
       ...room,
       humanCount: humans,
-      botCount: Math.max(0, 2 - humans),
+      botCount: 0,
       waitingDeadlineMs,
     }, { nowMs });
   });
