@@ -41,7 +41,17 @@ const MORPION_BOT_NUMERIC_IDS = Object.freeze([35601379, 40507232, 41752992]);
 const URL_PARAMS = new URLSearchParams(window.location.search);
 const parsedRequestedStake = Number.parseInt(String(URL_PARAMS.get("stake") ?? 500), 10);
 const requestedStake = Number.isFinite(parsedRequestedStake) ? parsedRequestedStake : 500;
-const selectedStakeDoes = ALLOWED_MORPION_STAKE_AMOUNTS.includes(requestedStake) ? requestedStake : 500;
+function getFriendMorpionRoomIdFromUrl() {
+  return String(URL_PARAMS.get("friendMorpionRoomId") || "").trim();
+}
+
+function isFriendMorpionFlowFromUrl() {
+  return getFriendMorpionRoomIdFromUrl().length > 0 || String(URL_PARAMS.get("roomMode") || "").trim() === "morpion_friends";
+}
+
+const selectedStakeDoes = isFriendMorpionFlowFromUrl()
+  ? Math.max(1, Number.parseInt(String(requestedStake || 0), 10) || 500)
+  : (ALLOWED_MORPION_STAKE_AMOUNTS.includes(requestedStake) ? requestedStake : 500);
 
 const dom = {
   board: document.getElementById("morpionBoard"),
@@ -1519,6 +1529,43 @@ async function joinOrResumeRoom() {
   }
 }
 
+async function resumeFriendMorpionFromUrl() {
+  const friendRoomId = getFriendMorpionRoomIdFromUrl();
+  if (!currentUser?.uid || joining || currentRoomId || !friendRoomId) return;
+  joining = true;
+  rewardClaimed = false;
+  startRevealAcked = false;
+  lastHandledEndKey = "";
+  clearEndStateDecorations();
+  closeResultModal();
+  closeQuitModal();
+  openWaitingModal("Connexion en cours...", "Nous rejoignons la salle privee de morpion.");
+
+  try {
+    await refreshWallet();
+    currentRoomId = friendRoomId;
+    currentSeatIndex = safeInt(URL_PARAMS.get("seat"), 0);
+    clearRoomAbandoned(currentRoomId);
+    subscribeToRoom(currentRoomId);
+    startPresencePing();
+    startTurnTicker();
+    void pingPresence();
+  } catch (error) {
+    console.error("[MORPION] resumeFriendMorpionFromUrl failed", error);
+    openResultModal("Connexion impossible", "Impossible de rejoindre cette salle privee", error?.message || "Reessaie dans un instant.");
+  } finally {
+    joining = false;
+  }
+}
+
+function joinOrResumeCurrentFlow() {
+  if (isFriendMorpionFlowFromUrl()) {
+    void resumeFriendMorpionFromUrl();
+    return;
+  }
+  void joinOrResumeRoom();
+}
+
 function bindEvents() {
   dom.board?.addEventListener("click", (event) => {
     const target = event.target instanceof HTMLElement ? event.target.closest(".cell") : null;
@@ -1593,7 +1640,7 @@ function bindEvents() {
     turnRuleAccepted = true;
     closeRuleModal();
     if (currentUser?.uid) {
-      void joinOrResumeRoom();
+      joinOrResumeCurrentFlow();
     }
   });
 
@@ -1640,7 +1687,7 @@ function init() {
       openRuleModal();
       return;
     }
-    void joinOrResumeRoom();
+    joinOrResumeCurrentFlow();
   });
 }
 

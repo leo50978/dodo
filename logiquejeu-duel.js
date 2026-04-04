@@ -79,6 +79,7 @@ let clientPresenceInFlight = false;
 let fullscreenHintTimer = null;
 let onlineUsersTick = null;
 let onlineUsersBucket = -1;
+let onlineUsersPhaseTimers = [];
 let lotModalOpen = false;
 let lotActionSending = false;
 let openingRuleNoticeMessage = "";
@@ -108,6 +109,18 @@ const ONLINE_USERS_MAX = 100000;
 const ONLINE_USERS_STEP_MS = 30000;
 const ONLINE_USERS_WAVE_PERIOD = 29;
 const ONLINE_USERS_SEED = 0x9e3779b9;
+const ONLINE_USERS_INFO_MODAL_KEY = "domino_presence_explainer_seen_v1";
+const ONLINE_USERS_PLATFORM_PHASE_MS = 5600;
+const ONLINE_USERS_GAME_PHASE_MS = 5600;
+const ONLINE_USERS_SEQUENCE_START_DELAY_MS = 700;
+const ONLINE_USERS_HUD_FADE_MS = 320;
+const ONLINE_USERS_GAME_STEP_MS = 10 * 60 * 1000;
+const ONLINE_USERS_HAITI_TIMEZONE = "America/Port-au-Prince";
+const HAITI_HOUR_FORMATTER = new Intl.DateTimeFormat("en-US", {
+  hour: "2-digit",
+  hour12: false,
+  timeZone: ONLINE_USERS_HAITI_TIMEZONE,
+});
 
 startMorpionLiveNotice();
 
@@ -276,6 +289,95 @@ function randomBetween(min, max) {
   return Math.floor(Math.random() * (safeMax - safeMin + 1)) + safeMin;
 }
 
+function clearOnlineUsersPhaseTimers() {
+  if (!Array.isArray(onlineUsersPhaseTimers) || !onlineUsersPhaseTimers.length) return;
+  onlineUsersPhaseTimers.forEach((timerId) => {
+    window.clearTimeout(timerId);
+  });
+  onlineUsersPhaseTimers = [];
+}
+
+function queueOnlineUsersPhase(callback, delayMs) {
+  const timerId = window.setTimeout(() => {
+    onlineUsersPhaseTimers = onlineUsersPhaseTimers.filter((entry) => entry !== timerId);
+    callback();
+  }, Math.max(0, safeInt(delayMs)));
+  onlineUsersPhaseTimers.push(timerId);
+  return timerId;
+}
+
+function primeOnlineUsersHud() {
+  const hud = document.getElementById("OnlineUsersHud");
+  if (!hud) return null;
+  hud.style.opacity = "0";
+  hud.style.transform = "translate(-50%, -10px)";
+  hud.style.transition = `opacity ${ONLINE_USERS_HUD_FADE_MS}ms ease, transform ${ONLINE_USERS_HUD_FADE_MS}ms ease`;
+  hud.style.pointerEvents = "none";
+  return hud;
+}
+
+function setOnlineUsersHudMessage(message, kind = "platform") {
+  const hud = primeOnlineUsersHud();
+  if (!hud) return;
+  hud.dataset.kind = kind;
+  if (kind === "game") {
+    hud.style.borderColor = "rgba(125, 211, 252, 0.36)";
+    hud.style.background = "rgba(56, 189, 248, 0.15)";
+    hud.style.color = "#d9f5ff";
+  } else {
+    hud.style.borderColor = "rgba(110, 231, 183, 0.35)";
+    hud.style.background = "rgba(16, 185, 129, 0.15)";
+    hud.style.color = "#d1fae5";
+  }
+  hud.textContent = String(message || "").trim();
+  window.requestAnimationFrame(() => {
+    hud.style.opacity = "1";
+    hud.style.transform = "translate(-50%, 0)";
+  });
+}
+
+function hideOnlineUsersHud() {
+  const hud = document.getElementById("OnlineUsersHud");
+  if (!hud) return;
+  hud.style.opacity = "0";
+  hud.style.transform = "translate(-50%, -10px)";
+}
+
+function isOverlayVisibleById(id = "") {
+  const element = document.getElementById(String(id || ""));
+  if (!element) return false;
+  if (element.classList.contains("hidden")) return false;
+  if (element.classList.contains("active")) return true;
+  if (element.classList.contains("flex")) return true;
+  const computed = window.getComputedStyle ? window.getComputedStyle(element) : null;
+  if (!computed) return true;
+  return computed.display !== "none" && computed.visibility !== "hidden" && computed.opacity !== "0";
+}
+
+function isOnlineUsersHudBlocked() {
+  return (
+    isOverlayVisibleById("MatchLoadingOverlay") ||
+    isOverlayVisibleById("OrientationGuardOverlay") ||
+    isOverlayVisibleById("DuelLotModal")
+  );
+}
+
+function getHaitiHour(nowMs = Date.now()) {
+  const hourRaw = HAITI_HOUR_FORMATTER.format(new Date(nowMs));
+  const parsed = Number.parseInt(String(hourRaw || "0"), 10);
+  return Number.isFinite(parsed) ? Math.max(0, Math.min(23, parsed)) : 0;
+}
+
+function hashUnitInterval(seed) {
+  let x = (seed ^ ONLINE_USERS_SEED) >>> 0;
+  x ^= x >>> 16;
+  x = Math.imul(x, 0x7feb352d);
+  x ^= x >>> 15;
+  x = Math.imul(x, 0x846ca68b);
+  x ^= x >>> 16;
+  return (x >>> 0) / 0xffffffff;
+}
+
 function computeSharedOnlineUsers(nowMs) {
   const bucket = Math.floor(Math.max(0, nowMs) / ONLINE_USERS_STEP_MS);
   const phase = bucket % ONLINE_USERS_WAVE_PERIOD;
@@ -288,10 +390,94 @@ function computeSharedOnlineUsers(nowMs) {
   return Math.max(ONLINE_USERS_MIN, Math.min(ONLINE_USERS_MAX, candidate));
 }
 
-function setOnlineUsersHud(count) {
-  const hud = document.getElementById("OnlineUsersHud");
-  if (!hud) return;
-  hud.textContent = `Utilisateurs en ligne: ${safeInt(count).toLocaleString("fr-FR")}`;
+function getDuelGameAudienceBounds(hour = 0) {
+  if (hour < 5) return { min: 2, max: 10 };
+  if (hour < 8) return { min: 4, max: 15 };
+  if (hour < 12) return { min: 6, max: 22 };
+  if (hour < 17) return { min: 9, max: 32 };
+  if (hour < 20) return { min: 14, max: 44 };
+  if (hour < 23) return { min: 11, max: 34 };
+  return { min: 5, max: 16 };
+}
+
+function computeDuelGameAudience(nowMs = Date.now()) {
+  const hour = getHaitiHour(nowMs);
+  const bounds = getDuelGameAudienceBounds(hour);
+  const bucket = Math.floor(nowMs / ONLINE_USERS_STEP_MS);
+  const wavePeriod = ONLINE_USERS_WAVE_PERIOD + 11;
+  const phase = (bucket + (hour * 5)) % wavePeriod;
+  const wave = (Math.sin((phase / wavePeriod) * Math.PI * 2) + 1) / 2;
+  const noise = hashUnitInterval((bucket * 149) + (hour * 19) + 73);
+  const ratio = Math.max(0, Math.min(1, (wave * 0.6) + (noise * 0.4)));
+  const amplitude = Math.max(0, bounds.max - bounds.min);
+  return bounds.min + Math.round(amplitude * ratio);
+}
+
+function buildPlatformAudienceLabel(nowMs = Date.now()) {
+  return `${safeInt(computeSharedOnlineUsers(nowMs)).toLocaleString("fr-FR")} joueurs en ligne sur toute la plateforme`;
+}
+
+function buildDuelGameAudienceLabel(nowMs = Date.now()) {
+  return `En Haiti: ${safeInt(computeDuelGameAudience(nowMs)).toLocaleString("fr-FR")} jouent au duel 1v1`;
+}
+
+function createPresenceInfoModalIfNeeded() {
+  let overlay = document.getElementById("DominoPresenceInfoModal");
+  if (overlay) return overlay;
+
+  overlay = document.createElement("div");
+  overlay.id = "DominoPresenceInfoModal";
+  overlay.className = "fixed inset-0 z-[2970] hidden items-end justify-center bg-black/60 p-3 backdrop-blur-md sm:items-center sm:p-4";
+  overlay.innerHTML = `
+    <div class="w-full max-w-[28rem] rounded-[28px] border border-white/16 bg-[linear-gradient(180deg,rgba(63,71,102,0.96),rgba(27,33,49,0.98))] p-5 text-white shadow-[14px_14px_34px_rgba(16,23,40,0.5),-10px_-10px_24px_rgba(112,126,165,0.2)]">
+      <p class="text-[11px] font-semibold uppercase tracking-[0.22em] text-[#ffd4ab]/78">Information joueurs</p>
+      <h2 class="mt-2 text-xl font-black leading-tight text-white">Comment lire les chiffres affiches</h2>
+      <p class="mt-3 text-sm leading-6 text-white/84">
+        Dominoes Lakay fonctionne comme une holding de jeu presente au Benin, au Porto Rico, au Niger et actuellement en Haiti.
+      </p>
+      <p class="mt-3 text-sm leading-6 text-white/78">
+        Le premier chiffre montre la communaute totale connectee sur la plateforme dans tous les pays. Le second montre seulement le nombre estime de joueurs actifs sur ce jeu en Haiti.
+      </p>
+      <button id="DominoPresenceInfoModalCloseBtn" type="button" class="mt-5 h-12 w-full rounded-2xl border border-[#ffb26e] bg-[#F57C00] text-sm font-semibold text-white shadow-[8px_8px_18px_rgba(163,82,27,0.45),-6px_-6px_14px_rgba(255,175,102,0.22)] transition hover:-translate-y-0.5">
+        J'ai compris
+      </button>
+    </div>
+  `;
+
+  document.body.appendChild(overlay);
+  return overlay;
+}
+
+function maybeShowPresenceInfoModal(onClose) {
+  let hasSeen = false;
+  try {
+    hasSeen = window.localStorage.getItem(ONLINE_USERS_INFO_MODAL_KEY) === "1";
+  } catch (_) {
+    hasSeen = false;
+  }
+  if (hasSeen) return false;
+
+  const overlay = createPresenceInfoModalIfNeeded();
+  const finish = () => {
+    try {
+      window.localStorage.setItem(ONLINE_USERS_INFO_MODAL_KEY, "1");
+    } catch (_) {
+      // Ignore storage failures.
+    }
+    overlay.classList.add("hidden");
+    overlay.classList.remove("flex");
+    if (typeof onClose === "function") {
+      onClose();
+    }
+  };
+
+  overlay.classList.remove("hidden");
+  overlay.classList.add("flex");
+  overlay.onclick = (event) => {
+    if (event.target === overlay) finish();
+  };
+  overlay.querySelector("#DominoPresenceInfoModalCloseBtn")?.addEventListener("click", finish, { once: true });
+  return true;
 }
 
 function setStatus(message = "") {
@@ -687,19 +873,42 @@ function startOnlineUsersTicker() {
   const hud = document.getElementById("OnlineUsersHud");
   if (!hud) return;
   if (onlineUsersTick) {
-    clearInterval(onlineUsersTick);
+    clearTimeout(onlineUsersTick);
     onlineUsersTick = null;
   }
+  clearOnlineUsersPhaseTimers();
   onlineUsersBucket = -1;
-  const refreshHud = () => {
-    const now = Date.now();
-    const nextBucket = Math.floor(now / ONLINE_USERS_STEP_MS);
+  primeOnlineUsersHud();
+
+  const launchSequence = () => {
+    if (isOnlineUsersHudBlocked()) {
+      onlineUsersTick = window.setTimeout(launchSequence, 600);
+      return;
+    }
+    const nowMs = Date.now();
+    const nextBucket = Math.floor(nowMs / ONLINE_USERS_STEP_MS);
     if (nextBucket === onlineUsersBucket) return;
     onlineUsersBucket = nextBucket;
-    setOnlineUsersHud(computeSharedOnlineUsers(now));
+    const platformLabel = buildPlatformAudienceLabel(nowMs);
+    const gameLabel = buildDuelGameAudienceLabel(nowMs);
+    setOnlineUsersHudMessage(platformLabel, "platform");
+    queueOnlineUsersPhase(() => {
+      hideOnlineUsersHud();
+      queueOnlineUsersPhase(() => {
+        setOnlineUsersHudMessage(gameLabel, "game");
+        queueOnlineUsersPhase(() => {
+          hideOnlineUsersHud();
+        }, ONLINE_USERS_GAME_PHASE_MS);
+      }, ONLINE_USERS_HUD_FADE_MS + 180);
+    }, ONLINE_USERS_PLATFORM_PHASE_MS);
   };
-  refreshHud();
-  onlineUsersTick = setInterval(refreshHud, 1000);
+
+  if (maybeShowPresenceInfoModal(() => {
+    onlineUsersTick = window.setTimeout(launchSequence, ONLINE_USERS_SEQUENCE_START_DELAY_MS);
+  })) {
+    return;
+  }
+  onlineUsersTick = window.setTimeout(launchSequence, ONLINE_USERS_SEQUENCE_START_DELAY_MS);
 }
 
 function normalizeDeckOrder(raw) {
@@ -2367,9 +2576,10 @@ window.addEventListener("beforeunload", () => {
   stopClientPresenceHeartbeat();
   leaveCurrentRoomOnLifecycleExit("beforeunload");
   if (onlineUsersTick) {
-    clearInterval(onlineUsersTick);
+    clearTimeout(onlineUsersTick);
     onlineUsersTick = null;
   }
+  clearOnlineUsersPhaseTimers();
   if (fullscreenHintTimer) {
     clearTimeout(fullscreenHintTimer);
     fullscreenHintTimer = null;

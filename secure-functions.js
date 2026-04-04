@@ -172,6 +172,14 @@ export async function joinMatchmakingMorpionSecure(payload = {}) {
   return invokeCallable("joinMatchmakingMorpion", payload, "Impossible de rejoindre une partie de morpion.");
 }
 
+export async function createFriendMorpionRoomSecure(payload = {}) {
+  return invokeCallable("createFriendMorpionRoom", payload, "Impossible de creer une salle morpion entre amis.");
+}
+
+export async function joinFriendMorpionRoomByCodeSecure(payload = {}) {
+  return invokeCallable("joinFriendMorpionRoomByCode", payload, "Impossible de rejoindre la salle morpion entre amis.");
+}
+
 export async function ensureRoomReadyMorpionSecure(payload = {}) {
   return invokeCallable("ensureRoomReadyMorpion", payload, "Impossible de demarrer la partie de morpion.");
 }
@@ -326,6 +334,18 @@ export async function adminCheckSecure(payload = {}) {
 
 export async function setBotDifficultySecure(payload = {}) {
   return invokeCallable("setBotDifficulty", payload, "Impossible de changer le niveau des bots.");
+}
+
+export async function setDuelBotDifficultySecure(payload = {}) {
+  return invokeCallable("setDuelBotDifficulty", payload, "Impossible de changer le niveau du bot duel.");
+}
+
+export async function getDuelBotPilotSnapshotSecure(payload = {}) {
+  return invokeCallable("getDuelBotPilotSnapshot", payload, "Impossible de charger le pilotage duel.");
+}
+
+export async function setDuelBotPilotControlSecure(payload = {}) {
+  return invokeCallable("setDuelBotPilotControl", payload, "Impossible de mettre a jour le pilotage duel.");
 }
 
 export async function upsertSurveySecure(payload = {}) {

@@ -113,6 +113,7 @@ const DEFAULT_MORPION_STAKE_OPTIONS = Object.freeze([
   Object.freeze({ id: "morpion_500", stakeDoes: 500, rewardDoes: 900, enabled: true, sortOrder: 10 }),
   Object.freeze({ id: "morpion_1000", stakeDoes: 1000, rewardDoes: 1800, enabled: false, sortOrder: 20 }),
 ]);
+const MAX_FRIEND_MORPION_STAKE_DOES = 100_000_000;
 
 function computeDepositBonusSnapshot(amountHtg = 0) {
   const safeAmountHtg = Math.max(0, Number(amountHtg) || 0);
@@ -129,6 +130,7 @@ function computeDepositBonusSnapshot(amountHtg = 0) {
   };
 }
 const DEFAULT_BOT_DIFFICULTY = "expert";
+const DEFAULT_DUEL_BOT_DIFFICULTY = "expert";
 const ROOM_WAIT_MS = 15 * 1000;
 const DUEL_TURN_LIMIT_MS = 15 * 1000;
 const MORPION_TURN_LIMIT_MS = 30 * 1000;
@@ -202,6 +204,12 @@ const BOT_DIFFICULTY_LOOKAHEAD = Object.freeze({
   userpro: 0,
 });
 const DUEL_ELITE_LOOKAHEAD_PLIES = 4;
+const DUEL_BOT_DIFFICULTY_LOOKAHEAD = Object.freeze({
+  amateur: 0,
+  expert: 2,
+  ultra: DUEL_ELITE_LOOKAHEAD_PLIES,
+  userpro: 0,
+});
 const USER_TOURNAMENTS_COLLECTION = "userTournaments";
 const USER_TOURNAMENT_SLOT_COUNT = 5;
 const USER_TOURNAMENT_DAILY_LIMIT = 3;
@@ -2985,6 +2993,21 @@ async function getConfiguredBotDifficulty() {
   }
 }
 
+async function getConfiguredDuelBotDifficulty() {
+  try {
+    const snap = await adminBootstrapRef().get();
+    if (!snap.exists) return DEFAULT_DUEL_BOT_DIFFICULTY;
+    const data = snap.data() || {};
+    const mode = normalizeBotPilotMode(data.duelBotPilotMode || "manual");
+    if (mode === "auto") {
+      return normalizeBotDifficulty(data.autoDuelBotDifficulty || data.duelBotDifficulty || DEFAULT_DUEL_BOT_DIFFICULTY);
+    }
+    return normalizeBotDifficulty(data.manualDuelBotDifficulty || data.duelBotDifficulty || DEFAULT_DUEL_BOT_DIFFICULTY);
+  } catch (_) {
+    return DEFAULT_DUEL_BOT_DIFFICULTY;
+  }
+}
+
 async function getConfiguredMorpionMatchmakingPolicy() {
   return {
     mode: "manual",
@@ -3867,6 +3890,63 @@ function chooseAutoBotDifficulty(snapshot = {}) {
   return { level: "userpro", band: "comfort", reason: "new_high_comfort", marginPct, drawdownPct };
 }
 
+function chooseAutoDuelBotDifficulty(snapshot = {}) {
+  const roomsCount = safeInt(snapshot.roomsCount);
+  const netDoes = safeSignedInt(snapshot.netDoes);
+  const collectedDoes = safeInt(snapshot.collectedDoes);
+  const marginPct = collectedDoes > 0 ? (netDoes / collectedDoes) : 0;
+  const drawdownDoes = Math.max(0, safeInt(snapshot.drawdownDoes));
+  const drawdownPct = Math.max(0, Number(snapshot.drawdownPct || 0));
+  const botWinRatePct = Math.max(0, Number(snapshot.botWinRatePct || 0));
+  const humanWinRatePct = Math.max(0, Number(snapshot.humanWinRatePct || 0));
+
+  if (collectedDoes <= 0) {
+    return {
+      level: DEFAULT_DUEL_BOT_DIFFICULTY,
+      band: "neutral",
+      reason: "no_volume",
+      marginPct: 0,
+      drawdownPct: 0,
+      botWinRatePct,
+      humanWinRatePct,
+    };
+  }
+  if (roomsCount < 8) {
+    return {
+      level: DEFAULT_DUEL_BOT_DIFFICULTY,
+      band: "neutral",
+      reason: "low_volume",
+      marginPct,
+      drawdownPct,
+      botWinRatePct,
+      humanWinRatePct,
+    };
+  }
+  if (drawdownPct >= 0.16 || (drawdownDoes >= 250 && drawdownPct >= 0.1)) {
+    return { level: "ultra", band: "danger", reason: "drawdown_critical", marginPct, drawdownPct, botWinRatePct, humanWinRatePct };
+  }
+  if (netDoes < 0 || marginPct < 0.04) {
+    return { level: "ultra", band: "danger", reason: "margin_too_low", marginPct, drawdownPct, botWinRatePct, humanWinRatePct };
+  }
+  if (roomsCount >= 12 && humanWinRatePct >= 0.66) {
+    return { level: "ultra", band: "defense", reason: "human_overperforming", marginPct, drawdownPct, botWinRatePct, humanWinRatePct };
+  }
+  if (botWinRatePct >= 0.82 && marginPct >= 0.18 && drawdownPct <= 0.03) {
+    return { level: "userpro", band: "comfort", reason: "bot_overwhelming", marginPct, drawdownPct, botWinRatePct, humanWinRatePct };
+  }
+  if (botWinRatePct >= 0.74 && marginPct >= 0.12) {
+    return { level: "amateur", band: "comfort", reason: "bot_too_strong", marginPct, drawdownPct, botWinRatePct, humanWinRatePct };
+  }
+  if (drawdownPct >= 0.08 || marginPct < 0.08) {
+    return { level: "expert", band: "defense", reason: drawdownPct >= 0.08 ? "drawdown_high" : "margin_low", marginPct, drawdownPct, botWinRatePct, humanWinRatePct };
+  }
+  if (marginPct >= 0.14 && botWinRatePct <= 0.58 && drawdownPct <= 0.04) {
+    return { level: "amateur", band: "equilibrium", reason: "margin_healthy", marginPct, drawdownPct, botWinRatePct, humanWinRatePct };
+  }
+
+  return { level: "expert", band: "equilibrium", reason: "stable", marginPct, drawdownPct, botWinRatePct, humanWinRatePct };
+}
+
 async function computeBotPilotSnapshot(options = {}) {
   const nowMs = safeSignedInt(options.nowMs) || Date.now();
   const range = getBotPilotRange(options.window || "today", nowMs);
@@ -4083,6 +4163,254 @@ async function computeBotPilotSnapshot(options = {}) {
     trend,
     equityCurve,
     botMix,
+    computedAtMs: nowMs,
+  };
+}
+
+async function computeDuelBotPilotSnapshot(options = {}) {
+  const nowMs = safeSignedInt(options.nowMs) || Date.now();
+  const range = getBotPilotRange(options.window || "today", nowMs);
+  const querySnap = await db.collection(DUEL_ROOM_RESULTS_COLLECTION)
+    .where("endedAtMs", ">=", range.startMs)
+    .orderBy("endedAtMs", "desc")
+    .limit(BOT_PILOT_SNAPSHOT_LIMIT)
+    .get();
+
+  let roomsCount = 0;
+  let collectedDoes = 0;
+  let payoutDoes = 0;
+  let netDoes = 0;
+  let grossCollectedDoes = 0;
+  let grossPayoutDoes = 0;
+  let grossNetDoes = 0;
+  let promoExposureDoes = 0;
+  let botWins = 0;
+  let humanWins = 0;
+  let truncated = querySnap.size >= BOT_PILOT_SNAPSHOT_LIMIT;
+  const trendMap = new Map();
+  const stakeMixMap = new Map();
+  const difficultyMixMap = new Map(
+    Array.from(BOT_DIFFICULTY_LEVELS).map((level) => [level, {
+      level,
+      rooms: 0,
+      netDoes: 0,
+      botWins: 0,
+      humanWins: 0,
+    }])
+  );
+
+  querySnap.forEach((docSnap) => {
+    const data = docSnap.data() || {};
+    const endedAtMs = safeSignedInt(data.endedAtMs);
+    if (endedAtMs < range.startMs || endedAtMs > range.endMs) return;
+    if (String(data.status || "").trim().toLowerCase() !== "ended") return;
+    if (String(data.roomMode || "").trim().toLowerCase() === "duel_friends") return;
+    if (safeInt(data.botCount) <= 0) return;
+
+    roomsCount += 1;
+    const roomCollectedGross = safeInt(data.companyCollectedDoes);
+    const roomPayoutGross = safeInt(data.companyPayoutDoes);
+    const roomNetGross = safeSignedInt(
+      typeof data.companyNetDoes === "number"
+        ? data.companyNetDoes
+        : (roomCollectedGross - roomPayoutGross)
+    );
+    const roomCollected = safeInt(
+      typeof data.companyCollectedRealDoes === "number"
+        ? data.companyCollectedRealDoes
+        : roomCollectedGross
+    );
+    const roomPayout = safeInt(
+      typeof data.companyPayoutRealDoes === "number"
+        ? data.companyPayoutRealDoes
+        : roomPayoutGross
+    );
+    const roomNet = safeSignedInt(
+      typeof data.companyNetRealDoes === "number"
+        ? data.companyNetRealDoes
+        : (roomCollected - roomPayout)
+    );
+    const roomPromoExposure = safeInt(data.companyPromoExposureDoes);
+    const winnerType = String(data.winnerType || "").trim().toLowerCase();
+    const stakeDoes = safeInt(data.entryCostDoes || data.stakeDoes);
+    const difficulty = normalizeBotDifficulty(data.botDifficulty || DEFAULT_DUEL_BOT_DIFFICULTY);
+
+    grossCollectedDoes += roomCollectedGross;
+    grossPayoutDoes += roomPayoutGross;
+    grossNetDoes += roomNetGross;
+    collectedDoes += roomCollected;
+    payoutDoes += roomPayout;
+    netDoes += roomNet;
+    promoExposureDoes += roomPromoExposure;
+    if (winnerType === "bot") botWins += 1;
+    if (winnerType === "human") humanWins += 1;
+
+    const trendKey = getBotPilotTrendKey(range.windowKey, endedAtMs);
+    const trendItem = trendMap.get(trendKey) || {
+      key: trendKey,
+      label: getBotPilotTrendLabel(range.windowKey, endedAtMs),
+      periodMs: endedAtMs,
+      rooms: 0,
+      collectedDoes: 0,
+      payoutDoes: 0,
+      netDoes: 0,
+      grossCollectedDoes: 0,
+      grossPayoutDoes: 0,
+      grossNetDoes: 0,
+      promoExposureDoes: 0,
+      botWins: 0,
+      humanWins: 0,
+    };
+    trendItem.rooms += 1;
+    trendItem.collectedDoes += roomCollected;
+    trendItem.payoutDoes += roomPayout;
+    trendItem.netDoes += roomNet;
+    trendItem.grossCollectedDoes += roomCollectedGross;
+    trendItem.grossPayoutDoes += roomPayoutGross;
+    trendItem.grossNetDoes += roomNetGross;
+    trendItem.promoExposureDoes += roomPromoExposure;
+    if (winnerType === "bot") trendItem.botWins += 1;
+    if (winnerType === "human") trendItem.humanWins += 1;
+    if (endedAtMs > safeSignedInt(trendItem.periodMs)) {
+      trendItem.periodMs = endedAtMs;
+      trendItem.label = getBotPilotTrendLabel(range.windowKey, endedAtMs);
+    }
+    trendMap.set(trendKey, trendItem);
+
+    const stakeItem = stakeMixMap.get(String(stakeDoes)) || {
+      stakeDoes,
+      label: `${stakeDoes} Does`,
+      rooms: 0,
+      netDoes: 0,
+    };
+    stakeItem.rooms += 1;
+    stakeItem.netDoes += roomNet;
+    stakeMixMap.set(String(stakeDoes), stakeItem);
+
+    const difficultyItem = difficultyMixMap.get(difficulty) || {
+      level: difficulty,
+      rooms: 0,
+      netDoes: 0,
+      botWins: 0,
+      humanWins: 0,
+    };
+    difficultyItem.rooms += 1;
+    difficultyItem.netDoes += roomNet;
+    if (winnerType === "bot") difficultyItem.botWins += 1;
+    if (winnerType === "human") difficultyItem.humanWins += 1;
+    difficultyMixMap.set(difficulty, difficultyItem);
+  });
+
+  const fullTrend = Array.from(trendMap.values())
+    .sort((a, b) => safeSignedInt(a.periodMs) - safeSignedInt(b.periodMs))
+    .map((item) => ({
+      key: item.key,
+      label: item.label,
+      periodMs: safeSignedInt(item.periodMs),
+      rooms: safeInt(item.rooms),
+      collectedDoes: safeInt(item.collectedDoes),
+      payoutDoes: safeInt(item.payoutDoes),
+      netDoes: safeSignedInt(item.netDoes),
+      grossCollectedDoes: safeInt(item.grossCollectedDoes),
+      grossPayoutDoes: safeInt(item.grossPayoutDoes),
+      grossNetDoes: safeSignedInt(item.grossNetDoes),
+      promoExposureDoes: safeInt(item.promoExposureDoes),
+      botWins: safeInt(item.botWins),
+      humanWins: safeInt(item.humanWins),
+    }));
+  let runningEquityDoes = 0;
+  let highWaterMarkDoes = 0;
+  let lastPeakAtMs = range.startMs;
+  const fullEquityCurve = [{
+    key: "baseline",
+    label: "Debut",
+    periodMs: range.startMs,
+    deltaNetDoes: 0,
+    equityDoes: 0,
+    drawdownDoes: 0,
+    drawdownPct: 0,
+  }];
+  fullTrend.forEach((item) => {
+    runningEquityDoes += safeSignedInt(item.netDoes);
+    if (runningEquityDoes >= highWaterMarkDoes) {
+      highWaterMarkDoes = runningEquityDoes;
+      lastPeakAtMs = safeSignedInt(item.periodMs) || lastPeakAtMs;
+    }
+    const pointDrawdownDoes = Math.max(0, highWaterMarkDoes - runningEquityDoes);
+    const pointDrawdownPct = highWaterMarkDoes > 0 ? (pointDrawdownDoes / highWaterMarkDoes) : 0;
+    fullEquityCurve.push({
+      key: item.key,
+      label: item.label,
+      periodMs: safeSignedInt(item.periodMs),
+      deltaNetDoes: safeSignedInt(item.netDoes),
+      equityDoes: runningEquityDoes,
+      drawdownDoes: pointDrawdownDoes,
+      drawdownPct: pointDrawdownPct,
+    });
+  });
+  const currentEquityDoes = runningEquityDoes;
+  const drawdownDoes = Math.max(0, highWaterMarkDoes - currentEquityDoes);
+  const drawdownPct = highWaterMarkDoes > 0 ? (drawdownDoes / highWaterMarkDoes) : 0;
+  const trend = fullTrend.slice(-BOT_PILOT_TREND_POINT_LIMIT);
+  const equityCurve = fullEquityCurve.slice(-(BOT_PILOT_EQUITY_POINT_LIMIT + 1));
+  const recommended = chooseAutoDuelBotDifficulty({
+    roomsCount,
+    netDoes,
+    collectedDoes,
+    highWaterMarkDoes,
+    currentEquityDoes,
+    drawdownDoes,
+    drawdownPct,
+    botWinRatePct: roomsCount > 0 ? (botWins / roomsCount) : 0,
+    humanWinRatePct: roomsCount > 0 ? (humanWins / roomsCount) : 0,
+  });
+
+  return {
+    ok: true,
+    window: range.windowKey,
+    startMs: range.startMs,
+    endMs: range.endMs,
+    dayKey: getBotPilotDayKey(range.startMs),
+    roomsCount,
+    collectedDoes,
+    payoutDoes,
+    netDoes,
+    grossCollectedDoes,
+    grossPayoutDoes,
+    grossNetDoes,
+    promoExposureDoes,
+    marginPct: collectedDoes > 0 ? netDoes / collectedDoes : 0,
+    currentEquityDoes,
+    highWaterMarkDoes,
+    drawdownDoes,
+    drawdownPct,
+    lastPeakAtMs,
+    botWins,
+    humanWins,
+    botWinRatePct: roomsCount > 0 ? botWins / roomsCount : 0,
+    humanWinRatePct: roomsCount > 0 ? humanWins / roomsCount : 0,
+    truncated,
+    fetchLimit: BOT_PILOT_SNAPSHOT_LIMIT,
+    recommendedLevel: recommended.level,
+    recommendedBand: recommended.band,
+    recommendedReason: recommended.reason,
+    trend,
+    equityCurve,
+    stakeMix: Array.from(stakeMixMap.values())
+      .sort((left, right) => safeInt(left.stakeDoes) - safeInt(right.stakeDoes))
+      .map((item) => ({
+        stakeDoes: safeInt(item.stakeDoes),
+        label: item.label,
+        rooms: safeInt(item.rooms),
+        netDoes: safeSignedInt(item.netDoes),
+      })),
+    difficultyMix: Array.from(difficultyMixMap.values()).map((item) => ({
+      level: normalizeBotDifficulty(item.level),
+      rooms: safeInt(item.rooms),
+      netDoes: safeSignedInt(item.netDoes),
+      botWins: safeInt(item.botWins),
+      humanWins: safeInt(item.humanWins),
+    })),
     computedAtMs: nowMs,
   };
 }
@@ -7014,9 +7342,9 @@ function buildDuelBotCandidateMoves(state, seat) {
   }
 
   if (Array.isArray(state?.stockPile) && state.stockPile.length > 0) {
-    return state.stockPile
-      .filter((tileId) => Number.isFinite(Number(tileId)) && getTileValues(tileId))
-      .map((tileId) => buildDuelDrawMove(seat, Math.trunc(Number(tileId))));
+    // The bot must not inspect every tile left in the stock to "choose" the best draw.
+    // A draw from the lot should behave like a genuine random pick, just like a human turn.
+    return [buildDuelDrawMove(seat)];
   }
 
   return [buildDuelPassMove(seat)];
@@ -7025,6 +7353,10 @@ function buildDuelBotCandidateMoves(state, seat) {
 function scoreDuelMoveTieBreaker(state, move) {
   if (!move) return Number.NEGATIVE_INFINITY;
   if (move.type === "pass") return -1_000;
+
+  if (move.type === "draw" && !Number.isFinite(Number(move.tileId))) {
+    return 1_000;
+  }
 
   const values = getTileValues(move.tileId) || [0, 0];
   const pipSum = values[0] + values[1];
@@ -7349,7 +7681,10 @@ function applyResolvedDuelMove(state, room, move, actorUid) {
     }
 
     const requestedTileId = safeSignedInt(move.tileId, -1);
-    const stockIndex = nextState.stockPile.findIndex((tileId) => tileId === requestedTileId);
+    let stockIndex = nextState.stockPile.findIndex((tileId) => tileId === requestedTileId);
+    if (stockIndex < 0 && requestedTileId < 0) {
+      stockIndex = randomInt(0, nextState.stockPile.length - 1);
+    }
     if (stockIndex < 0) {
       throw new HttpsError("failed-precondition", "La tuile choisie n'est plus disponible dans le lot duel.");
     }
@@ -7357,6 +7692,7 @@ function applyResolvedDuelMove(state, room, move, actorUid) {
     const [drawnTileId] = nextState.stockPile.splice(stockIndex, 1);
     nextState.seatHands[move.player].push(drawnTileId);
     record.drawnTileIds.push(drawnTileId);
+    record.tileId = drawnTileId;
     nextState.passesInRow = 0;
   } else {
     const legalMoves = getLegalMovesForDuelSeat(nextState, move.player);
@@ -7387,8 +7723,28 @@ function applyResolvedDuelMove(state, room, move, actorUid) {
 }
 
 function chooseDuelBotMove(room, state, seat) {
+  const difficulty = normalizeBotDifficulty(room?.botDifficulty || DEFAULT_DUEL_BOT_DIFFICULTY);
+  const legalMoves = getLegalMovesForDuelSeat(state, seat);
+  if (difficulty === "userpro") {
+    if (legalMoves.length > 0) {
+      const selectedMove = pickRandomItem(legalMoves);
+      return selectedMove ? buildPlayMoveFromDuelLegal(seat, selectedMove) : buildDuelPassMove(seat);
+    }
+    if (Array.isArray(state?.stockPile) && state.stockPile.length > 0) {
+      return buildDuelDrawMove(seat);
+    }
+    return buildDuelPassMove(seat);
+  }
+
+  if (difficulty === "amateur" && legalMoves.length > 1 && Math.random() < 0.28) {
+    const selectedMove = pickRandomItem(legalMoves);
+    if (selectedMove) {
+      return buildPlayMoveFromDuelLegal(seat, selectedMove);
+    }
+  }
+
   return chooseStrategicDuelMove(room, state, seat, {
-    lookaheadPlies: DUEL_ELITE_LOOKAHEAD_PLIES,
+    lookaheadPlies: safeInt(DUEL_BOT_DIFFICULTY_LOOKAHEAD[difficulty]),
   });
 }
 
@@ -8445,6 +8801,10 @@ function isFriendDuelRoom(room = {}) {
   return String(room?.roomMode || "").trim() === "duel_friends";
 }
 
+function isFriendMorpionRoom(room = {}) {
+  return String(room?.roomMode || "").trim() === "morpion_friends";
+}
+
 function getRoomTargetHumanCount(room = {}) {
   const requested = safeInt(room?.requiredHumans);
   if (requested >= 2 && requested <= 4) return requested;
@@ -8588,6 +8948,21 @@ async function generateUniqueFriendDuelInviteCode(size = FRIEND_ROOM_CODE_SIZE, 
     if (existing.empty) return candidate;
   }
   throw new HttpsError("aborted", "Impossible de générer un code de duel unique.");
+}
+
+async function generateUniqueFriendMorpionInviteCode(size = FRIEND_ROOM_CODE_SIZE, maxAttempts = 18) {
+  const targetSize = Math.max(4, safeInt(size) || FRIEND_ROOM_CODE_SIZE);
+  for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
+    const candidate = normalizeCode(randomCode(targetSize));
+    if (!candidate) continue;
+    const existing = await db
+      .collection(MORPION_ROOMS_COLLECTION)
+      .where("inviteCodeNormalized", "==", candidate)
+      .limit(1)
+      .get();
+    if (existing.empty) return candidate;
+  }
+  throw new HttpsError("aborted", "Impossible de générer un code morpion unique.");
 }
 
 async function chargeRoomEntriesTx(tx, room = {}, playerUids = [], stakeDoes = 0) {
@@ -11007,13 +11382,41 @@ function resolveMorpionWaitingDeadlineMs(room = {}, nowMs = Date.now()) {
   const explicit = safeSignedInt(room.waitingDeadlineMs);
   if (explicit > 0) return explicit;
   const createdAtMs = safeSignedInt(room.createdAtMs);
-  if (createdAtMs > 0) return createdAtMs + ROOM_WAIT_MS;
-  return nowMs + ROOM_WAIT_MS;
+  if (createdAtMs > 0) return createdAtMs + (isFriendMorpionRoom(room) ? FRIEND_ROOM_WAIT_MS : ROOM_WAIT_MS);
+  return nowMs + (isFriendMorpionRoom(room) ? FRIEND_ROOM_WAIT_MS : ROOM_WAIT_MS);
 }
 
 function getMorpionStakeConfigByAmount(stakeDoes) {
   const targetStakeDoes = safeInt(stakeDoes);
   return DEFAULT_MORPION_STAKE_OPTIONS.find((item) => item.enabled !== false && safeInt(item.stakeDoes) === targetStakeDoes) || null;
+}
+
+function buildPrivateMorpionRewardDoes(stakeDoes = 0) {
+  const safeStakeDoes = safeInt(stakeDoes);
+  if (safeStakeDoes <= 0) return 0;
+  return Math.max(1, Math.round(safeStakeDoes * 1.8));
+}
+
+function parseStrictWholePositiveDoes(value, fallback = 0) {
+  if (typeof value === "number") {
+    if (!Number.isFinite(value) || !Number.isInteger(value) || value <= 0) return fallback;
+    return Math.trunc(value);
+  }
+  const raw = String(value ?? "").trim();
+  if (!/^\d+$/.test(raw)) return fallback;
+  const parsed = Number.parseInt(raw, 10);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+}
+
+function resolveMorpionFriendStakeDoes(value) {
+  const parsedStakeDoes = parseStrictWholePositiveDoes(value, 0);
+  if (parsedStakeDoes <= 0) {
+    throw new HttpsError("invalid-argument", "La mise morpion privee doit etre un nombre entier positif.");
+  }
+  if (parsedStakeDoes > MAX_FRIEND_MORPION_STAKE_DOES) {
+    throw new HttpsError("invalid-argument", "La mise morpion privee depasse la limite autorisee.");
+  }
+  return parsedStakeDoes;
 }
 
 function buildZeroMorpionEntryFunding() {
@@ -11071,6 +11474,8 @@ async function findActiveMorpionRoomForUser(uid) {
     status: String(data.status || ""),
     seatIndex,
     stakeDoes: safeInt(data.entryCostDoes || data.stakeDoes),
+    roomMode: String(data.roomMode || "morpion_2p"),
+    inviteCode: String(data.inviteCode || "").trim(),
   };
 }
 
@@ -12407,6 +12812,310 @@ exports.getPublicMorpionStakeOptionsSecure = publicOnCall("getPublicMorpionStake
   };
 }, { invoker: "public" });
 
+exports.createFriendMorpionRoom = publicOnCall("createFriendMorpionRoom", async (request) => {
+  const { uid, email } = assertAuth(request);
+  const payload = request.data && typeof request.data === "object" ? request.data : {};
+  const stakeDoes = resolveMorpionFriendStakeDoes(payload.stakeDoes ?? payload.amountDoes ?? payload.amount);
+
+  const activeRoom = await findActiveMorpionRoomForUser(uid);
+  if (activeRoom) {
+    throw new HttpsError("failed-precondition", "Tu participes deja a une salle morpion active.", {
+      code: "active-room-exists",
+      roomId: activeRoom.roomId,
+      status: String(activeRoom.status || ""),
+      seatIndex: safeInt(activeRoom.seatIndex, 0),
+      roomMode: String(activeRoom.roomMode || "morpion_2p"),
+      stakeDoes: safeInt(activeRoom.stakeDoes),
+      inviteCode: String(activeRoom.inviteCode || "").trim(),
+    });
+  }
+
+  const [inviteCode] = await Promise.all([
+    generateUniqueFriendMorpionInviteCode(),
+  ]);
+  const rewardAmountDoes = buildPrivateMorpionRewardDoes(stakeDoes);
+  const roomRefDoc = morpionRoomRef();
+
+  return db.runTransaction(async (tx) => {
+    const walletSnap = await tx.get(walletRef(uid));
+    const walletData = walletSnap.exists ? (walletSnap.data() || {}) : {};
+    assertWalletNotFrozen(walletData);
+
+    const nowMs = Date.now();
+    const waitingDeadlineMs = nowMs + FRIEND_ROOM_WAIT_MS;
+
+    tx.set(roomRefDoc, {
+      status: "waiting",
+      createdAt: admin.firestore.FieldValue.serverTimestamp(),
+      createdAtMs: nowMs,
+      updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      ownerUid: uid,
+      roomMode: "morpion_friends",
+      isPrivate: true,
+      allowBots: false,
+      inviteCode,
+      inviteCodeNormalized: normalizeCode(inviteCode),
+      requiredHumans: 2,
+      gameMode: "morpion-5",
+      engineVersion: 1,
+      playerUids: [uid, ""],
+      playerNames: [sanitizePlayerLabel(email || uid, 0), ""],
+      entryFundingByUid: {},
+      blockedRejoinUids: [],
+      humanCount: 1,
+      seats: { [uid]: 0 },
+      roomPresenceMs: { [uid]: nowMs },
+      botCount: 0,
+      startRevealPending: false,
+      startRevealAckUids: [],
+      waitingDeadlineMs,
+      startedAt: null,
+      startedAtMs: 0,
+      endedAtMs: 0,
+      turnLockedUntilMs: 0,
+      nextActionSeq: 0,
+      playedCount: 0,
+      symbolBySeat: ["X", "O"],
+      stakeDoes,
+      entryCostDoes: stakeDoes,
+      rewardAmountDoes,
+      stakeConfigId: "morpion_friends_custom",
+    });
+
+    return {
+      ok: true,
+      roomId: roomRefDoc.id,
+      seatIndex: 0,
+      status: "waiting",
+      roomMode: "morpion_friends",
+      charged: false,
+      inviteCode,
+      requiredHumans: 2,
+      waitingDeadlineMs,
+      stakeDoes,
+      rewardAmountDoes,
+      privateDeckOrder: [],
+    };
+  });
+}, { invoker: "public" });
+
+exports.joinFriendMorpionRoomByCode = publicOnCall("joinFriendMorpionRoomByCode", async (request) => {
+  const { uid, email } = assertAuth(request);
+  const payload = request.data && typeof request.data === "object" ? request.data : {};
+  const inviteCodeNormalized = normalizeCode(payload.inviteCode || payload.code || "");
+
+  if (!inviteCodeNormalized) {
+    throw new HttpsError("invalid-argument", "Code de salle requis.");
+  }
+
+  const activeRoom = await findActiveMorpionRoomForUser(uid);
+  if (activeRoom) {
+    throw new HttpsError("failed-precondition", "Tu participes deja a une salle morpion active.", {
+      code: "active-room-exists",
+      roomId: activeRoom.roomId,
+      status: String(activeRoom.status || ""),
+      seatIndex: safeInt(activeRoom.seatIndex, 0),
+      roomMode: String(activeRoom.roomMode || "morpion_2p"),
+      stakeDoes: safeInt(activeRoom.stakeDoes),
+      inviteCode: String(activeRoom.inviteCode || "").trim(),
+    });
+  }
+
+  const matchingSnap = await db
+    .collection(MORPION_ROOMS_COLLECTION)
+    .where("inviteCodeNormalized", "==", inviteCodeNormalized)
+    .limit(6)
+    .get();
+
+  const roomDoc = matchingSnap.docs.find((docSnap) => isFriendMorpionRoom(docSnap.data() || {})) || null;
+  if (!roomDoc) {
+    throw new HttpsError("not-found", "Code de morpion introuvable.");
+  }
+
+  const roomRefDoc = roomDoc.ref;
+  const result = await db.runTransaction(async (tx) => {
+    const [roomSnap, walletSnap] = await Promise.all([
+      tx.get(roomRefDoc),
+      tx.get(walletRef(uid)),
+    ]);
+
+    if (!roomSnap.exists) {
+      throw new HttpsError("not-found", "Salle morpion introuvable.");
+    }
+
+    const room = roomSnap.data() || {};
+    if (!isFriendMorpionRoom(room)) {
+      throw new HttpsError("failed-precondition", "Cette salle morpion n'est pas disponible.");
+    }
+
+    const roomStatus = String(room.status || "");
+    const nowMs = Date.now();
+    const waitingDeadlineMs = resolveMorpionWaitingDeadlineMs(room, nowMs);
+    const playerUids = Array.from({ length: 2 }, (_, idx) => String((room.playerUids || [])[idx] || ""));
+    const humans = playerUids.filter(Boolean).length;
+    const roomStakeDoes = safeInt(room.entryCostDoes || room.stakeDoes);
+    const roomRewardAmountDoes = safeInt(room.rewardAmountDoes || buildPrivateMorpionRewardDoes(roomStakeDoes));
+    const roomInviteCode = String(room.inviteCode || inviteCodeNormalized || "").trim();
+
+    const walletData = walletSnap.exists ? (walletSnap.data() || {}) : {};
+    assertWalletNotFrozen(walletData);
+
+    if (playerUids.includes(uid)) {
+      const seatIndex = getSeatForUser(room, uid);
+      const nextPresence = room.roomPresenceMs && typeof room.roomPresenceMs === "object"
+        ? { ...room.roomPresenceMs }
+        : {};
+      nextPresence[uid] = nowMs;
+      tx.update(roomRefDoc, {
+        roomPresenceMs: nextPresence,
+        waitingDeadlineMs,
+        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      });
+      return {
+        ok: true,
+        resumed: true,
+        charged: false,
+        roomId: roomRefDoc.id,
+        seatIndex: seatIndex >= 0 ? seatIndex : 0,
+        status: roomStatus,
+        roomMode: "morpion_friends",
+        stakeDoes: roomStakeDoes,
+        rewardAmountDoes: roomRewardAmountDoes,
+        inviteCode: roomInviteCode,
+        waitingDeadlineMs,
+      };
+    }
+
+    if (roomStatus === "playing") {
+      throw new HttpsError("failed-precondition", "Cette salle morpion a deja demarre.");
+    }
+    if (roomStatus !== "waiting") {
+      throw new HttpsError("failed-precondition", "Cette salle morpion n'est plus disponible.");
+    }
+    if (getBlockedRejoinSet(room).has(uid)) {
+      throw new HttpsError("permission-denied", "Tu ne peux plus rejoindre cette salle morpion.");
+    }
+    if (nowMs >= waitingDeadlineMs && humans < 2) {
+      tx.set(roomRefDoc, {
+        status: "closed",
+        endedReason: "expired",
+        endedAt: admin.firestore.FieldValue.serverTimestamp(),
+        endedAtMs: nowMs,
+        waitingDeadlineMs: admin.firestore.FieldValue.delete(),
+        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      }, { merge: true });
+      return {
+        ok: false,
+        expired: true,
+        roomId: roomRefDoc.id,
+      };
+    }
+
+    if (safeInt(walletData.doesBalance) < roomStakeDoes) {
+      throw new HttpsError("failed-precondition", "Solde Does insuffisant.");
+    }
+
+    const currentSeats = room.seats && typeof room.seats === "object" ? room.seats : {};
+    const usedSeats = new Set(
+      Object.values(currentSeats)
+        .map((seat) => Number(seat))
+        .filter((seat) => Number.isFinite(seat) && seat >= 0 && seat < 2)
+    );
+    const seatIndex = [0, 1].find((seat) => !usedSeats.has(seat));
+    if (typeof seatIndex !== "number" || humans >= 2) {
+      throw new HttpsError("failed-precondition", "Cette salle morpion est complete.");
+    }
+
+    const nextPlayerUids = playerUids.slice();
+    nextPlayerUids[seatIndex] = uid;
+    const currentNames = Array.from({ length: 2 }, (_, idx) => String((room.playerNames || [])[idx] || ""));
+    const nextPlayerNames = currentNames.slice();
+    nextPlayerNames[seatIndex] = sanitizePlayerLabel(email || uid, seatIndex);
+    const nextSeats = {
+      ...currentSeats,
+      [uid]: seatIndex,
+    };
+    const nextPresence = room.roomPresenceMs && typeof room.roomPresenceMs === "object"
+      ? { ...room.roomPresenceMs }
+      : {};
+    nextPresence[uid] = nowMs;
+    const nextHumans = nextPlayerUids.filter(Boolean).length;
+
+    if (nextHumans >= 2) {
+      const chargeResult = await chargeRoomEntriesTx(tx, room, nextPlayerUids, roomStakeDoes);
+      tx.set(roomRefDoc, {
+        playerUids: nextPlayerUids,
+        playerNames: nextPlayerNames,
+        seats: nextSeats,
+        roomPresenceMs: nextPresence,
+        humanCount: nextHumans,
+        botCount: 0,
+        entryFundingByUid: chargeResult.entryFundingByUid,
+        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      }, { merge: true });
+
+      return {
+        ok: true,
+        resumed: false,
+        charged: true,
+        roomId: roomRefDoc.id,
+        seatIndex,
+        does: safeInt(chargeResult.afterDoesByUid[uid]),
+        roomMode: "morpion_friends",
+        inviteCode: roomInviteCode,
+        stakeDoes: roomStakeDoes,
+        rewardAmountDoes: roomRewardAmountDoes,
+        ...buildStartedMorpionRoomTransaction(tx, roomRefDoc, {
+          ...room,
+          playerUids: nextPlayerUids,
+          playerNames: nextPlayerNames,
+          seats: nextSeats,
+          entryFundingByUid: chargeResult.entryFundingByUid,
+          roomPresenceMs: nextPresence,
+          humanCount: nextHumans,
+          botCount: 0,
+          waitingDeadlineMs,
+        }, { nowMs }),
+      };
+    }
+
+    tx.update(roomRefDoc, {
+      playerUids: nextPlayerUids,
+      playerNames: nextPlayerNames,
+      seats: nextSeats,
+      roomPresenceMs: nextPresence,
+      humanCount: nextHumans,
+      botCount: 0,
+      waitingDeadlineMs,
+      updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+    });
+
+    return {
+      ok: true,
+      resumed: false,
+      charged: false,
+      roomId: roomRefDoc.id,
+      seatIndex,
+      status: "waiting",
+      roomMode: "morpion_friends",
+      inviteCode: roomInviteCode,
+      stakeDoes: roomStakeDoes,
+      rewardAmountDoes: roomRewardAmountDoes,
+      waitingDeadlineMs,
+    };
+  });
+
+  if (result?.expired === true) {
+    throw new HttpsError("failed-precondition", "Ce code a expire.");
+  }
+
+  if (result?.status === "playing" && result?.startRevealPending !== true) {
+    await processPendingBotTurnsMorpion(roomRefDoc.id);
+  }
+
+  return result;
+}, { invoker: "public" });
+
 exports.joinMatchmakingMorpion = publicOnCall("joinMatchmakingMorpion", async (request) => {
   const { uid, email } = assertAuth(request);
   const payload = request.data && typeof request.data === "object" ? request.data : {};
@@ -13595,7 +14304,7 @@ exports.createFriendDuelRoom = publicOnCall("createFriendDuelRoom", async (reque
   const payload = request.data && typeof request.data === "object" ? request.data : {};
   const stakeDoes = safeInt(payload.stakeDoes);
   const selectedStakeConfig = getDuelStakeConfigByAmount(stakeDoes);
-  const configuredBotDifficulty = await getConfiguredBotDifficulty();
+  const configuredBotDifficulty = await getConfiguredDuelBotDifficulty();
 
   if (!selectedStakeConfig) {
     throw new HttpsError("invalid-argument", "Mise duel non autorisee.");
@@ -13687,7 +14396,7 @@ exports.joinFriendDuelRoomByCode = publicOnCall("joinFriendDuelRoomByCode", asyn
   const { uid, email } = assertAuth(request);
   const payload = request.data && typeof request.data === "object" ? request.data : {};
   const inviteCodeNormalized = normalizeCode(payload.inviteCode || payload.code || "");
-  const configuredBotDifficulty = await getConfiguredBotDifficulty();
+  const configuredBotDifficulty = await getConfiguredDuelBotDifficulty();
 
   if (!inviteCodeNormalized) {
     throw new HttpsError("invalid-argument", "Code de salle requis.");
@@ -13900,7 +14609,7 @@ exports.joinMatchmakingDuel = publicOnCall("joinMatchmakingDuel", async (request
   const excludedRoomIds = normalizeDuelExcludedRoomIds(payload.excludeRoomIds);
   const excludedRoomIdSet = new Set(excludedRoomIds);
   const selectedStakeConfig = getDuelStakeConfigByAmount(stakeDoes);
-  const configuredBotDifficulty = await getConfiguredBotDifficulty();
+  const configuredBotDifficulty = await getConfiguredDuelBotDifficulty();
 
   if (!selectedStakeConfig) {
     throw new HttpsError("invalid-argument", "Mise duel non autorisee.");
@@ -14142,7 +14851,7 @@ exports.ensureRoomReadyDuel = publicOnCall("ensureRoomReadyDuel", async (request
   const { uid } = assertAuth(request);
   const payload = request.data && typeof request.data === "object" ? request.data : {};
   const roomId = String(payload.roomId || "").trim();
-  const configuredBotDifficulty = await getConfiguredBotDifficulty();
+  const configuredBotDifficulty = await getConfiguredDuelBotDifficulty();
 
   if (!roomId) {
     throw new HttpsError("invalid-argument", "roomId requis.");
@@ -19211,6 +19920,10 @@ exports.adminCheck = publicOnCall("adminCheck", async (request) => {
     botPilotMode: normalizeBotPilotMode(data.botPilotMode || "manual"),
     manualBotDifficulty: normalizeBotDifficulty(data.manualBotDifficulty || data.botDifficulty),
     autoBotDifficulty: normalizeBotDifficulty(data.autoBotDifficulty || data.botDifficulty),
+    duelBotDifficulty: await getConfiguredDuelBotDifficulty(),
+    duelBotPilotMode: normalizeBotPilotMode(data.duelBotPilotMode || "manual"),
+    manualDuelBotDifficulty: normalizeBotDifficulty(data.manualDuelBotDifficulty || data.duelBotDifficulty || DEFAULT_DUEL_BOT_DIFFICULTY),
+    autoDuelBotDifficulty: normalizeBotDifficulty(data.autoDuelBotDifficulty || data.duelBotDifficulty || DEFAULT_DUEL_BOT_DIFFICULTY),
   };
 });
 
@@ -19223,6 +19936,24 @@ exports.setBotDifficulty = publicOnCall("setBotDifficulty", async (request) => {
     email: FINANCE_ADMIN_EMAIL,
     botDifficulty,
     manualBotDifficulty: botDifficulty,
+    updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+  }, { merge: true });
+
+  return {
+    ok: true,
+    botDifficulty,
+  };
+});
+
+exports.setDuelBotDifficulty = publicOnCall("setDuelBotDifficulty", async (request) => {
+  assertFinanceAdmin(request);
+  const payload = request.data && typeof request.data === "object" ? request.data : {};
+  const botDifficulty = normalizeBotDifficulty(payload.botDifficulty || DEFAULT_DUEL_BOT_DIFFICULTY);
+
+  await adminBootstrapRef().set({
+    email: FINANCE_ADMIN_EMAIL,
+    duelBotDifficulty: botDifficulty,
+    manualDuelBotDifficulty: botDifficulty,
     updatedAt: admin.firestore.FieldValue.serverTimestamp(),
   }, { merge: true });
 
@@ -19251,6 +19982,30 @@ exports.getBotPilotSnapshot = publicOnCall("getBotPilotSnapshot", async (request
     window: windowKey,
     manualBotDifficulty: normalizeBotDifficulty(settings.manualBotDifficulty || settings.botDifficulty),
     autoBotDifficulty: normalizeBotDifficulty(settings.autoBotDifficulty || settings.botDifficulty || snapshot.recommendedLevel),
+    appliedBotDifficulty: appliedDifficulty,
+    snapshot,
+  };
+});
+
+exports.getDuelBotPilotSnapshot = publicOnCall("getDuelBotPilotSnapshot", async (request) => {
+  assertFinanceAdmin(request);
+  const payload = request.data && typeof request.data === "object" ? request.data : {};
+  const nowMs = Date.now();
+  const settingsSnap = await adminBootstrapRef().get();
+  const settings = settingsSnap.exists ? (settingsSnap.data() || {}) : {};
+  const mode = normalizeBotPilotMode(payload.mode || settings.duelBotPilotMode || "manual");
+  const windowKey = normalizeBotPilotWindow(payload.window || settings.duelBotPilotWindow || "today");
+  const snapshot = await computeDuelBotPilotSnapshot({ nowMs, window: windowKey });
+  const appliedDifficulty = mode === "auto"
+    ? normalizeBotDifficulty(snapshot.recommendedLevel || settings.autoDuelBotDifficulty || settings.duelBotDifficulty || DEFAULT_DUEL_BOT_DIFFICULTY)
+    : normalizeBotDifficulty(settings.manualDuelBotDifficulty || settings.duelBotDifficulty || DEFAULT_DUEL_BOT_DIFFICULTY);
+
+  return {
+    ok: true,
+    mode,
+    window: windowKey,
+    manualBotDifficulty: normalizeBotDifficulty(settings.manualDuelBotDifficulty || settings.duelBotDifficulty || DEFAULT_DUEL_BOT_DIFFICULTY),
+    autoBotDifficulty: normalizeBotDifficulty(settings.autoDuelBotDifficulty || settings.duelBotDifficulty || snapshot.recommendedLevel || DEFAULT_DUEL_BOT_DIFFICULTY),
     appliedBotDifficulty: appliedDifficulty,
     snapshot,
   };
@@ -19320,6 +20075,74 @@ exports.setBotPilotControl = publicOnCall("setBotPilotControl", async (request) 
   };
 });
 
+exports.setDuelBotPilotControl = publicOnCall("setDuelBotPilotControl", async (request) => {
+  assertFinanceAdmin(request);
+  const payload = request.data && typeof request.data === "object" ? request.data : {};
+  const currentSnap = await adminBootstrapRef().get();
+  const current = currentSnap.exists ? (currentSnap.data() || {}) : {};
+  const mode = normalizeBotPilotMode(payload.mode || current.duelBotPilotMode || "manual");
+  const windowKey = normalizeBotPilotWindow(payload.window || current.duelBotPilotWindow || "today");
+  const manualBotDifficulty = normalizeBotDifficulty(payload.manualBotDifficulty || current.manualDuelBotDifficulty || current.duelBotDifficulty || DEFAULT_DUEL_BOT_DIFFICULTY);
+
+  let autoBotDifficulty = normalizeBotDifficulty(current.autoDuelBotDifficulty || current.duelBotDifficulty || DEFAULT_DUEL_BOT_DIFFICULTY);
+  let appliedBotDifficulty = manualBotDifficulty;
+  let snapshot = null;
+
+  if (mode === "auto") {
+    snapshot = await computeDuelBotPilotSnapshot({ nowMs: Date.now(), window: windowKey });
+    autoBotDifficulty = normalizeBotDifficulty(snapshot.recommendedLevel || autoBotDifficulty);
+    appliedBotDifficulty = autoBotDifficulty;
+  }
+
+  await adminBootstrapRef().set({
+    email: FINANCE_ADMIN_EMAIL,
+    duelBotPilotMode: mode,
+    duelBotPilotWindow: windowKey,
+    manualDuelBotDifficulty: manualBotDifficulty,
+    autoDuelBotDifficulty: autoBotDifficulty,
+    duelBotDifficulty: appliedBotDifficulty,
+    duelBotPilotLastComputedAtMs: Date.now(),
+    duelBotPilotUpdatedAt: admin.firestore.FieldValue.serverTimestamp(),
+    duelBotPilotMetricsSnapshot: snapshot ? {
+      window: snapshot.window,
+      startMs: snapshot.startMs,
+      endMs: snapshot.endMs,
+      roomsCount: safeInt(snapshot.roomsCount),
+      collectedDoes: safeInt(snapshot.collectedDoes),
+      payoutDoes: safeInt(snapshot.payoutDoes),
+      netDoes: safeSignedInt(snapshot.netDoes),
+      grossCollectedDoes: safeInt(snapshot.grossCollectedDoes),
+      grossPayoutDoes: safeInt(snapshot.grossPayoutDoes),
+      grossNetDoes: safeSignedInt(snapshot.grossNetDoes),
+      promoExposureDoes: safeInt(snapshot.promoExposureDoes),
+      marginPct: Number(snapshot.marginPct || 0),
+      currentEquityDoes: safeSignedInt(snapshot.currentEquityDoes),
+      highWaterMarkDoes: safeSignedInt(snapshot.highWaterMarkDoes),
+      drawdownDoes: safeInt(snapshot.drawdownDoes),
+      drawdownPct: Number(snapshot.drawdownPct || 0),
+      lastPeakAtMs: safeSignedInt(snapshot.lastPeakAtMs),
+      botWins: safeInt(snapshot.botWins),
+      humanWins: safeInt(snapshot.humanWins),
+      botWinRatePct: Number(snapshot.botWinRatePct || 0),
+      humanWinRatePct: Number(snapshot.humanWinRatePct || 0),
+      recommendedLevel: normalizeBotDifficulty(snapshot.recommendedLevel),
+      recommendedBand: String(snapshot.recommendedBand || ""),
+      recommendedReason: String(snapshot.recommendedReason || ""),
+      computedAtMs: Date.now(),
+    } : admin.firestore.FieldValue.delete(),
+  }, { merge: true });
+
+  return {
+    ok: true,
+    mode,
+    window: windowKey,
+    manualBotDifficulty,
+    autoBotDifficulty,
+    appliedBotDifficulty,
+    snapshot,
+  };
+});
+
 exports.refreshBotPilotAuto = onSchedule("every 10 minutes", async () => {
   const settingsSnap = await adminBootstrapRef().get();
   if (!settingsSnap.exists) return;
@@ -19358,6 +20181,56 @@ exports.refreshBotPilotAuto = onSchedule("every 10 minutes", async () => {
       drawdownDoes: safeInt(snapshot.drawdownDoes),
       drawdownPct: Number(snapshot.drawdownPct || 0),
       lastPeakAtMs: safeSignedInt(snapshot.lastPeakAtMs),
+      recommendedLevel: normalizeBotDifficulty(snapshot.recommendedLevel),
+      recommendedBand: String(snapshot.recommendedBand || ""),
+      recommendedReason: String(snapshot.recommendedReason || ""),
+      computedAtMs: nowMs,
+    },
+  }, { merge: true });
+});
+
+exports.refreshDuelBotPilotAuto = onSchedule("every 10 minutes", async () => {
+  const settingsSnap = await adminBootstrapRef().get();
+  if (!settingsSnap.exists) return;
+  const settings = settingsSnap.data() || {};
+  const mode = normalizeBotPilotMode(settings.duelBotPilotMode || "manual");
+  if (mode !== "auto") return;
+
+  const nowMs = Date.now();
+  const windowKey = normalizeBotPilotWindow(settings.duelBotPilotWindow || "today");
+  const snapshot = await computeDuelBotPilotSnapshot({ nowMs, window: windowKey });
+  const autoBotDifficulty = normalizeBotDifficulty(snapshot.recommendedLevel || settings.autoDuelBotDifficulty || settings.duelBotDifficulty || DEFAULT_DUEL_BOT_DIFFICULTY);
+
+  await adminBootstrapRef().set({
+    email: FINANCE_ADMIN_EMAIL,
+    duelBotPilotMode: "auto",
+    duelBotPilotWindow: windowKey,
+    autoDuelBotDifficulty,
+    duelBotDifficulty: autoBotDifficulty,
+    duelBotPilotLastComputedAtMs: nowMs,
+    duelBotPilotUpdatedAt: admin.firestore.FieldValue.serverTimestamp(),
+    duelBotPilotMetricsSnapshot: {
+      window: snapshot.window,
+      startMs: snapshot.startMs,
+      endMs: snapshot.endMs,
+      roomsCount: safeInt(snapshot.roomsCount),
+      collectedDoes: safeInt(snapshot.collectedDoes),
+      payoutDoes: safeInt(snapshot.payoutDoes),
+      netDoes: safeSignedInt(snapshot.netDoes),
+      grossCollectedDoes: safeInt(snapshot.grossCollectedDoes),
+      grossPayoutDoes: safeInt(snapshot.grossPayoutDoes),
+      grossNetDoes: safeSignedInt(snapshot.grossNetDoes),
+      promoExposureDoes: safeInt(snapshot.promoExposureDoes),
+      marginPct: Number(snapshot.marginPct || 0),
+      currentEquityDoes: safeSignedInt(snapshot.currentEquityDoes),
+      highWaterMarkDoes: safeSignedInt(snapshot.highWaterMarkDoes),
+      drawdownDoes: safeInt(snapshot.drawdownDoes),
+      drawdownPct: Number(snapshot.drawdownPct || 0),
+      lastPeakAtMs: safeSignedInt(snapshot.lastPeakAtMs),
+      botWins: safeInt(snapshot.botWins),
+      humanWins: safeInt(snapshot.humanWins),
+      botWinRatePct: Number(snapshot.botWinRatePct || 0),
+      humanWinRatePct: Number(snapshot.humanWinRatePct || 0),
       recommendedLevel: normalizeBotDifficulty(snapshot.recommendedLevel),
       recommendedBand: String(snapshot.recommendedBand || ""),
       recommendedReason: String(snapshot.recommendedReason || ""),

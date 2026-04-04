@@ -16,6 +16,8 @@ import {
   joinFriendRoomByCodeSecure,
   createFriendDuelRoomSecure,
   joinFriendDuelRoomByCodeSecure,
+  createFriendMorpionRoomSecure,
+  joinFriendMorpionRoomByCodeSecure,
   getActiveSurveyForUserSecure,
   submitSurveyResponseSecure,
   ackClientFinanceNoticeSecure,
@@ -63,6 +65,7 @@ const DEFAULT_MORPION_STAKE_OPTIONS = Object.freeze([
 ]);
 const ALLOWED_DUEL_STAKE_AMOUNTS = Object.freeze([500, 1000]);
 const ALLOWED_MORPION_STAKE_AMOUNTS = Object.freeze([500]);
+const MAX_MORPION_FRIEND_STAKE_DOES = 100_000_000;
 let page2NonCriticalRefreshTimer = null;
 let page2NonCriticalVisibilityHandler = null;
 let page2NonCriticalUid = "";
@@ -297,6 +300,23 @@ function normalizeInviteCode(value = "") {
     .replace(/[^A-Z0-9_-]/g, "");
 }
 
+function normalizeWholeNumberInput(value = "") {
+  return String(value || "").replace(/[^\d]/g, "");
+}
+
+function parseStrictWholeNumber(value) {
+  const raw = String(value ?? "").trim();
+  if (!/^\d+$/.test(raw)) return 0;
+  const parsed = Number.parseInt(raw, 10);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : 0;
+}
+
+function buildPrivateMorpionRewardDoes(stakeDoes = 0) {
+  const safeStakeDoes = Math.max(0, Number.parseInt(String(stakeDoes || 0), 10) || 0);
+  if (safeStakeDoes <= 0) return 0;
+  return Math.max(1, Math.round(safeStakeDoes * 1.8));
+}
+
 function buildFriendGameUrl(roomId, seatIndex, stakeDoes) {
   const params = new URLSearchParams();
   params.set("autostart", "1");
@@ -327,6 +347,16 @@ function buildMorpionGameUrl(stakeDoes = 500) {
   const params = new URLSearchParams();
   const parsedStake = Number.parseInt(String(stakeDoes ?? 500), 10);
   params.set("stake", String(Number.isFinite(parsedStake) ? parsedStake : 500));
+  return `./morpion.html?${params.toString()}`;
+}
+
+function buildFriendMorpionGameUrl(roomId, seatIndex, stakeDoes) {
+  const params = new URLSearchParams();
+  params.set("autostart", "1");
+  params.set("stake", String(Math.max(1, Number.parseInt(String(stakeDoes || 0), 10) || 500)));
+  params.set("friendMorpionRoomId", String(roomId || "").trim());
+  params.set("seat", String(Math.max(0, Number.parseInt(String(seatIndex || 0), 10) || 0)));
+  params.set("roomMode", "morpion_friends");
   return `./morpion.html?${params.toString()}`;
 }
 
@@ -888,6 +918,10 @@ function isPage2BlockingOverlayOpen() {
     "gameModeOverlay",
     "stakeSelectionOverlay",
     "morpionStakeOverlay",
+    "morpionFriendModeOverlay",
+    "morpionFriendCreateOverlay",
+    "morpionFriendJoinOverlay",
+    "morpionFriendCodeOverlay",
     "duelIntroOverlay",
     "duelStakeOverlay",
     "duelFriendModeOverlay",
@@ -1827,7 +1861,113 @@ export function renderPage2(user, options = {}) {
               Chargement des mises du morpion...
             </div>
           </div>
+          <button id="morpionFriendModeOpenBtn" type="button" class="mt-4 flex h-12 w-full items-center justify-center gap-2 rounded-2xl border border-[#8de7ff]/28 bg-white/10 text-sm font-semibold text-white transition hover:-translate-y-0.5 hover:bg-white/15">
+            <i class="fa-solid fa-user-group text-[#b9f2ff]"></i>
+            <span>Jouer avec un ami</span>
+          </button>
         </div>
+      </div>
+    </div>
+  `);
+
+  pageShell.insertAdjacentHTML("beforeend", `
+    <div id="morpionFriendModeOverlay" class="fixed inset-0 z-[3462] hidden items-center justify-center bg-black/55 p-4 backdrop-blur-sm">
+      <div id="morpionFriendModePanel" class="w-full max-w-md rounded-3xl border border-white/20 bg-[#3F4766]/82 p-5 text-white shadow-[14px_14px_34px_rgba(16,23,40,0.5),-10px_-10px_24px_rgba(112,126,165,0.2)] backdrop-blur-xl sm:p-6">
+        <div class="flex items-center justify-between gap-3">
+          <div>
+            <p class="text-xs font-semibold uppercase tracking-[0.22em] text-[#9fe8ff]/78">Morpion 5</p>
+            <h3 class="mt-2 text-xl font-bold">Entre amis</h3>
+          </div>
+          <button id="morpionFriendModeClose" type="button" class="grid h-10 w-10 place-items-center rounded-full border border-white/20 bg-white/10 text-white">
+            <i class="fa-solid fa-xmark"></i>
+          </button>
+        </div>
+        <div class="mt-5 grid gap-3">
+          <button id="morpionFriendJoinOpenBtn" type="button" class="flex min-h-[58px] w-full items-center justify-between gap-3 rounded-2xl border border-white/18 bg-white/10 px-4 py-3 text-left transition hover:bg-white/15">
+            <span>
+              <span class="block text-sm font-semibold text-white">J'ai ete invite</span>
+              <span class="mt-1 block text-xs text-white/70">Entre le code envoye par ton ami pour rejoindre sa salle privee.</span>
+            </span>
+            <i class="fa-solid fa-arrow-right text-white/72"></i>
+          </button>
+          <button id="morpionFriendCreateOpenBtn" type="button" class="flex min-h-[58px] w-full items-center justify-between gap-3 rounded-2xl border border-[#8de7ff]/28 bg-[linear-gradient(135deg,rgba(33,118,171,0.22),rgba(18,40,78,0.55))] px-4 py-3 text-left transition hover:bg-[linear-gradient(135deg,rgba(33,118,171,0.28),rgba(18,40,78,0.62))]">
+            <span>
+              <span class="block text-sm font-semibold text-white">Creer une salle</span>
+              <span class="mt-1 block text-xs text-white/70">Choisis une mise entiere libre, genere un code et invite ton ami.</span>
+            </span>
+            <i class="fa-solid fa-plus text-[#c6f4ff]"></i>
+          </button>
+        </div>
+      </div>
+    </div>
+  `);
+
+  pageShell.insertAdjacentHTML("beforeend", `
+    <div id="morpionFriendCreateOverlay" class="fixed inset-0 z-[3463] hidden items-center justify-center bg-black/55 p-4 backdrop-blur-sm">
+      <div id="morpionFriendCreatePanel" class="w-full max-w-lg rounded-3xl border border-white/20 bg-[#3F4766]/82 p-5 text-white shadow-[14px_14px_34px_rgba(16,23,40,0.5),-10px_-10px_24px_rgba(112,126,165,0.2)] backdrop-blur-xl sm:p-6">
+        <div class="flex items-center justify-between gap-3">
+          <div>
+            <p class="text-xs font-semibold uppercase tracking-[0.22em] text-[#9fe8ff]/78">Salle privee</p>
+            <h3 class="mt-2 text-xl font-bold">Choisis ta mise libre</h3>
+          </div>
+          <button id="morpionFriendCreateClose" type="button" class="grid h-10 w-10 place-items-center rounded-full border border-white/20 bg-white/10 text-white">
+            <i class="fa-solid fa-xmark"></i>
+          </button>
+        </div>
+        <p class="mt-3 text-sm leading-6 text-white/82">Entre un montant entier en Does. Les nombres decimaux ne sont pas acceptes. Le gain du vainqueur est calcule avec une cote de 1.8.</p>
+        <label for="morpionFriendStakeInput" class="mt-5 block text-xs font-semibold uppercase tracking-[0.16em] text-white/58">Mise en Does</label>
+        <input id="morpionFriendStakeInput" type="text" inputmode="numeric" autocomplete="off" placeholder="500" class="mt-2 h-12 w-full rounded-2xl border border-white/18 bg-white/10 px-4 text-base font-semibold text-white outline-none placeholder:text-white/38 focus:border-[#8de7ff]/45 focus:bg-white/12" />
+        <div class="mt-3 rounded-2xl border border-white/12 bg-white/[0.06] px-4 py-3">
+          <p class="text-xs font-semibold uppercase tracking-[0.14em] text-white/58">Apercu</p>
+          <p id="morpionFriendCreateSummary" class="mt-2 text-sm leading-6 text-white/84">Entre un montant entier pour voir le gain estime du vainqueur.</p>
+        </div>
+        <p id="morpionFriendCreateHint" class="mt-3 min-h-[1.25rem] text-xs text-white/64">Exemple: 500, 750, 1200. Pas de virgule ni de point.</p>
+        <button id="morpionFriendCreateSubmitBtn" type="button" class="mt-5 h-12 w-full rounded-[18px] border border-[#8de7ff]/35 bg-[linear-gradient(135deg,rgba(32,145,212,0.9),rgba(12,80,138,0.96))] text-sm font-semibold text-white shadow-[9px_9px_20px_rgba(14,58,97,0.4),-7px_-7px_16px_rgba(146,229,255,0.14)] transition hover:-translate-y-0.5">
+          Generer le code
+        </button>
+      </div>
+    </div>
+  `);
+
+  pageShell.insertAdjacentHTML("beforeend", `
+    <div id="morpionFriendJoinOverlay" class="fixed inset-0 z-[3464] hidden items-center justify-center bg-black/55 p-4 backdrop-blur-sm">
+      <div id="morpionFriendJoinPanel" class="w-full max-w-md rounded-3xl border border-white/20 bg-[#3F4766]/82 p-5 text-white shadow-[14px_14px_34px_rgba(16,23,40,0.5),-10px_-10px_24px_rgba(112,126,165,0.2)] backdrop-blur-xl sm:p-6">
+        <div class="flex items-center justify-between gap-3">
+          <div>
+            <p class="text-xs font-semibold uppercase tracking-[0.22em] text-[#9fe8ff]/78">Salle privee</p>
+            <h3 class="mt-2 text-xl font-bold">Entre le code d'invitation</h3>
+          </div>
+          <button id="morpionFriendJoinClose" type="button" class="grid h-10 w-10 place-items-center rounded-full border border-white/20 bg-white/10 text-white">
+            <i class="fa-solid fa-xmark"></i>
+          </button>
+        </div>
+        <label for="morpionFriendJoinCodeInput" class="mt-4 block text-xs font-semibold uppercase tracking-[0.16em] text-white/58">Code de salle</label>
+        <input id="morpionFriendJoinCodeInput" type="text" inputmode="text" autocomplete="off" autocapitalize="characters" maxlength="12" class="mt-2 h-12 w-full rounded-2xl border border-white/18 bg-white/10 px-4 text-base font-semibold tracking-[0.3em] text-white outline-none placeholder:text-white/38 focus:border-[#8de7ff]/45 focus:bg-white/12" placeholder="ABC123" />
+        <p id="morpionFriendJoinHint" class="mt-2 min-h-[1.2rem] text-xs text-white/62">Entre le code exactement comme il t'a ete envoye.</p>
+        <button id="morpionFriendJoinSubmitBtn" type="button" class="mt-5 h-12 w-full rounded-[18px] border border-[#8de7ff]/35 bg-[linear-gradient(135deg,rgba(32,145,212,0.9),rgba(12,80,138,0.96))] text-sm font-semibold text-white shadow-[9px_9px_20px_rgba(14,58,97,0.4),-7px_-7px_16px_rgba(146,229,255,0.14)] transition hover:-translate-y-0.5">
+          Rejoindre la salle
+        </button>
+      </div>
+    </div>
+  `);
+
+  pageShell.insertAdjacentHTML("beforeend", `
+    <div id="morpionFriendCodeOverlay" class="fixed inset-0 z-[3465] hidden items-center justify-center bg-black/60 p-4 backdrop-blur-sm">
+      <div id="morpionFriendCodePanel" class="w-full max-w-md rounded-3xl border border-white/20 bg-[#3F4766]/86 p-5 text-white shadow-[14px_14px_34px_rgba(16,23,40,0.5),-10px_-10px_24px_rgba(112,126,165,0.2)] backdrop-blur-xl sm:p-6">
+        <div class="rounded-[24px] border border-white/12 bg-white/[0.06] px-5 py-6 text-center">
+          <p class="text-xs font-semibold uppercase tracking-[0.2em] text-[#9fe8ff]/78">Code de la salle</p>
+          <p id="morpionFriendCodeValue" class="mt-2 text-[1.8rem] font-bold tracking-[0.28em] text-[#d8f7ff]">------</p>
+          <p id="morpionFriendCodeStakeMeta" class="mt-2 text-sm text-white/70"></p>
+        </div>
+        <button id="morpionFriendCodeCopyBtn" type="button" class="mt-4 h-12 w-full rounded-[18px] border border-white/20 bg-white/10 text-sm font-semibold text-white transition hover:-translate-y-0.5 hover:bg-white/15">
+          Copier le code
+        </button>
+        <button id="morpionFriendCodeContinueBtn" type="button" class="mt-3 h-12 w-full rounded-[18px] border border-[#8de7ff]/35 bg-[linear-gradient(135deg,rgba(32,145,212,0.9),rgba(12,80,138,0.96))] text-sm font-semibold text-white shadow-[9px_9px_20px_rgba(14,58,97,0.4),-7px_-7px_16px_rgba(146,229,255,0.14)] transition hover:-translate-y-0.5">
+          Aller dans la salle
+        </button>
+        <button id="morpionFriendCodeCloseBtn" type="button" class="mt-3 h-11 w-full rounded-2xl border border-white/20 bg-white/10 text-sm font-semibold text-white">
+          Fermer
+        </button>
       </div>
     </div>
   `);
@@ -2182,6 +2322,32 @@ export function renderPage2(user, options = {}) {
   const morpionStakePanel = document.getElementById("morpionStakePanel");
   const morpionStakeClose = document.getElementById("morpionStakeClose");
   const morpionStakeOptionsGrid = document.getElementById("morpionStakeOptionsGrid");
+  const morpionFriendModeOpenBtn = document.getElementById("morpionFriendModeOpenBtn");
+  const morpionFriendModeOverlay = document.getElementById("morpionFriendModeOverlay");
+  const morpionFriendModePanel = document.getElementById("morpionFriendModePanel");
+  const morpionFriendModeClose = document.getElementById("morpionFriendModeClose");
+  const morpionFriendJoinOpenBtn = document.getElementById("morpionFriendJoinOpenBtn");
+  const morpionFriendCreateOpenBtn = document.getElementById("morpionFriendCreateOpenBtn");
+  const morpionFriendCreateOverlay = document.getElementById("morpionFriendCreateOverlay");
+  const morpionFriendCreatePanel = document.getElementById("morpionFriendCreatePanel");
+  const morpionFriendCreateClose = document.getElementById("morpionFriendCreateClose");
+  const morpionFriendStakeInput = document.getElementById("morpionFriendStakeInput");
+  const morpionFriendCreateSummary = document.getElementById("morpionFriendCreateSummary");
+  const morpionFriendCreateHint = document.getElementById("morpionFriendCreateHint");
+  const morpionFriendCreateSubmitBtn = document.getElementById("morpionFriendCreateSubmitBtn");
+  const morpionFriendJoinOverlay = document.getElementById("morpionFriendJoinOverlay");
+  const morpionFriendJoinPanel = document.getElementById("morpionFriendJoinPanel");
+  const morpionFriendJoinClose = document.getElementById("morpionFriendJoinClose");
+  const morpionFriendJoinCodeInput = document.getElementById("morpionFriendJoinCodeInput");
+  const morpionFriendJoinHint = document.getElementById("morpionFriendJoinHint");
+  const morpionFriendJoinSubmitBtn = document.getElementById("morpionFriendJoinSubmitBtn");
+  const morpionFriendCodeOverlay = document.getElementById("morpionFriendCodeOverlay");
+  const morpionFriendCodePanel = document.getElementById("morpionFriendCodePanel");
+  const morpionFriendCodeValue = document.getElementById("morpionFriendCodeValue");
+  const morpionFriendCodeStakeMeta = document.getElementById("morpionFriendCodeStakeMeta");
+  const morpionFriendCodeCopyBtn = document.getElementById("morpionFriendCodeCopyBtn");
+  const morpionFriendCodeContinueBtn = document.getElementById("morpionFriendCodeContinueBtn");
+  const morpionFriendCodeCloseBtn = document.getElementById("morpionFriendCodeCloseBtn");
   const duelIntroOverlay = document.getElementById("duelIntroOverlay");
   const duelIntroPanel = document.getElementById("duelIntroPanel");
   const duelIntroClose = document.getElementById("duelIntroClose");
@@ -3087,6 +3253,11 @@ export function renderPage2(user, options = {}) {
       && sharePromoSuccessOverlay?.classList.contains("hidden")
       && gameModeOverlay?.classList.contains("hidden")
       && stakeSelectionOverlay?.classList.contains("hidden")
+      && morpionStakeOverlay?.classList.contains("hidden")
+      && morpionFriendModeOverlay?.classList.contains("hidden")
+      && morpionFriendCreateOverlay?.classList.contains("hidden")
+      && morpionFriendJoinOverlay?.classList.contains("hidden")
+      && morpionFriendCodeOverlay?.classList.contains("hidden")
       && duelIntroOverlay?.classList.contains("hidden")
       && duelStakeOverlay?.classList.contains("hidden")
       && duelFriendModeOverlay?.classList.contains("hidden")
@@ -3361,6 +3532,13 @@ export function renderPage2(user, options = {}) {
     inviteCode: "",
   };
 
+  const morpionFriendRoomDraft = {
+    roomId: "",
+    seatIndex: 0,
+    stakeDoes: 0,
+    inviteCode: "",
+  };
+
   const duelFriendRoomDraft = {
     roomId: "",
     seatIndex: 0,
@@ -3388,6 +3566,17 @@ export function renderPage2(user, options = {}) {
     }
     showGlobalLoading("Connexion du duel prive en cours...");
     window.location.href = buildFriendDuelGameUrl(nextRoomId, nextSeatIndex, nextStakeDoes);
+  };
+
+  const navigateToFriendMorpionRoom = (roomData = {}) => {
+    const nextRoomId = String(roomData?.roomId || morpionFriendRoomDraft.roomId || "").trim();
+    const nextSeatIndex = Number.parseInt(String(roomData?.seatIndex ?? morpionFriendRoomDraft.seatIndex ?? 0), 10) || 0;
+    const nextStakeDoes = Number.parseInt(String(roomData?.stakeDoes || morpionFriendRoomDraft.stakeDoes || 0), 10) || 500;
+    if (!nextRoomId) {
+      throw new Error("Salle morpion privee introuvable.");
+    }
+    showGlobalLoading("Connexion du morpion prive en cours...");
+    window.location.href = buildFriendMorpionGameUrl(nextRoomId, nextSeatIndex, nextStakeDoes);
   };
 
   const openDuelFriendMode = () => {
@@ -3444,6 +3633,77 @@ export function renderPage2(user, options = {}) {
     duelFriendCodeOverlay.classList.add("hidden");
     duelFriendCodeOverlay.classList.remove("flex");
     document.body.classList.remove("overflow-hidden");
+  };
+
+  const openMorpionFriendMode = () => {
+    if (!morpionFriendModeOverlay) return;
+    morpionFriendModeOverlay.classList.remove("hidden");
+    morpionFriendModeOverlay.classList.add("flex");
+    document.body.classList.add("overflow-hidden");
+  };
+
+  const closeMorpionFriendMode = () => {
+    if (!morpionFriendModeOverlay) return;
+    morpionFriendModeOverlay.classList.add("hidden");
+    morpionFriendModeOverlay.classList.remove("flex");
+    document.body.classList.remove("overflow-hidden");
+  };
+
+  const openMorpionFriendCreate = () => {
+    if (!morpionFriendCreateOverlay) return;
+    morpionFriendCreateOverlay.classList.remove("hidden");
+    morpionFriendCreateOverlay.classList.add("flex");
+    document.body.classList.add("overflow-hidden");
+  };
+
+  const closeMorpionFriendCreate = () => {
+    if (!morpionFriendCreateOverlay) return;
+    morpionFriendCreateOverlay.classList.add("hidden");
+    morpionFriendCreateOverlay.classList.remove("flex");
+    document.body.classList.remove("overflow-hidden");
+  };
+
+  const openMorpionFriendJoin = () => {
+    if (!morpionFriendJoinOverlay) return;
+    morpionFriendJoinOverlay.classList.remove("hidden");
+    morpionFriendJoinOverlay.classList.add("flex");
+    document.body.classList.add("overflow-hidden");
+    window.setTimeout(() => {
+      morpionFriendJoinCodeInput?.focus();
+      morpionFriendJoinCodeInput?.select();
+    }, 40);
+  };
+
+  const closeMorpionFriendJoin = () => {
+    if (!morpionFriendJoinOverlay) return;
+    morpionFriendJoinOverlay.classList.add("hidden");
+    morpionFriendJoinOverlay.classList.remove("flex");
+    document.body.classList.remove("overflow-hidden");
+  };
+
+  const openMorpionFriendCode = () => {
+    if (!morpionFriendCodeOverlay) return;
+    morpionFriendCodeOverlay.classList.remove("hidden");
+    morpionFriendCodeOverlay.classList.add("flex");
+    document.body.classList.add("overflow-hidden");
+  };
+
+  const closeMorpionFriendCode = () => {
+    if (!morpionFriendCodeOverlay) return;
+    morpionFriendCodeOverlay.classList.add("hidden");
+    morpionFriendCodeOverlay.classList.remove("flex");
+    document.body.classList.remove("overflow-hidden");
+  };
+
+  const syncMorpionFriendCreateSummary = () => {
+    const stakeDoes = parseStrictWholeNumber(morpionFriendStakeInput?.value || "");
+    if (!morpionFriendCreateSummary) return;
+    if (stakeDoes <= 0) {
+      morpionFriendCreateSummary.textContent = "Entre un montant entier pour voir le gain estime du vainqueur.";
+      return;
+    }
+    const rewardDoes = buildPrivateMorpionRewardDoes(stakeDoes);
+    morpionFriendCreateSummary.textContent = `Mise ${stakeDoes.toLocaleString("fr-FR")} Does. Gain du vainqueur: ${rewardDoes.toLocaleString("fr-FR")} Does.`;
   };
 
   const openFriendMode = () => {
@@ -3775,6 +4035,7 @@ export function renderPage2(user, options = {}) {
   renderDuelStakeOptions(currentDuelStakeOptions);
   renderDuelFriendCreateStakeOptions(currentDuelStakeOptions);
   renderFriendCreateStakeOptions(currentStakeOptions);
+  syncMorpionFriendCreateSummary();
 
   const handleDuelEntry = async () => {
     if (page2AccountFrozen) return;
@@ -3852,6 +4113,37 @@ export function renderPage2(user, options = {}) {
 
   gameModeMorpionCard?.addEventListener("click", async () => {
     await handleMorpionEntry();
+  });
+
+  morpionFriendModeOpenBtn?.addEventListener("click", () => {
+    if (page2AccountFrozen) return;
+    closeMorpionStakeSelection();
+    openMorpionFriendMode();
+  });
+
+  morpionFriendCreateOpenBtn?.addEventListener("click", () => {
+    if (page2AccountFrozen) return;
+    closeMorpionFriendMode();
+    if (morpionFriendStakeInput) {
+      morpionFriendStakeInput.value = "";
+    }
+    if (morpionFriendCreateHint) {
+      morpionFriendCreateHint.textContent = "Exemple: 500, 750, 1200. Pas de virgule ni de point.";
+    }
+    syncMorpionFriendCreateSummary();
+    openMorpionFriendCreate();
+  });
+
+  morpionFriendJoinOpenBtn?.addEventListener("click", () => {
+    if (page2AccountFrozen) return;
+    closeMorpionFriendMode();
+    if (morpionFriendJoinCodeInput) {
+      morpionFriendJoinCodeInput.value = "";
+    }
+    if (morpionFriendJoinHint) {
+      morpionFriendJoinHint.textContent = "Entre le code exactement comme il t'a ete envoye.";
+    }
+    openMorpionFriendJoin();
   });
 
   duelFriendModeOpenBtn?.addEventListener("click", () => {
@@ -4065,6 +4357,181 @@ export function renderPage2(user, options = {}) {
     }
   });
 
+  morpionFriendStakeInput?.addEventListener("input", () => {
+    morpionFriendStakeInput.value = normalizeWholeNumberInput(morpionFriendStakeInput.value);
+    if (morpionFriendCreateHint) {
+      morpionFriendCreateHint.textContent = "Exemple: 500, 750, 1200. Pas de virgule ni de point.";
+    }
+    syncMorpionFriendCreateSummary();
+  });
+
+  morpionFriendStakeInput?.addEventListener("keydown", (event) => {
+    if (event.key === "Enter") {
+      event.preventDefault();
+      morpionFriendCreateSubmitBtn?.click();
+    }
+  });
+
+  morpionFriendCreateSubmitBtn?.addEventListener("click", async () => {
+    const stakeAmount = parseStrictWholeNumber(morpionFriendStakeInput?.value || "");
+    if (stakeAmount <= 0) {
+      if (morpionFriendCreateHint) {
+        morpionFriendCreateHint.textContent = "Entre une mise entiere positive en Does.";
+      }
+      morpionFriendStakeInput?.focus();
+      return;
+    }
+    if (stakeAmount > MAX_MORPION_FRIEND_STAKE_DOES) {
+      if (morpionFriendCreateHint) {
+        morpionFriendCreateHint.textContent = `La mise maximale autorisee est ${MAX_MORPION_FRIEND_STAKE_DOES.toLocaleString("fr-FR")} Does.`;
+      }
+      morpionFriendStakeInput?.focus();
+      return;
+    }
+
+    try {
+      await withButtonLoading(morpionFriendCreateSubmitBtn, async () => {
+        const xchangeMod = await loadXchangeModule().catch(() => null);
+        const state = xchangeMod?.getXchangeState?.() || {};
+        const playableDoesBalance = getPlayableDoesBalance(state);
+        if (playableDoesBalance < stakeAmount) {
+          closeMorpionFriendCreate();
+          if (doesRequiredOverlay) {
+            doesRequiredOverlay.classList.remove("hidden");
+            doesRequiredOverlay.classList.add("flex");
+            document.body.classList.add("overflow-hidden");
+          }
+          return;
+        }
+
+        const result = await createFriendMorpionRoomSecure({ stakeDoes: stakeAmount });
+        morpionFriendRoomDraft.roomId = String(result?.roomId || "");
+        morpionFriendRoomDraft.seatIndex = Number.parseInt(String(result?.seatIndex || 0), 10) || 0;
+        morpionFriendRoomDraft.stakeDoes = Number.parseInt(String(result?.stakeDoes || stakeAmount), 10) || stakeAmount;
+        morpionFriendRoomDraft.inviteCode = String(result?.inviteCode || "").trim();
+
+        if (morpionFriendCodeValue) {
+          morpionFriendCodeValue.textContent = morpionFriendRoomDraft.inviteCode || "------";
+        }
+        if (morpionFriendCodeStakeMeta) {
+          const rewardDoes = buildPrivateMorpionRewardDoes(morpionFriendRoomDraft.stakeDoes);
+          morpionFriendCodeStakeMeta.textContent = `${morpionFriendRoomDraft.stakeDoes.toLocaleString("fr-FR")} Does obligatoires pour 2 joueurs. Gain ${rewardDoes.toLocaleString("fr-FR")} Does.`;
+        }
+        if (morpionFriendCodeCopyBtn) {
+          morpionFriendCodeCopyBtn.textContent = "Copier le code";
+        }
+
+        closeMorpionFriendCreate();
+        openMorpionFriendCode();
+      }, { loadingLabel: "Creation..." });
+    } catch (error) {
+      console.error("[MORPION_FRIEND_ROOM] create failed", error);
+      if (
+        String(error?.code || "") === "active-room-exists"
+        && error?.roomId
+      ) {
+        const roomMode = String(error?.roomMode || "");
+        const nextStake = Number.parseInt(String(error?.stakeDoes || stakeAmount), 10) || stakeAmount;
+        closeMorpionFriendCreate();
+        if (roomMode === "morpion_friends") {
+          morpionFriendRoomDraft.roomId = String(error.roomId || "");
+          morpionFriendRoomDraft.seatIndex = Number.parseInt(String(error?.seatIndex || 0), 10) || 0;
+          morpionFriendRoomDraft.stakeDoes = nextStake;
+          navigateToFriendMorpionRoom(morpionFriendRoomDraft);
+          return;
+        }
+        showGlobalLoading("Ouverture du Morpion...");
+        window.location.href = buildMorpionGameUrl(nextStake);
+        return;
+      }
+      if (morpionFriendCreateHint) {
+        morpionFriendCreateHint.textContent = error?.message || "Impossible de creer cette salle privee pour le moment.";
+      }
+    }
+  });
+
+  morpionFriendCodeCopyBtn?.addEventListener("click", async () => {
+    const codeToCopy = String(morpionFriendRoomDraft.inviteCode || "").trim();
+    if (!codeToCopy) return;
+    try {
+      await navigator.clipboard.writeText(codeToCopy);
+      morpionFriendCodeCopyBtn.textContent = "Code copie";
+    } catch (_) {
+      morpionFriendCodeCopyBtn.textContent = "Copie impossible";
+    }
+  });
+
+  morpionFriendCodeContinueBtn?.addEventListener("click", () => {
+    closeMorpionFriendCode();
+    navigateToFriendMorpionRoom(morpionFriendRoomDraft);
+  });
+
+  morpionFriendJoinCodeInput?.addEventListener("input", () => {
+    morpionFriendJoinCodeInput.value = normalizeInviteCode(morpionFriendJoinCodeInput.value);
+  });
+
+  morpionFriendJoinCodeInput?.addEventListener("keydown", (event) => {
+    if (event.key === "Enter") {
+      event.preventDefault();
+      morpionFriendJoinSubmitBtn?.click();
+    }
+  });
+
+  morpionFriendJoinSubmitBtn?.addEventListener("click", async () => {
+    const inviteCode = normalizeInviteCode(morpionFriendJoinCodeInput?.value || "");
+    if (!inviteCode) {
+      if (morpionFriendJoinHint) {
+        morpionFriendJoinHint.textContent = "Entre le code de ton ami pour continuer.";
+      }
+      morpionFriendJoinCodeInput?.focus();
+      return;
+    }
+
+    try {
+      await withButtonLoading(morpionFriendJoinSubmitBtn, async () => {
+        const result = await joinFriendMorpionRoomByCodeSecure({ inviteCode });
+        morpionFriendRoomDraft.roomId = String(result?.roomId || "");
+        morpionFriendRoomDraft.seatIndex = Number.parseInt(String(result?.seatIndex || 0), 10) || 0;
+        morpionFriendRoomDraft.stakeDoes = Number.parseInt(String(result?.stakeDoes || 0), 10) || 500;
+        morpionFriendRoomDraft.inviteCode = String(result?.inviteCode || inviteCode).trim();
+        closeMorpionFriendJoin();
+        navigateToFriendMorpionRoom(morpionFriendRoomDraft);
+      }, { loadingLabel: "Connexion..." });
+    } catch (error) {
+      console.error("[MORPION_FRIEND_ROOM] join failed", error);
+      if (
+        String(error?.code || "") === "active-room-exists"
+        && error?.roomId
+      ) {
+        const roomMode = String(error?.roomMode || "");
+        const nextStake = Number.parseInt(String(error?.stakeDoes || morpionFriendRoomDraft.stakeDoes || 500), 10) || 500;
+        closeMorpionFriendJoin();
+        if (roomMode === "morpion_friends") {
+          morpionFriendRoomDraft.roomId = String(error.roomId || "");
+          morpionFriendRoomDraft.seatIndex = Number.parseInt(String(error?.seatIndex || 0), 10) || 0;
+          morpionFriendRoomDraft.stakeDoes = nextStake;
+          navigateToFriendMorpionRoom(morpionFriendRoomDraft);
+          return;
+        }
+        showGlobalLoading("Ouverture du Morpion...");
+        window.location.href = buildMorpionGameUrl(nextStake);
+        return;
+      }
+      if (String(error?.message || "").toLowerCase().includes("solde does insuffisant")) {
+        closeMorpionFriendJoin();
+        if (doesRequiredOverlay) {
+          doesRequiredOverlay.classList.remove("hidden");
+          doesRequiredOverlay.classList.add("flex");
+          document.body.classList.add("overflow-hidden");
+        }
+        return;
+      }
+      if (morpionFriendJoinHint) {
+        morpionFriendJoinHint.textContent = error?.message || "Impossible de rejoindre cette salle morpion privee pour le moment.";
+      }
+    }
+  });
+
   friendCreateStakeGrid?.addEventListener("click", async (event) => {
     const btn = event.target.closest(".friend-create-stake-btn");
     if (!btn || !friendCreateStakeGrid.contains(btn)) return;
@@ -4236,6 +4703,26 @@ export function renderPage2(user, options = {}) {
       await continueToMorpion(stakeAmount);
     }, { loadingLabel: "Verification..." });
   });
+  if (morpionFriendModeClose) morpionFriendModeClose.addEventListener("click", closeMorpionFriendMode);
+  morpionFriendModeOverlay?.addEventListener("click", (ev) => {
+    if (ev.target === morpionFriendModeOverlay) closeMorpionFriendMode();
+  });
+  morpionFriendModePanel?.addEventListener("click", (ev) => ev.stopPropagation());
+  if (morpionFriendCreateClose) morpionFriendCreateClose.addEventListener("click", closeMorpionFriendCreate);
+  morpionFriendCreateOverlay?.addEventListener("click", (ev) => {
+    if (ev.target === morpionFriendCreateOverlay) closeMorpionFriendCreate();
+  });
+  morpionFriendCreatePanel?.addEventListener("click", (ev) => ev.stopPropagation());
+  if (morpionFriendJoinClose) morpionFriendJoinClose.addEventListener("click", closeMorpionFriendJoin);
+  morpionFriendJoinOverlay?.addEventListener("click", (ev) => {
+    if (ev.target === morpionFriendJoinOverlay) closeMorpionFriendJoin();
+  });
+  morpionFriendJoinPanel?.addEventListener("click", (ev) => ev.stopPropagation());
+  if (morpionFriendCodeCloseBtn) morpionFriendCodeCloseBtn.addEventListener("click", closeMorpionFriendCode);
+  morpionFriendCodeOverlay?.addEventListener("click", (ev) => {
+    if (ev.target === morpionFriendCodeOverlay) closeMorpionFriendCode();
+  });
+  morpionFriendCodePanel?.addEventListener("click", (ev) => ev.stopPropagation());
   if (duelIntroClose) duelIntroClose.addEventListener("click", closeDuelIntro);
   duelIntroUnderstoodBtn?.addEventListener("click", () => {
     const duelIntroUid = String(page2PresenceUser?.uid || auth.currentUser?.uid || "");
