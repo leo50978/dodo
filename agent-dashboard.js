@@ -37,6 +37,8 @@ const dom = {
   ledgerEmpty: document.getElementById("agentLedgerEmpty"),
 };
 
+let buttonFeedbackTimer = 0;
+
 function safeInt(value) {
   const num = Number(value);
   return Number.isFinite(num) ? Math.trunc(num) : 0;
@@ -83,6 +85,32 @@ function setStatus(text, tone = "neutral") {
   if (!dom.status) return;
   dom.status.textContent = String(text || "");
   dom.status.dataset.tone = tone;
+}
+
+function resetCopyButtons() {
+  [dom.copyPromoBtn, dom.copyLinkBtn].forEach((button) => {
+    if (!button) return;
+    button.classList.remove("success", "error");
+    button.disabled = false;
+    if (button.dataset.defaultLabel) {
+      button.textContent = button.dataset.defaultLabel;
+    }
+  });
+}
+
+function showCopyFeedback(button, success, successLabel, errorLabel) {
+  if (!button) return;
+  if (buttonFeedbackTimer) {
+    window.clearTimeout(buttonFeedbackTimer);
+    buttonFeedbackTimer = 0;
+  }
+  resetCopyButtons();
+  button.classList.add(success ? "success" : "error");
+  button.textContent = success ? successLabel : errorLabel;
+  button.disabled = true;
+  buttonFeedbackTimer = window.setTimeout(() => {
+    resetCopyButtons();
+  }, 1600);
 }
 
 async function copyToClipboard(text) {
@@ -517,17 +545,24 @@ async function refreshDashboard() {
 }
 
 function bindActions() {
+  [dom.copyPromoBtn, dom.copyLinkBtn].forEach((button) => {
+    if (!button) return;
+    button.dataset.defaultLabel = button.textContent || "";
+  });
+
   dom.refreshBtn?.addEventListener("click", () => {
     void refreshDashboard();
   });
 
   dom.copyPromoBtn?.addEventListener("click", async () => {
     const ok = await copyToClipboard(dom.promoCode?.textContent || "");
+    showCopyFeedback(dom.copyPromoBtn, ok, "Code copié", "Échec copie");
     setStatus(ok ? "Code promo copié." : "Impossible de copier le code promo.", ok ? "success" : "error");
   });
 
   dom.copyLinkBtn?.addEventListener("click", async () => {
     const ok = await copyToClipboard(dom.promoLink?.textContent || "");
+    showCopyFeedback(dom.copyLinkBtn, ok, "Lien copié", "Échec copie");
     setStatus(ok ? "Lien promo copié." : "Impossible de copier le lien promo.", ok ? "success" : "error");
   });
 }
