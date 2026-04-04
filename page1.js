@@ -560,7 +560,7 @@ function ensureOneClickModal() {
           </div>
           <div data-oneclick-step="3" class="hidden space-y-2.5">
             <div class="rounded-2xl border border-[#ffb26e]/22 bg-[#f57c00]/10 px-4 py-3.5 text-sm leading-6 text-white/80">
-              Tu peux ajouter un code promo si tu en as un. <span class="font-semibold text-white">Cette étape est facultative.</span>
+              Tu peux ajouter le code promo de la personne qui t'a invite ou continuer sans code. <span class="font-semibold text-white">Le bonus de 25 HTG reste automatique dans les deux cas.</span>
             </div>
             <div>
               <label for="oneClickPromoInput" class="mb-1.5 block text-xs font-medium text-white/70">Code promo optionnel</label>
@@ -575,7 +575,7 @@ function ensureOneClickModal() {
               />
             </div>
             <div class="rounded-2xl border border-white/10 bg-white/[0.04] px-4 py-3 text-[12px] leading-5 text-white/56">
-              Si tu n’as pas de code promo, passe directement à l’étape suivante.
+              Si tu n’as pas de code promo, passe directement à l’étape suivante. Ton bonus de bienvenue sera tout de meme ajoute apres l'inscription.
             </div>
           </div>
           <div data-oneclick-step="4" class="hidden space-y-2.5">
@@ -1001,7 +1001,7 @@ function renderPage1() {
   const referralHint = authMode === "signup" && hintCode
     ? `
       <div class="mt-3 rounded-2xl border border-[#ffb26e]/45 bg-[#f57c00]/15 px-4 py-3 text-xs text-white/90 sm:text-sm">
-        Parrain détecté automatiquement: <span class="font-semibold text-[#ffd8b5]">${escapeAttr(hintCode)}</span>
+        Code promo détecté automatiquement: <span class="font-semibold text-[#ffd8b5]">${escapeAttr(hintCode)}</span>
       </div>
     `
     : "";
@@ -1183,7 +1183,7 @@ function renderPage1() {
             class="block w-full rounded-2xl border border-white/20 bg-white/10 px-5 py-3.5 text-sm uppercase text-white placeholder-white/60 shadow-[inset_6px_6px_12px_rgba(34,40,59,0.45),inset_-6px_-6px_12px_rgba(93,105,143,0.28)] backdrop-blur-md outline-none ring-0 transition focus:border-[#f48f45] sm:text-base"
           />
           <div class="mt-2 px-1 text-[11px] text-white/65 sm:text-xs">
-            Utilise si quelqu'un t'a partage un code.
+            Utilise le code promo de la personne qui t'a invitee. Si tu n'en as pas, laisse vide: ton bonus de 25 HTG reste automatique.
           </div>
         </div>
         <div class="space-y-3 rounded-2xl border border-white/15 bg-white/6 px-4 py-4">

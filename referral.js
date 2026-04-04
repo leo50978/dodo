@@ -120,7 +120,7 @@ export function getReferralContextFromUrl(search = window.location.search) {
     ambassadorCodeFromLink: AMBASSADOR_FEATURE_ENABLED
       ? normalizeCode(params.get("amb") || params.get("ambassador") || "")
       : "",
-    promoCodeFromQuery: normalizeCode(params.get("promo") || params.get("code") || ""),
+    promoCodeFromQuery: normalizeCode(params.get("promo") || params.get("agent") || params.get("code") || ""),
   };
 }
 
