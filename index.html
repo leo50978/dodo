@@ -640,45 +640,42 @@
       <div class="welcome-modal__backdrop" data-recruitment-close></div>
       <div class="welcome-modal__card welcome-modal__card--campaign" aria-labelledby="recruitmentTitle">
         <button class="welcome-modal__close" type="button" aria-label="Fermer" data-recruitment-close>×</button>
-        <div class="welcome-modal__badge">Recrutement officiel</div>
-        <h2 id="recruitmentTitle" class="welcome-modal__title">Nous recrutons des ambassadeurs Dominoes Lakay</h2>
+        <div class="welcome-modal__badge">Mise a jour programme</div>
+        <h2 id="recruitmentTitle" class="welcome-modal__title">Le recrutement d'ambassadeurs est termine</h2>
         <div id="recruitmentBody" class="welcome-modal__stack">
           <p class="welcome-modal__text">
-            Dominoes Lakay ouvre un recrutement special pour les <strong>ambassadeurs</strong>.
+            Nous ne prenons plus de CV pour le programme <strong>Ambassadeur</strong>.
           </p>
           <div class="welcome-modal__facts" aria-label="Informations recrutement">
             <div class="welcome-modal__fact">
               <span class="welcome-modal__fact-icon"><i class="fa-solid fa-users"></i></span>
-              <span>Seulement <strong>10 places</strong> dans chaque departement.</span>
+              <span>Un nouveau programme <strong>Agent</strong> est disponible.</span>
             </div>
             <div class="welcome-modal__fact">
               <span class="welcome-modal__fact-icon"><i class="fa-solid fa-medal"></i></span>
-              <span>Seuls <strong>les meilleurs profils</strong> seront selectionnes.</span>
+              <span>Ce programme est <strong>gratuit</strong> et ouvert des maintenant.</span>
             </div>
             <div class="welcome-modal__fact">
-              <span class="welcome-modal__fact-icon"><i class="fa-solid fa-calendar-day"></i></span>
-              <span>Offre valable jusqu'au <strong>lundi 6 avril 2026</strong>.</span>
+              <span class="welcome-modal__fact-icon"><i class="fa-solid fa-headset"></i></span>
+              <span>Contact direct avec un responsable pour demarrer rapidement.</span>
             </div>
           </div>
           <p class="welcome-modal__text">
-            Toutes les personnes interessees sont priees de contacter l'assistance ou d'acceder a la page d'inscription pour envoyer leur candidature.
+            Clique sur le bouton ci-dessous pour parler a un responsable WhatsApp.
           </p>
         </div>
         <div class="welcome-modal__cta welcome-modal__cta--campaign">
           <a
             id="recruitmentSupportBtn"
             class="welcome-modal__btn"
-            href="https://wa.me/50940507232?text=Bonjour%20assistance%2C%20je%20suis%20interesse%28e%29%20par%20le%20recrutement%20ambassadeurs%20Dominoes%20Lakay."
+            href="https://wa.me/50941752992?text=Bonjour%2C%20je%20veux%20des%20infos%20sur%20le%20programme%20Agent%20gratuit%20de%20Dominoes%20Lakay."
             target="_blank"
             rel="noopener"
           >
-            Contacter l'assistance
-          </a>
-          <a id="recruitmentVisitBtn" class="welcome-modal__ghost" href="./recrutement.html">
-            Visiter la page d'inscription
+            Contacter un responsable
           </a>
           <button id="recruitmentHideBtn" class="welcome-modal__ghost welcome-modal__ghost--subtle" type="button">
-            Ne plus afficher
+            Je ne suis pas interesse
           </button>
         </div>
       </div>
@@ -687,7 +684,7 @@
     <script type="module" src="./home.js"></script>
     <script>
       (() => {
-        const recruitmentStorageKey = "dl_recruitment_modal_hidden_v1";
+        const recruitmentStorageKey = "dl_recruitment_modal_hidden_v2";
         const storageKey = "dl_welcome_deposit_flow_v3";
         const modal = document.getElementById("welcomeDepositModal");
         const recruitmentModal = document.getElementById("recruitmentModal");
@@ -700,7 +697,6 @@
         const secondaryBtn = document.getElementById("welcomeDepositSecondary");
         const recruitmentCloseButtons = recruitmentModal ? recruitmentModal.querySelectorAll("[data-recruitment-close]") : [];
         const recruitmentHideBtn = document.getElementById("recruitmentHideBtn");
-        const recruitmentVisitBtn = document.getElementById("recruitmentVisitBtn");
         const recruitmentSupportBtn = document.getElementById("recruitmentSupportBtn");
 
         const steps = [
@@ -837,11 +833,6 @@
             markRecruitmentHidden();
             hideRecruitmentModal();
             maybeShowWelcomeFlow();
-          });
-        }
-        if (recruitmentVisitBtn) {
-          recruitmentVisitBtn.addEventListener("click", () => {
-            hideRecruitmentModal();
           });
         }
         if (recruitmentSupportBtn) {
