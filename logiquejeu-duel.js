@@ -129,6 +129,42 @@ function duelDebug(label, payload = {}) {
   console.log(`[DUEL_DEBUG] ${label}`, payload);
 }
 
+function summarizeDuelError(error) {
+  return {
+    errorName: String(error?.name || "").trim(),
+    errorCode: String(error?.code || "").trim(),
+    errorMessage: String(error?.message || "").trim(),
+  };
+}
+
+function buildDuelIncidentContext(extra = {}) {
+  const replayState = getReplayState();
+  const partida = window.Domino?.Partida || null;
+  return {
+    roomId: String(currentRoomId || "").trim(),
+    seat: safeSignedInt(currentSeatIndex, -1),
+    roomStatus: String(currentRoomData?.status || "").trim(),
+    roomCurrentPlayer: safeSignedInt(currentRoomData?.currentPlayer, -1),
+    roomLastActionSeq: safeSignedInt(currentRoomData?.lastActionSeq, -1),
+    startRevealPending: currentRoomData?.startRevealPending === true,
+    turnDeadlineMs: safeSignedInt(currentRoomData?.turnDeadlineMs, 0),
+    replayCurrentPlayer: safeSignedInt(replayState?.currentPlayer, -1),
+    replayActionSeq: safeSignedInt(replayState?.appliedActionSeq, -1),
+    stockCount: Array.isArray(replayState?.stockPile) ? replayState.stockPile.length : -1,
+    localTurnoActual: safeSignedInt(partida?.TurnoActual, -1),
+    localJugadorActual: safeSignedInt(partida?.JugadorActual, -1),
+    localActionSeq: safeSignedInt(partida?.SiguienteAccionSeq, -1),
+    ...extra,
+  };
+}
+
+function logDuelIncident(label, error, extra = {}) {
+  console.warn(`[DUEL_INCIDENT] ${label}`, {
+    ...buildDuelIncidentContext(extra),
+    ...summarizeDuelError(error),
+  });
+}
+
 async function touchClientSitePresence() {
   const uid = String(currentUser?.uid || "");
   if (!uid || clientPresenceInFlight) return;
@@ -145,7 +181,9 @@ async function touchClientSitePresence() {
       sitePresenceExpiresAtMs: nowMs + CLIENT_SITE_PRESENCE_TTL_MS,
     }, { merge: true });
   } catch (error) {
-    console.warn("[DUEL] site presence update failed", error);
+    logDuelIncident("site-presence-update-failed", error, {
+      scope: "client-site-presence",
+    });
   } finally {
     clientPresenceInFlight = false;
   }
@@ -842,7 +880,7 @@ async function maybeRequestTurnTimeoutResolution(reason = "") {
   try {
     await touchRoomPresenceDuelSecure({ roomId: currentRoomId });
   } catch (error) {
-    console.warn("[DUEL] timeout nudge failed", error);
+    logDuelIncident("timeout-nudge-failed", error, { reason });
   } finally {
     turnTimeoutRequestInFlight = false;
   }
@@ -1742,7 +1780,9 @@ function startPresenceHeartbeat() {
     try {
       await touchRoomPresenceDuelSecure({ roomId: currentRoomId });
     } catch (error) {
-      console.warn("[DUEL] touchRoomPresenceDuel failed", error);
+      logDuelIncident("room-presence-touch-failed", error, {
+        source: "heartbeat",
+      });
     }
   };
   void ping();

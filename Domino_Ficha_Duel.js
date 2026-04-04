@@ -40,6 +40,25 @@ var Domino_Ficha = function() {
     this.Direccion  = "nada";               // Puede ser nada, izquierda, derecha, arriba, abajo, y centro
     this.Rama       = "nada";               // Puede ser nada, izq, y der
     this.EPS_ANG    = 0.0001;               // Tolerancia para comparar ángulos
+    this.DebugVerbose = false;
+
+    this.DebugLog = function(Etiqueta, Datos) {
+        var DebugActivo = (this.DebugVerbose === true);
+        if (DebugActivo !== true) {
+            try {
+                DebugActivo = (typeof(window) !== "undefined" && window && window.__DOMINO_DUEL_VERBOSE_DEBUG === true);
+            }
+            catch (_) {
+                DebugActivo = false;
+            }
+        }
+        if (DebugActivo !== true) return;
+        try {
+            console.log("[DOMINO_FICHA_DUEL_DEBUG] " + Etiqueta + " " + JSON.stringify(Datos || { }), Datos || { });
+        }
+        catch (_) {
+        }
+    };
 
     this.AnguloEq = function(A, B) {
         return (Math.abs(A - B) < this.EPS_ANG);
@@ -233,7 +252,7 @@ var Domino_Ficha = function() {
                 jugadorActual: Domino.Partida.JugadorActual,
                 siguienteAccionSeq: Domino.Partida.SiguienteAccionSeq
             };
-            console.log("[DOMINO_FICHA_DEBUG] Colocar:begin " + JSON.stringify(PayloadBegin), PayloadBegin);
+            this.DebugLog("Colocar:begin", PayloadBegin);
         } catch (_) {
         }
         // Es la primera ficha (6 doble)
@@ -412,7 +431,7 @@ var Domino_Ficha = function() {
                     turnoActual: Domino.Partida.TurnoActual,
                     jugadorActual: Domino.Partida.JugadorActual
                 };
-                console.log("[DOMINO_FICHA_DEBUG] Colocar:instant " + JSON.stringify(PayloadInstant), PayloadInstant);
+                this.DebugLog("Colocar:instant", PayloadInstant);
             } catch (_) {
             }
             this.AniColocar = undefined;
@@ -431,7 +450,7 @@ var Domino_Ficha = function() {
                 posZ: Ret.PosZ,
                 rotZ: Ret.RotZ
             };
-            console.log("[DOMINO_FICHA_DEBUG] Colocar:animateStart " + JSON.stringify(PayloadAnim), PayloadAnim);
+            this.DebugLog("Colocar:animateStart", PayloadAnim);
         } catch (_) {
         }
         
@@ -474,7 +493,7 @@ var Domino_Ficha = function() {
                         turnoActual: Domino.Partida.TurnoActual,
                         jugadorActual: Domino.Partida.JugadorActual
                     };
-                    console.log("[DOMINO_FICHA_DEBUG] Colocar:done " + JSON.stringify(PayloadDone), PayloadDone);
+                    this.DebugLog("Colocar:done", PayloadDone);
                 } catch (_) {
                 }
                 this.AniColocar = undefined;

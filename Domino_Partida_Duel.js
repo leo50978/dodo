@@ -40,10 +40,21 @@ var Domino_Partida = function() {
     this.RepartoAnimacionInicio = 2200;
     this.RetrasoRepartoAnimacionInicio = 46;
     this.ViajeRepartoAnimacionInicio = 310;
+    this.DebugVerbose = false;
 
     this.Opciones = new Domino_Opciones;
 
     this.DebugLog = function(Etiqueta, Datos) {
+        var DebugActivo = (this.DebugVerbose === true);
+        if (DebugActivo !== true) {
+            try {
+                DebugActivo = (typeof(window) !== "undefined" && window && window.__DOMINO_DUEL_VERBOSE_DEBUG === true);
+            }
+            catch (_) {
+                DebugActivo = false;
+            }
+        }
+        if (DebugActivo !== true) return;
         try {
             var Payload = Object.assign({
                 ts: new Date().toISOString(),

@@ -7697,9 +7697,29 @@ function applyResolvedDuelMove(state, room, move, actorUid) {
       stockIndex = randomInt(0, nextState.stockPile.length - 1);
     }
     if (stockIndex < 0 && canFallbackToRandomDraw) {
+      console.warn("[DUEL_DRAW_INCIDENT] stale-requested-tile-fallback", {
+        actorUid: String(actorUid || ""),
+        player: safeSignedInt(move.player, -1),
+        requestedTileId,
+        stockCount: Array.isArray(nextState.stockPile) ? nextState.stockPile.length : 0,
+        appliedActionSeq: safeSignedInt(nextState.appliedActionSeq, -1),
+        currentPlayer: safeSignedInt(nextState.currentPlayer, -1),
+        leftEnd: safeSignedInt(nextState.leftEnd, -1),
+        rightEnd: safeSignedInt(nextState.rightEnd, -1),
+      });
       stockIndex = randomInt(0, nextState.stockPile.length - 1);
     }
     if (stockIndex < 0) {
+      console.warn("[DUEL_DRAW_INCIDENT] draw-rejected", {
+        actorUid: String(actorUid || ""),
+        player: safeSignedInt(move.player, -1),
+        requestedTileId,
+        stockCount: Array.isArray(nextState.stockPile) ? nextState.stockPile.length : 0,
+        appliedActionSeq: safeSignedInt(nextState.appliedActionSeq, -1),
+        currentPlayer: safeSignedInt(nextState.currentPlayer, -1),
+        leftEnd: safeSignedInt(nextState.leftEnd, -1),
+        rightEnd: safeSignedInt(nextState.rightEnd, -1),
+      });
       throw new HttpsError("failed-precondition", "La tuile choisie n'est plus disponible dans le lot duel.");
     }
 
