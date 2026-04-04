@@ -1395,6 +1395,7 @@ function updateProfileData(user) {
   });
   void updateWithdrawalAvailability(user, resolvedXState);
   updateReferralData(user);
+  updateAgentDashboardAccess(user);
 }
 
 function updateReferralData(user) {
@@ -1438,6 +1439,31 @@ function updateReferralData(user) {
       ? "Ton code et ton lien de parrainage sont prêts."
       : "Génération du code de parrainage...";
   }
+}
+
+function updateAgentDashboardAccess(user) {
+  const agentBtn = document.getElementById("profileAgentDashboardBtn");
+  if (!agentBtn) return;
+
+  const clientData = latestProfileClientData || {};
+  const isAgent = clientData.isAgent === true
+    || clientData.agentDashboardEnabled === true
+    || String(clientData.agentStatus || "").trim().length > 0
+    || String(clientData.agentPromoCode || "").trim().length > 0;
+  const status = String(clientData.agentStatus || "").trim().toLowerCase();
+
+  if (!user?.uid || !isAgent) {
+    agentBtn.classList.add("hidden");
+    agentBtn.disabled = true;
+    agentBtn.textContent = "Dashboard agent";
+    return;
+  }
+
+  agentBtn.classList.remove("hidden");
+  agentBtn.disabled = false;
+  agentBtn.textContent = status === "active"
+    ? "Dashboard agent"
+    : "Dashboard agent (inactif)";
 }
 
 export function mountProfileModal(options = {}) {
@@ -1521,6 +1547,7 @@ export function mountProfilePage(options = {}) {
   const generalRulesClose = document.getElementById("profileGeneralRulesClose");
   const copyReferralCodeBtn = document.getElementById("profileCopyReferralCode");
   const copyReferralLinkBtn = document.getElementById("profileCopyReferralLink");
+  const agentDashboardBtn = document.getElementById("profileAgentDashboardBtn");
 
   const closeOverlay = (overlay) => {
     if (!overlay) return;
@@ -1646,6 +1673,13 @@ export function mountProfilePage(options = {}) {
       const link = copyReferralLinkBtn.getAttribute("data-link") || "";
       const ok = await copyToClipboard(link);
       showReferralCopyFeedback(ok ? "Lien copié avec succès." : "Impossible de copier le lien.", ok);
+    });
+  }
+
+  if (agentDashboardBtn && agentDashboardBtn.dataset.bound !== "1") {
+    agentDashboardBtn.dataset.bound = "1";
+    agentDashboardBtn.addEventListener("click", () => {
+      window.location.href = "./agent-dashboard.html";
     });
   }
 

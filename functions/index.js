@@ -32,6 +32,9 @@ const MORPION_ROOMS_COLLECTION = "morpionRooms";
 const MORPION_ROOM_RESULTS_COLLECTION = "morpionRoomResults";
 const MORPION_GAME_STATES_COLLECTION = "morpionGameStates";
 const CLIENTS_COLLECTION = "clients";
+const AGENTS_COLLECTION = "agents";
+const AGENT_LEDGER_SUBCOLLECTION = "ledger";
+const AGENT_MONTHLY_STATEMENTS_SUBCOLLECTION = "monthlyStatements";
 const AMBASSADORS_COLLECTION = "ambassadors";
 const AMBASSADOR_EVENTS_COLLECTION = "ambassadorGameEvents";
 const AMBASSADOR_PRIVATE_SUBCOLLECTION = "private";
@@ -71,6 +74,7 @@ const MIN_WITHDRAWAL_HTG = 50;
 const MAX_WITHDRAWAL_HTG = 500000;
 const MAX_PUBLIC_TEXT_LENGTH = 500;
 const USER_REFERRAL_PREFIX = "USR";
+const AGENT_PROMO_PREFIX = "AGT";
 const AMBASSADOR_LOSS_BONUS = 50;
 const AMBASSADOR_WIN_PENALTY = 75;
 const AMBASSADOR_PROMO_PREFIX = "AMB";
@@ -167,6 +171,22 @@ const DEPOSIT_ANALYTICS_DOC_LIMIT = 12000;
 const AGENT_DEPOSIT_SEARCH_FALLBACK_LIMIT = 250;
 const AGENT_DEPOSIT_CONTEXT_ORDER_LIMIT = 12;
 const AGENT_DEPOSIT_SEARCH_RESULT_LIMIT = 12;
+const AGENT_SEARCH_RESULT_LIMIT = 12;
+const AGENT_LIST_LIMIT = 180;
+const AGENT_INITIAL_SIGNUP_BUDGET_HTG = 25000;
+const AGENT_COMMISSION_MATRIX = Object.freeze({
+  domino_classic: Object.freeze({
+    100: 50,
+    500: 250,
+  }),
+  domino_duel: Object.freeze({
+    100: 1,
+    500: 40,
+  }),
+  morpion: Object.freeze({
+    500: 50,
+  }),
+});
 const AGENT_ASSISTED_METHOD_ID = "agent_assisted";
 const DEPOSIT_PROOF_MIN_DELAY_MS = 6 * 60 * 1000;
 const DEPOSIT_SHADOW_GUARD_WINDOW_MS = DEPOSIT_PROOF_MIN_DELAY_MS;
@@ -1383,6 +1403,26 @@ function buildUserReferralLink(referralCode) {
   return url.toString();
 }
 
+function buildAgentPromoLink(promoCode) {
+  const normalized = normalizeCode(promoCode);
+  if (!normalized) return "";
+  const url = new URL(PUBLIC_HOME_URL);
+  url.searchParams.set("promo", normalized);
+  return url.toString();
+}
+
+function normalizeAgentStatus(value = "") {
+  return sanitizeText(value || "", 24).toLowerCase() === "active" ? "active" : "inactive";
+}
+
+function agentsCollection() {
+  return db.collection(AGENTS_COLLECTION);
+}
+
+function agentRef(uid = "") {
+  return agentsCollection().doc(String(uid || "").trim());
+}
+
 function safeCompareText(a, b) {
   const aBuf = Buffer.from(String(a || ""), "utf8");
   const bBuf = Buffer.from(String(b || ""), "utf8");
@@ -1462,6 +1502,403 @@ async function generateUniqueClientReferralCode(currentUid = "") {
   throw new HttpsError("aborted", "Impossible de générer un code de parrainage unique.");
 }
 
+async function agentPromoCodeExists(code, currentUid = "") {
+  const normalized = normalizeCode(code);
+  if (!normalized) return false;
+  const snap = await agentsCollection()
+    .where("promoCode", "==", normalized)
+    .limit(1)
+    .get();
+  if (snap.empty) return false;
+  const found = snap.docs[0];
+  return !found || found.id !== String(currentUid || "");
+}
+
+async function generateUniqueAgentPromoCode(currentUid = "") {
+  for (let i = 0; i < 40; i += 1) {
+    const candidate = `${AGENT_PROMO_PREFIX}${randomCode(6)}`;
+    if (!(await agentPromoCodeExists(candidate, currentUid))) return candidate;
+  }
+  throw new HttpsError("aborted", "Impossible de générer un code agent unique.");
+}
+
+function buildAgentSearchRecord(clientId = "", raw = {}) {
+  const status = normalizeAgentStatus(raw.agentStatus || "");
+  return {
+    id: String(clientId || raw.uid || "").trim(),
+    uid: String(raw.uid || clientId || "").trim(),
+    name: sanitizeText(raw.name || raw.displayName || raw.username || "", 120),
+    username: sanitizeUsername(raw.username || "", 24),
+    email: sanitizeEmail(raw.email || "", 160),
+    phone: sanitizePhone(raw.phone || "", 40),
+    createdAtMs: safeSignedInt(raw.createdAtMs),
+    lastSeenAtMs: safeSignedInt(raw.lastSeenAtMs),
+    isAgent: raw.isAgent === true,
+    agentStatus: status,
+    agentPromoCode: normalizeCode(raw.agentPromoCode || ""),
+    agentDashboardEnabled: raw.agentDashboardEnabled === true,
+    accountFrozen: raw.accountFrozen === true,
+  };
+}
+
+function buildAgentProfileSummary(uid = "", clientData = {}, agentData = {}) {
+  const promoCode = normalizeCode(agentData.promoCode || clientData.agentPromoCode || "");
+  const status = normalizeAgentStatus(agentData.status || clientData.agentStatus || "");
+  const currentMonthKey = getMonthKeyFromMs(Date.now());
+  const currentEarningsMonthKey = sanitizeText(agentData.currentEarningsMonthKey || "", 16);
+  const displayName = sanitizeText(
+    agentData.displayName
+    || clientData.name
+    || clientData.displayName
+    || clientData.username
+    || "",
+    120
+  );
+  const activatedAtMs = safeSignedInt(agentData.activatedAtMs || clientData.agentActivatedAtMs);
+  return {
+    id: String(uid || clientData.uid || "").trim(),
+    uid: String(uid || clientData.uid || "").trim(),
+    displayName,
+    username: sanitizeUsername(clientData.username || "", 24),
+    email: sanitizeEmail(clientData.email || "", 160),
+    phone: sanitizePhone(clientData.phone || "", 40),
+    status,
+    isActive: status === "active",
+    promoCode,
+    promoLink: buildAgentPromoLink(promoCode),
+    signupBudgetInitialHtg: resolveAgentSignupBudgetInitialHtg(agentData, clientData),
+    signupBudgetRemainingHtg: resolveAgentSignupBudgetRemainingHtg(agentData, clientData),
+    currentMonthEarnedDoes: currentEarningsMonthKey === currentMonthKey ? safeInt(agentData.currentMonthEarnedDoes) : 0,
+    lifetimeEarnedDoes: safeInt(agentData.lifetimeEarnedDoes),
+    lastPayrollMonthKey: sanitizeText(agentData.lastPayrollMonthKey || "", 16),
+    totalTrackedSignups: safeInt(agentData.totalTrackedSignups),
+    totalTrackedDeposits: safeInt(agentData.totalTrackedDeposits),
+    totalTrackedWins: safeInt(agentData.totalTrackedWins),
+    declaredAtMs: safeSignedInt(agentData.declaredAtMs || clientData.agentDeclaredAtMs),
+    activatedAtMs,
+    createdAtMs: safeSignedInt(agentData.createdAtMs || clientData.createdAtMs),
+    updatedAtMs: safeSignedInt(agentData.updatedAtMs || clientData.updatedAtMs || clientData.lastSeenAtMs),
+    lastSeenAtMs: safeSignedInt(clientData.lastSeenAtMs),
+  };
+}
+
+function buildAgentLedgerItem(docSnap) {
+  const data = docSnap?.data() || {};
+  return {
+    id: String(docSnap?.id || "").trim(),
+    type: sanitizeText(data.type || "", 40),
+    label: sanitizeText(data.label || data.type || "", 120),
+    deltaDoes: safeSignedInt(data.deltaDoes),
+    deltaHtg: safeSignedInt(data.deltaHtg),
+    monthKey: sanitizeText(data.monthKey || "", 16),
+    createdAtMs: safeSignedInt(data.createdAtMs),
+    createdByUid: sanitizeText(data.createdByUid || "", 160),
+  };
+}
+
+function buildAgentMonthlyStatement(docSnap) {
+  const data = docSnap?.data() || {};
+  return {
+    id: String(docSnap?.id || "").trim(),
+    monthKey: sanitizeText(data.monthKey || docSnap?.id || "", 16),
+    earnedDoes: safeInt(data.earnedDoes),
+    paidDoes: safeInt(data.paidDoes),
+    signupsCount: safeInt(data.signupsCount),
+    depositsCount: safeInt(data.depositsCount),
+    winsCount: safeInt(data.winsCount),
+    closedAtMs: safeSignedInt(data.closedAtMs),
+    createdAtMs: safeSignedInt(data.createdAtMs),
+    signupBudgetRemainingHtg: safeInt(data.signupBudgetRemainingHtg),
+  };
+}
+
+function getMonthKeyFromMs(value = Date.now()) {
+  const date = new Date(Number(value) || Date.now());
+  const year = String(date.getUTCFullYear());
+  const month = String(date.getUTCMonth() + 1).padStart(2, "0");
+  return `${year}-${month}`;
+}
+
+function getPreviousMonthKeyFromMs(value = Date.now()) {
+  const date = new Date(Number(value) || Date.now());
+  date.setUTCDate(1);
+  date.setUTCHours(0, 0, 0, 0);
+  date.setUTCMonth(date.getUTCMonth() - 1);
+  return getMonthKeyFromMs(date.getTime());
+}
+
+function normalizeMonthKey(value = "", fallbackValue = "") {
+  const safeValue = sanitizeText(value || "", 16);
+  if (/^\d{4}-\d{2}$/.test(safeValue)) return safeValue;
+  return fallbackValue ? normalizeMonthKey(fallbackValue, "") : "";
+}
+
+function resolveAgentSignupBudgetInitialHtg(agentData = {}, clientData = {}) {
+  const activatedAtMs = safeSignedInt(agentData.activatedAtMs || clientData.agentActivatedAtMs);
+  const status = normalizeAgentStatus(agentData.status || clientData.agentStatus || "");
+  if (typeof agentData.signupBudgetInitialHtg === "number") {
+    const storedValue = safeInt(agentData.signupBudgetInitialHtg);
+    if (activatedAtMs > 0 || status === "active") {
+      return storedValue > 0 ? storedValue : AGENT_INITIAL_SIGNUP_BUDGET_HTG;
+    }
+    return 0;
+  }
+  return activatedAtMs > 0 ? AGENT_INITIAL_SIGNUP_BUDGET_HTG : 0;
+}
+
+function resolveAgentSignupBudgetRemainingHtg(agentData = {}, clientData = {}) {
+  const activatedAtMs = safeSignedInt(agentData.activatedAtMs || clientData.agentActivatedAtMs);
+  const status = normalizeAgentStatus(agentData.status || clientData.agentStatus || "");
+  if (typeof agentData.signupBudgetRemainingHtg === "number") {
+    const storedValue = safeInt(agentData.signupBudgetRemainingHtg);
+    if (activatedAtMs > 0 || status === "active") {
+      return storedValue;
+    }
+    return 0;
+  }
+  return resolveAgentSignupBudgetInitialHtg(agentData, clientData);
+}
+
+function getAgentCommissionDoesForWin(gameType = "", stakeDoes = 0) {
+  const safeType = sanitizeText(gameType || "", 40);
+  const safeStakeDoes = safeInt(stakeDoes);
+  const gameMatrix = AGENT_COMMISSION_MATRIX[safeType];
+  if (!gameMatrix) return 0;
+  return safeInt(gameMatrix[safeStakeDoes]);
+}
+
+function buildAgentCommissionLedgerId(gameType = "", roomId = "", playerUid = "") {
+  const safeType = sanitizeText(gameType || "", 32).toLowerCase().replace(/[^a-z0-9_]/g, "") || "game";
+  const safeRoomId = sanitizeText(roomId || "", 160).replace(/[^a-zA-Z0-9_-]/g, "") || "room";
+  const safePlayerUid = sanitizeText(playerUid || "", 160).replace(/[^a-zA-Z0-9_-]/g, "") || "player";
+  return `${safeType}_${safeRoomId}_${safePlayerUid}`;
+}
+
+function buildAgentDepositLedgerId(clientUid = "") {
+  const safeClientUid = sanitizeText(clientUid || "", 160).replace(/[^a-zA-Z0-9_-]/g, "") || "client";
+  return `deposit_${safeClientUid}`;
+}
+
+function buildAgentReferralClientRecord(docSnap) {
+  const data = docSnap?.data() || {};
+  return {
+    id: String(docSnap?.id || data.uid || "").trim(),
+    uid: String(data.uid || docSnap?.id || "").trim(),
+    name: sanitizeText(data.name || data.displayName || data.username || "", 120),
+    username: sanitizeUsername(data.username || "", 24),
+    email: sanitizeEmail(data.email || "", 160),
+    phone: sanitizePhone(data.phone || "", 40),
+    createdAtMs: safeSignedInt(data.createdAtMs),
+    lastSeenAtMs: safeSignedInt(data.lastSeenAtMs),
+    hasApprovedDeposit: data.hasApprovedDeposit === true,
+    doesBalance: safeInt(data.doesBalance),
+    referredByAgentUid: sanitizeText(data.referredByAgentUid || "", 160),
+    referredByAgentCode: normalizeCode(data.referredByAgentCode || ""),
+  };
+}
+
+async function awardAgentCommissionForClientWinTx(tx, options = {}) {
+  const playerUid = String(options.playerUid || "").trim();
+  const gameType = sanitizeText(options.gameType || "", 40);
+  const roomId = String(options.roomId || "").trim();
+  const stakeDoes = safeInt(options.stakeDoes);
+  const rewardDoes = safeInt(options.rewardDoes);
+  const wonAtMs = safeSignedInt(options.wonAtMs) || Date.now();
+
+  if (!playerUid || !gameType || !roomId || stakeDoes <= 0 || rewardDoes <= 0) {
+    return { awarded: false, reason: "invalid_context", commissionDoes: 0 };
+  }
+
+  const playerRef = walletRef(playerUid);
+  const playerSnap = await tx.get(playerRef);
+  if (!playerSnap.exists) {
+    return { awarded: false, reason: "player_not_found", commissionDoes: 0 };
+  }
+
+  const playerData = playerSnap.data() || {};
+  const agentUid = sanitizeText(playerData.referredByAgentUid || "", 160);
+  if (!agentUid) {
+    return { awarded: false, reason: "no_agent", commissionDoes: 0 };
+  }
+
+  const commissionDoes = getAgentCommissionDoesForWin(gameType, stakeDoes);
+  const targetAgentRef = agentRef(agentUid);
+  const monthKey = getMonthKeyFromMs(wonAtMs);
+  const ledgerId = buildAgentCommissionLedgerId(gameType, roomId, playerUid);
+  const ledgerRef = targetAgentRef.collection(AGENT_LEDGER_SUBCOLLECTION).doc(ledgerId);
+  const monthlyRef = targetAgentRef.collection(AGENT_MONTHLY_STATEMENTS_SUBCOLLECTION).doc(monthKey);
+
+  const [agentSnap, ledgerSnap, monthlySnap] = await Promise.all([
+    tx.get(targetAgentRef),
+    tx.get(ledgerRef),
+    tx.get(monthlyRef),
+  ]);
+
+  if (!agentSnap.exists) {
+    return { awarded: false, reason: "agent_not_found", commissionDoes: 0 };
+  }
+
+  const agentData = agentSnap.data() || {};
+  if (normalizeAgentStatus(agentData.status || "") !== "active") {
+    return { awarded: false, reason: "agent_inactive", commissionDoes: 0 };
+  }
+
+  if (ledgerSnap.exists) {
+    return { awarded: false, reason: "already_recorded", commissionDoes: safeInt((ledgerSnap.data() || {}).deltaDoes) };
+  }
+
+  const currentEarningsMonthKey = sanitizeText(agentData.currentEarningsMonthKey || "", 16);
+  const baseCurrentMonthEarnedDoes = currentEarningsMonthKey === monthKey
+    ? safeInt(agentData.currentMonthEarnedDoes)
+    : 0;
+  const nextCurrentMonthEarnedDoes = baseCurrentMonthEarnedDoes + commissionDoes;
+  const nextLifetimeEarnedDoes = safeInt(agentData.lifetimeEarnedDoes) + commissionDoes;
+  const nextWinsCount = safeInt(agentData.totalTrackedWins) + 1;
+  const monthlyData = monthlySnap.exists ? (monthlySnap.data() || {}) : {};
+
+  tx.set(targetAgentRef, {
+    currentMonthEarnedDoes: nextCurrentMonthEarnedDoes,
+    currentEarningsMonthKey: monthKey,
+    lifetimeEarnedDoes: nextLifetimeEarnedDoes,
+    totalTrackedWins: nextWinsCount,
+    updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+    updatedAtMs: wonAtMs,
+  }, { merge: true });
+
+  tx.set(monthlyRef, {
+    monthKey,
+    earnedDoes: safeInt(monthlyData.earnedDoes) + commissionDoes,
+    paidDoes: safeInt(monthlyData.paidDoes),
+    signupsCount: safeInt(monthlyData.signupsCount),
+    depositsCount: safeInt(monthlyData.depositsCount),
+    winsCount: safeInt(monthlyData.winsCount) + 1,
+    signupBudgetRemainingHtg: resolveAgentSignupBudgetRemainingHtg(agentData),
+    createdAt: monthlySnap.exists ? (monthlyData.createdAt || admin.firestore.FieldValue.serverTimestamp()) : admin.firestore.FieldValue.serverTimestamp(),
+    createdAtMs: safeSignedInt(monthlyData.createdAtMs) || wonAtMs,
+    updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+    updatedAtMs: wonAtMs,
+  }, { merge: true });
+
+  tx.set(ledgerRef, {
+    type: "game_commission",
+    label: `Commission ${gameType} gagne`,
+    deltaDoes: commissionDoes,
+    deltaHtg: 0,
+    monthKey,
+    createdAt: admin.firestore.FieldValue.serverTimestamp(),
+    createdAtMs: wonAtMs,
+    createdByUid: agentUid,
+    linkedClientUid: playerUid,
+    linkedRoomId: roomId,
+    linkedGameType: gameType,
+    linkedStakeDoes: stakeDoes,
+    linkedRewardDoes: rewardDoes,
+  }, { merge: true });
+
+  return {
+    awarded: commissionDoes > 0,
+    reason: commissionDoes > 0 ? "awarded" : "tracked_zero_commission",
+    commissionDoes,
+    agentUid,
+    monthKey,
+  };
+}
+
+async function trackAgentDepositApprovalTx(tx, options = {}) {
+  const clientUid = String(options.clientUid || "").trim();
+  const approvedAtMs = safeSignedInt(options.approvedAtMs) || Date.now();
+  const orderId = sanitizeText(options.orderId || "", 160);
+  const amountHtg = safeInt(options.amountHtg);
+
+  if (!clientUid) {
+    return { tracked: false, reason: "invalid_client" };
+  }
+
+  const clientRef = walletRef(clientUid);
+  const clientSnap = await tx.get(clientRef);
+  if (!clientSnap.exists) {
+    return { tracked: false, reason: "client_not_found" };
+  }
+
+  const clientData = clientSnap.data() || {};
+  const agentUid = sanitizeText(clientData.referredByAgentUid || "", 160);
+  if (!agentUid) {
+    return { tracked: false, reason: "no_agent" };
+  }
+  if (clientData.hasApprovedDeposit === true || safeSignedInt(clientData.agentFirstApprovedDepositTrackedAtMs) > 0) {
+    return { tracked: false, reason: "already_tracked", agentUid };
+  }
+
+  const targetAgentRef = agentRef(agentUid);
+  const monthKey = getMonthKeyFromMs(approvedAtMs);
+  const ledgerRef = targetAgentRef.collection(AGENT_LEDGER_SUBCOLLECTION).doc(buildAgentDepositLedgerId(clientUid));
+  const monthlyRef = targetAgentRef.collection(AGENT_MONTHLY_STATEMENTS_SUBCOLLECTION).doc(monthKey);
+
+  const [agentSnap, ledgerSnap, monthlySnap] = await Promise.all([
+    tx.get(targetAgentRef),
+    tx.get(ledgerRef),
+    tx.get(monthlyRef),
+  ]);
+
+  if (!agentSnap.exists) {
+    return { tracked: false, reason: "agent_not_found", agentUid };
+  }
+  if (ledgerSnap.exists) {
+    return { tracked: false, reason: "already_recorded", agentUid };
+  }
+
+  const agentData = agentSnap.data() || {};
+  const monthlyData = monthlySnap.exists ? (monthlySnap.data() || {}) : {};
+  const nextDepositsCount = safeInt(agentData.totalTrackedDeposits) + 1;
+
+  tx.set(clientRef, {
+    agentFirstApprovedDepositTrackedAtMs: approvedAtMs,
+    agentFirstApprovedDepositTrackedOrderId: orderId,
+    updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+  }, { merge: true });
+
+  tx.set(targetAgentRef, {
+    totalTrackedDeposits: nextDepositsCount,
+    updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+    updatedAtMs: approvedAtMs,
+  }, { merge: true });
+
+  tx.set(monthlyRef, {
+    monthKey,
+    earnedDoes: safeInt(monthlyData.earnedDoes),
+    paidDoes: safeInt(monthlyData.paidDoes),
+    signupsCount: safeInt(monthlyData.signupsCount),
+    depositsCount: safeInt(monthlyData.depositsCount) + 1,
+    winsCount: safeInt(monthlyData.winsCount),
+    signupBudgetRemainingHtg: resolveAgentSignupBudgetRemainingHtg(agentData),
+    createdAt: monthlySnap.exists ? (monthlyData.createdAt || admin.firestore.FieldValue.serverTimestamp()) : admin.firestore.FieldValue.serverTimestamp(),
+    createdAtMs: safeSignedInt(monthlyData.createdAtMs) || approvedAtMs,
+    updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+    updatedAtMs: approvedAtMs,
+  }, { merge: true });
+
+  tx.set(ledgerRef, {
+    type: "deposit_tracked",
+    label: "Premier depot approuve d'un filleul",
+    deltaDoes: 0,
+    deltaHtg: 0,
+    monthKey,
+    createdAt: admin.firestore.FieldValue.serverTimestamp(),
+    createdAtMs: approvedAtMs,
+    createdByUid: agentUid,
+    linkedClientUid: clientUid,
+    linkedOrderId: orderId,
+    linkedAmountHtg: amountHtg,
+  }, { merge: true });
+
+  return {
+    tracked: true,
+    reason: "tracked",
+    agentUid,
+    monthKey,
+  };
+}
+
 async function findClientByReferralCode(code) {
   const normalized = normalizeCode(code);
   if (!normalized) return null;
@@ -1482,6 +1919,16 @@ async function findAmbassadorByCode(code) {
   if (!promoSnap.empty) return promoSnap.docs[0];
   if (!linkSnap.empty) return linkSnap.docs[0];
   return null;
+}
+
+async function findAgentByPromoCode(code) {
+  const normalized = normalizeCode(code);
+  if (!normalized) return null;
+  const snap = await agentsCollection()
+    .where("promoCode", "==", normalized)
+    .limit(1)
+    .get();
+  return snap.empty ? null : snap.docs[0];
 }
 
 function deriveRootAmbassadorContext(sourceData = {}, directAmbassadorId = "") {
@@ -1761,12 +2208,131 @@ async function applyAmbassadorReferralAttribution(options = {}) {
   });
 }
 
+async function applyAgentPromoAttribution(options = {}) {
+  const uid = String(options.uid || "").trim();
+  const promoCode = normalizeCode(options.promoCode || "");
+  const via = String(options.via || "").toLowerCase() === "link" ? "link" : "promo";
+
+  if (!uid || !promoCode) {
+    return { applied: false, reason: "no_candidate" };
+  }
+
+  const agentSnap = await findAgentByPromoCode(promoCode);
+  if (!agentSnap || agentSnap.id === uid) {
+    return { applied: false, reason: "invalid_or_self" };
+  }
+
+  const agentData = agentSnap.data() || {};
+  if (normalizeAgentStatus(agentData.status || "") !== "active") {
+    return { applied: false, reason: "agent_inactive" };
+  }
+
+  const clientRef = walletRef(uid);
+  const targetAgentRef = agentRef(agentSnap.id);
+  const ledgerRef = targetAgentRef.collection(AGENT_LEDGER_SUBCOLLECTION).doc();
+  const nowMs = Date.now();
+  const monthKey = getMonthKeyFromMs(nowMs);
+  const monthlyRef = targetAgentRef.collection(AGENT_MONTHLY_STATEMENTS_SUBCOLLECTION).doc(monthKey);
+
+  return db.runTransaction(async (tx) => {
+    const [clientSnap, liveAgentSnap, monthlySnap] = await Promise.all([
+      tx.get(clientRef),
+      tx.get(targetAgentRef),
+      tx.get(monthlyRef),
+    ]);
+
+    if (!clientSnap.exists) {
+      return { applied: false, reason: "client_not_found" };
+    }
+    if (!liveAgentSnap.exists || liveAgentSnap.id === uid) {
+      return { applied: false, reason: "invalid_or_self" };
+    }
+
+    const clientData = clientSnap.data() || {};
+    const liveAgentData = liveAgentSnap.data() || {};
+    const monthlyData = monthlySnap.exists ? (monthlySnap.data() || {}) : {};
+    if (
+      clientData.referredByType
+      || clientData.referredByUserId
+      || clientData.referredByAmbassadorId
+      || clientData.referredByAgentUid
+    ) {
+      return { applied: false, reason: "already_set" };
+    }
+    if (normalizeCode(clientData.referralCode || "") === promoCode) {
+      return { applied: false, reason: "invalid_or_self" };
+    }
+    if (normalizeAgentStatus(liveAgentData.status || "") !== "active") {
+      return { applied: false, reason: "agent_inactive" };
+    }
+
+    const remainingBefore = resolveAgentSignupBudgetRemainingHtg(liveAgentData);
+    const remainingAfter = Math.max(0, remainingBefore - WELCOME_BONUS_HTG_AMOUNT);
+
+    tx.set(clientRef, {
+      referredByType: "agent",
+      referredByCode: promoCode,
+      referredVia: via,
+      referredAt: admin.firestore.FieldValue.serverTimestamp(),
+      referredByAgentUid: liveAgentSnap.id,
+      referredByAgentCode: promoCode,
+      updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+    }, { merge: true });
+
+    tx.set(targetAgentRef, {
+      totalTrackedSignups: safeInt(liveAgentData.totalTrackedSignups) + 1,
+      signupBudgetRemainingHtg: remainingAfter,
+      updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      updatedAtMs: nowMs,
+    }, { merge: true });
+
+    tx.set(monthlyRef, {
+      monthKey,
+      earnedDoes: safeInt(monthlyData.earnedDoes),
+      paidDoes: safeInt(monthlyData.paidDoes),
+      signupsCount: safeInt(monthlyData.signupsCount) + 1,
+      depositsCount: safeInt(monthlyData.depositsCount),
+      winsCount: safeInt(monthlyData.winsCount),
+      signupBudgetRemainingHtg: remainingAfter,
+      createdAt: monthlySnap.exists ? (monthlyData.createdAt || admin.firestore.FieldValue.serverTimestamp()) : admin.firestore.FieldValue.serverTimestamp(),
+      createdAtMs: safeSignedInt(monthlyData.createdAtMs) || nowMs,
+      updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      updatedAtMs: nowMs,
+    }, { merge: true });
+
+    tx.set(ledgerRef, {
+      type: "signup_cost",
+      label: "Bonus inscription rattache a un agent",
+      deltaDoes: 0,
+      deltaHtg: -WELCOME_BONUS_HTG_AMOUNT,
+      monthKey,
+      createdAt: admin.firestore.FieldValue.serverTimestamp(),
+      createdAtMs: nowMs,
+      createdByUid: liveAgentSnap.id,
+      linkedClientUid: uid,
+      linkedPromoCode: promoCode,
+      signupBudgetRemainingHtg: remainingAfter,
+    }, { merge: true });
+
+    return {
+      applied: true,
+      targetType: "agent",
+      targetId: liveAgentSnap.id,
+      code: promoCode,
+      via,
+    };
+  });
+}
+
 async function applyPromoAttribution(options = {}) {
   const promoCode = normalizeCode(options.promoCode || "");
   if (!promoCode) {
     return { applied: false, reason: "no_candidate" };
   }
 
+  if (promoCode.startsWith(AGENT_PROMO_PREFIX)) {
+    return applyAgentPromoAttribution(options);
+  }
   if (promoCode.startsWith(USER_REFERRAL_PREFIX)) {
     return applyUserReferralAttribution(options);
   }
@@ -1780,8 +2346,11 @@ async function applyPromoAttribution(options = {}) {
   const userAttempt = await applyUserReferralAttribution(options);
   if (userAttempt.applied) return userAttempt;
 
+  const agentAttempt = await applyAgentPromoAttribution(options);
+  if (agentAttempt.applied) return agentAttempt;
+
   if (!AMBASSADOR_SYSTEM_ENABLED) {
-    return userAttempt;
+    return agentAttempt.reason === "no_candidate" ? userAttempt : agentAttempt;
   }
 
   const ambassadorAttempt = await applyAmbassadorReferralAttribution(options);
@@ -10102,6 +10671,14 @@ exports.claimWinReward = publicOnCall("claimWinReward", async (request) => {
       deltaDoes: rewardAmountDoes,
       deltaExchangedGourdes: 0,
     });
+    const agentCommission = await awardAgentCommissionForClientWinTx(tx, {
+      playerUid: uid,
+      gameType: "domino_classic",
+      roomId,
+      stakeDoes: safeInt(room.entryCostDoes || room.stakeDoes),
+      rewardDoes: rewardAmountDoes,
+      wonAtMs: Date.now(),
+    });
     console.log("[BALANCE_DEBUG][FUNCTIONS][claimWinReward] wallet mutation", JSON.stringify({
       uid,
       roomId,
@@ -10128,6 +10705,7 @@ exports.claimWinReward = publicOnCall("claimWinReward", async (request) => {
       does: walletMutation.afterDoes,
       approvedRewardDoes,
       provisionalRewardDoes,
+      agentCommissionDoes: safeInt(agentCommission.commissionDoes),
     };
   });
 
@@ -12741,6 +13319,14 @@ exports.claimWinRewardMorpion = publicOnCall("claimWinRewardMorpion", async (req
       deltaDoes: rewardAmountDoes,
       deltaExchangedGourdes: 0,
     });
+    const agentCommission = await awardAgentCommissionForClientWinTx(tx, {
+      playerUid: uid,
+      gameType: "morpion",
+      roomId,
+      stakeDoes: safeInt(room.entryCostDoes || room.stakeDoes),
+      rewardDoes: rewardAmountDoes,
+      wonAtMs: Date.now(),
+    });
 
     tx.set(settlementRef, {
       uid,
@@ -12756,6 +13342,7 @@ exports.claimWinRewardMorpion = publicOnCall("claimWinRewardMorpion", async (req
       rewardGranted: true,
       rewardAmountDoes,
       does: walletMutation.afterDoes,
+      agentCommissionDoes: safeInt(agentCommission.commissionDoes),
     };
   });
 
@@ -13782,6 +14369,14 @@ exports.claimWinRewardDuel = publicOnCall("claimWinRewardDuel", async (request) 
       deltaDoes: rewardAmountDoes,
       deltaExchangedGourdes: 0,
     });
+    const agentCommission = await awardAgentCommissionForClientWinTx(tx, {
+      playerUid: uid,
+      gameType: "domino_duel",
+      roomId,
+      stakeDoes: safeInt(room.entryCostDoes || room.stakeDoes),
+      rewardDoes: rewardAmountDoes,
+      wonAtMs: Date.now(),
+    });
 
     tx.set(settlementRef, {
       uid,
@@ -13799,6 +14394,7 @@ exports.claimWinRewardDuel = publicOnCall("claimWinRewardDuel", async (request) 
       does: walletMutation.afterDoes,
       approvedRewardDoes,
       provisionalRewardDoes,
+      agentCommissionDoes: safeInt(agentCommission.commissionDoes),
     };
   });
 
@@ -15389,6 +15985,146 @@ exports.getDepositMethodAnalyticsSnapshot = publicOnCall(
   { invoker: "public" }
 );
 
+async function grantWelcomeBonusForClient(options = {}) {
+  const uid = String(options.uid || "").trim();
+  const email = sanitizeEmail(options.email || "", 160);
+  const customerName = sanitizeText(options.customerName || "", 120);
+  const customerPhone = sanitizePhone(options.customerPhone || "", 40);
+  const depositorPhone = sanitizePhone(options.depositorPhone || "", 40);
+  const proofRef = sanitizeText(options.proofRef || "auto-signup-bonus", 180) || "auto-signup-bonus";
+  const methodId = sanitizeText(options.methodId || "welcome_bonus", 120) || "welcome_bonus";
+  const metadata = options.metadata && typeof options.metadata === "object" ? options.metadata : {};
+
+  if (!uid) {
+    return { granted: false, reason: "invalid_uid" };
+  }
+
+  const nowIso = new Date().toISOString();
+  const nowMs = Date.now();
+  const orderRef = db.collection(CLIENTS_COLLECTION).doc(uid).collection("orders").doc();
+
+  return db.runTransaction(async (tx) => {
+    const [walletSnap, ordersSnap, withdrawalsSnap, xchangesSnap] = await Promise.all([
+      tx.get(walletRef(uid)),
+      tx.get(db.collection(CLIENTS_COLLECTION).doc(uid).collection("orders")),
+      tx.get(db.collection(CLIENTS_COLLECTION).doc(uid).collection("withdrawals")),
+      tx.get(walletHistoryRef(uid)),
+    ]);
+
+    const walletData = walletSnap.exists ? (walletSnap.data() || {}) : {};
+    if (!walletSnap.exists) {
+      return { granted: false, reason: "client_not_found" };
+    }
+    assertWalletNotFrozen(walletData);
+
+    const existingOrders = ordersSnap.docs.map((item) => ({ id: item.id, ...(item.data() || {}) }));
+    const existingWithdrawals = withdrawalsSnap.docs.map((item) => item.data() || {});
+    const existingXchanges = xchangesSnap.docs.map((item) => item.data() || {});
+    const alreadyClaimed = walletData.welcomeBonusClaimed === true
+      || safeSignedInt(walletData.welcomeBonusReceivedAtMs) > 0
+      || !!String(walletData.welcomeBonusOrderId || "").trim()
+      || hasWelcomeBonusOrder(existingOrders);
+
+    if (alreadyClaimed) {
+      return { granted: false, reason: "already-claimed" };
+    }
+
+    const nextWallet = {
+      uid,
+      email: sanitizeEmail(email || walletData.email || "", 160),
+      name: customerName || sanitizeText(walletData.name || String(email || "").split("@")[0] || "Player", 80),
+      phone: customerPhone || sanitizePhone(walletData.phone || ""),
+      welcomeBonusClaimed: true,
+      welcomeBonusOrderId: orderRef.id,
+      welcomeBonusReceivedAtMs: nowMs,
+      welcomeBonusHtgAvailable: safeInt(walletData.welcomeBonusHtgAvailable) + WELCOME_BONUS_HTG_AMOUNT,
+      welcomeBonusHtgConverted: safeInt(walletData.welcomeBonusHtgConverted),
+      welcomeBonusHtgPlayed: safeInt(walletData.welcomeBonusHtgPlayed),
+      pendingPlayFromWelcomeDoes: safeInt(walletData.pendingPlayFromWelcomeDoes),
+      signupBonusAutoGrantedAtMs: safeInt(metadata.signupBonusAutoGrantedAtMs) || nowMs,
+      signupBonusAutoGrantedHtg: safeInt(metadata.signupBonusAutoGrantedHtg) || WELCOME_BONUS_HTG_AMOUNT,
+      updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      lastSeenAt: admin.firestore.FieldValue.serverTimestamp(),
+      lastSeenAtMs: nowMs,
+    };
+
+    const welcomeOrder = {
+      uid,
+      clientId: uid,
+      clientUid: uid,
+      amount: WELCOME_BONUS_HTG_AMOUNT,
+      approvedAmountHtg: WELCOME_BONUS_HTG_AMOUNT,
+      methodId,
+      methodName: methodId === "signup_bonus_auto" ? "Bonus inscription" : "Bonus bienvenue",
+      orderType: WELCOME_BONUS_ORDER_TYPE,
+      kind: WELCOME_BONUS_ORDER_TYPE,
+      isWelcomeBonus: true,
+      autoApproved: true,
+      countsAsCashIn: false,
+      countsAsApprovedDeposit: false,
+      countsForReferral: false,
+      countsForDepositBonus: false,
+      excludeFromProfit: true,
+      customerName: nextWallet.name,
+      customerEmail: nextWallet.email,
+      customerPhone: nextWallet.phone,
+      depositorPhone,
+      proofRef,
+      status: "approved",
+      resolutionStatus: "approved",
+      rejectedReason: "",
+      createdAtMs: nowMs,
+      createdAt: nowIso,
+      updatedAtMs: nowMs,
+      updatedAt: nowIso,
+      resolvedAtMs: nowMs,
+      approvedAtMs: nowMs,
+      deviceId: sanitizeText(walletData.deviceId || "", 120),
+      appVersion: sanitizeText(walletData.appVersion || "", 48),
+      country: sanitizeText(walletData.country || "", 48),
+      browser: sanitizeText(walletData.browser || "", 120),
+      ipHash: sanitizeText(walletData.ipHash || "", 64),
+      utmSource: sanitizeText(walletData.utmSource || "", 80),
+      utmCampaign: sanitizeText(walletData.utmCampaign || "", 120),
+      landingPage: sanitizeText(walletData.landingPage || "", 240),
+      creativeId: sanitizeText(walletData.creativeId || "", 120),
+      uniqueCode: `WBON-${crypto.randomBytes(3).toString("hex").toUpperCase()}-${Date.now().toString(36).toUpperCase()}`,
+    };
+
+    const fundingSnapshot = buildWalletFundingSnapshot({
+      orders: [
+        ...existingOrders,
+        welcomeOrder,
+      ],
+      withdrawals: existingWithdrawals,
+      walletData: nextWallet,
+      exchangeHistory: existingXchanges,
+    });
+
+    tx.set(orderRef, welcomeOrder, { merge: true });
+    tx.set(walletRef(uid), {
+      ...buildFundingWalletPatch(fundingSnapshot),
+      welcomeBonusClaimed: true,
+      welcomeBonusOrderId: orderRef.id,
+      welcomeBonusReceivedAtMs: nowMs,
+      pendingPlayFromWelcomeDoes: safeInt(nextWallet.pendingPlayFromWelcomeDoes),
+      signupBonusAutoGrantedAtMs: safeInt(nextWallet.signupBonusAutoGrantedAtMs),
+      signupBonusAutoGrantedHtg: safeInt(nextWallet.signupBonusAutoGrantedHtg),
+      updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      lastSeenAt: admin.firestore.FieldValue.serverTimestamp(),
+      lastSeenAtMs: nowMs,
+    }, { merge: true });
+
+    return {
+      granted: true,
+      reason: "granted",
+      orderId: orderRef.id,
+      welcomeBonusHtgGranted: WELCOME_BONUS_HTG_AMOUNT,
+      fundingSnapshot,
+    };
+  });
+}
+
 exports.updateClientProfileSecure = publicOnCall("updateClientProfileSecure", async (request) => {
   const { uid, email } = assertAuth(request);
   const payload = request.data && typeof request.data === "object" ? request.data : {};
@@ -15402,6 +16138,7 @@ exports.updateClientProfileSecure = publicOnCall("updateClientProfileSecure", as
   const referralSource = String(payload.referralSource || "").toLowerCase() === "link" ? "link" : "promo";
   const welcomeBonusPromptStatusInput = normalizeWelcomeBonusPromptStatus(payload.welcomeBonusPromptStatus || "");
   const completeWelcomeBonusTutorial = payload.welcomeBonusTutorialCompleted === true;
+  const markSignupBonusModalSeen = payload.signupBonusModalSeen === true;
   const context = sanitizeAnalyticsContext(payload, request);
   const ref = walletRef(uid);
   const snap = await ref.get();
@@ -15419,6 +16156,7 @@ exports.updateClientProfileSecure = publicOnCall("updateClientProfileSecure", as
   let nextWelcomeBonusPromptAnsweredAtMs = currentWelcomeBonusPromptAnsweredAtMs;
   let nextWelcomeBonusProofCode = sanitizeText(current.welcomeBonusProofCode || "", 80).toUpperCase();
   let nextWelcomeBonusTutorialCompletedAtMs = safeInt(current.welcomeBonusTutorialCompletedAtMs);
+  let nextSignupBonusModalSeenAtMs = safeSignedInt(current.signupBonusModalSeenAtMs);
   if (
     (welcomeBonusPromptStatusInput === "accepted" || welcomeBonusPromptStatusInput === "declined")
     && nextWelcomeBonusPromptStatus !== "accepted"
@@ -15434,6 +16172,9 @@ exports.updateClientProfileSecure = publicOnCall("updateClientProfileSecure", as
   }
   if (completeWelcomeBonusTutorial && nextWelcomeBonusTutorialCompletedAtMs <= 0) {
     nextWelcomeBonusTutorialCompletedAtMs = Date.now();
+  }
+  if (markSignupBonusModalSeen && nextSignupBonusModalSeenAtMs <= 0) {
+    nextSignupBonusModalSeenAtMs = Date.now();
   }
 
   const profile = {
@@ -15459,6 +16200,7 @@ exports.updateClientProfileSecure = publicOnCall("updateClientProfileSecure", as
     welcomeBonusPromptAnsweredAtMs: nextWelcomeBonusPromptAnsweredAtMs,
     welcomeBonusProofCode: nextWelcomeBonusProofCode,
     welcomeBonusTutorialCompletedAtMs: nextWelcomeBonusTutorialCompletedAtMs,
+    signupBonusModalSeenAtMs: nextSignupBonusModalSeenAtMs,
     lastSeenAt: admin.firestore.FieldValue.serverTimestamp(),
     lastSeenAtMs: Date.now(),
     lastAuthAt: admin.firestore.FieldValue.serverTimestamp(),
@@ -15479,6 +16221,9 @@ exports.updateClientProfileSecure = publicOnCall("updateClientProfileSecure", as
     profile.welcomeBonusHtgAvailable = safeInt(current.welcomeBonusHtgAvailable);
     profile.welcomeBonusHtgConverted = safeInt(current.welcomeBonusHtgConverted);
     profile.welcomeBonusHtgPlayed = safeInt(current.welcomeBonusHtgPlayed);
+    profile.signupBonusAutoGrantedAtMs = safeInt(current.signupBonusAutoGrantedAtMs);
+    profile.signupBonusAutoGrantedHtg = safeInt(current.signupBonusAutoGrantedHtg);
+    profile.signupBonusModalSeenAtMs = nextSignupBonusModalSeenAtMs;
     profile.referralSignupsTotal = safeInt(current.referralSignupsTotal);
     profile.referralSignupsViaLink = safeInt(current.referralSignupsViaLink);
     profile.referralSignupsViaCode = safeInt(current.referralSignupsViaCode);
@@ -15493,6 +16238,11 @@ exports.updateClientProfileSecure = publicOnCall("updateClientProfileSecure", as
     if (typeof current.welcomeBonusHtgAvailable !== "number") profile.welcomeBonusHtgAvailable = safeInt(current.welcomeBonusHtgAvailable);
     if (typeof current.welcomeBonusHtgConverted !== "number") profile.welcomeBonusHtgConverted = safeInt(current.welcomeBonusHtgConverted);
     if (typeof current.welcomeBonusHtgPlayed !== "number") profile.welcomeBonusHtgPlayed = safeInt(current.welcomeBonusHtgPlayed);
+    if (typeof current.signupBonusAutoGrantedAtMs !== "number") profile.signupBonusAutoGrantedAtMs = safeInt(current.signupBonusAutoGrantedAtMs);
+    if (typeof current.signupBonusAutoGrantedHtg !== "number") profile.signupBonusAutoGrantedHtg = safeInt(current.signupBonusAutoGrantedHtg);
+    if (typeof current.signupBonusModalSeenAtMs !== "number" || nextSignupBonusModalSeenAtMs > 0) {
+      profile.signupBonusModalSeenAtMs = nextSignupBonusModalSeenAtMs;
+    }
     if (current.welcomeBonusClaimed !== true) profile.welcomeBonusClaimed = false;
     if (!current.welcomeBonusOrderId) profile.welcomeBonusOrderId = sanitizeText(current.welcomeBonusOrderId || "", 160);
   }
@@ -15506,6 +16256,23 @@ exports.updateClientProfileSecure = publicOnCall("updateClientProfileSecure", as
       email,
       promoCode,
       via: referralSource,
+    });
+  }
+
+  let signupBonusGrant = { granted: false, reason: "already-claimed" };
+  if (isNewProfile) {
+    signupBonusGrant = await grantWelcomeBonusForClient({
+      uid,
+      email,
+      methodId: "signup_bonus_auto",
+      customerName: profile.name,
+      customerPhone: profile.phone,
+      depositorPhone: profile.phone,
+      proofRef: "auto-signup-bonus",
+      metadata: {
+        signupBonusAutoGrantedAtMs: Date.now(),
+        signupBonusAutoGrantedHtg: WELCOME_BONUS_HTG_AMOUNT,
+      },
     });
   }
 
@@ -15527,14 +16294,21 @@ exports.updateClientProfileSecure = publicOnCall("updateClientProfileSecure", as
       referralDepositsTotal: safeInt(finalProfile.referralDepositsTotal),
       referredByType: sanitizeText(finalProfile.referredByType || "", 20),
       referredByCode: normalizeCode(finalProfile.referredByCode || ""),
+      referredByAgentUid: sanitizeText(finalProfile.referredByAgentUid || "", 160),
+      referredByAgentCode: normalizeCode(finalProfile.referredByAgentCode || ""),
       welcomeBonusPromptStatus: normalizeWelcomeBonusPromptStatus(finalProfile.welcomeBonusPromptStatus || profile.welcomeBonusPromptStatus || ""),
       welcomeBonusPromptAnsweredAtMs: safeInt(finalProfile.welcomeBonusPromptAnsweredAtMs || profile.welcomeBonusPromptAnsweredAtMs),
       welcomeBonusProofCode: sanitizeText(finalProfile.welcomeBonusProofCode || profile.welcomeBonusProofCode || "", 80).toUpperCase(),
       welcomeBonusTutorialCompletedAtMs: safeInt(finalProfile.welcomeBonusTutorialCompletedAtMs || profile.welcomeBonusTutorialCompletedAtMs),
+      signupBonusAutoGrantedAtMs: safeInt(finalProfile.signupBonusAutoGrantedAtMs || profile.signupBonusAutoGrantedAtMs),
+      signupBonusAutoGrantedHtg: safeInt(finalProfile.signupBonusAutoGrantedHtg || profile.signupBonusAutoGrantedHtg),
+      signupBonusModalSeenAtMs: safeInt(finalProfile.signupBonusModalSeenAtMs || profile.signupBonusModalSeenAtMs),
       updatedAt: new Date().toISOString(),
     },
     referralApplied: referralBootstrap.applied === true,
     referralReason: String(referralBootstrap.reason || ""),
+    signupBonusGranted: signupBonusGrant.granted === true,
+    signupBonusReason: String(signupBonusGrant.reason || ""),
   };
 }, { minInstances: 1 });
 
@@ -15837,145 +16611,43 @@ exports.claimWelcomeBonusSecure = publicOnCall("claimWelcomeBonusSecure", async 
   const depositorPhone = sanitizePhone(payload.depositorPhone || "", 40);
   const proofRef = sanitizeText(payload.proofRef || "", 180);
   const methodId = sanitizeText(payload.methodId || "welcome_bonus", 120) || "welcome_bonus";
-  const nowIso = new Date().toISOString();
-  const nowMs = Date.now();
-  const orderRef = db.collection(CLIENTS_COLLECTION).doc(uid).collection("orders").doc();
 
   if (!proofRef) {
     throw new HttpsError("invalid-argument", "Preuve bienvenue requise.");
   }
 
-  return db.runTransaction(async (tx) => {
-    const [walletSnap, ordersSnap, withdrawalsSnap, xchangesSnap] = await Promise.all([
-      tx.get(walletRef(uid)),
-      tx.get(db.collection(CLIENTS_COLLECTION).doc(uid).collection("orders")),
-      tx.get(db.collection(CLIENTS_COLLECTION).doc(uid).collection("withdrawals")),
-      tx.get(walletHistoryRef(uid)),
-    ]);
-
-    const walletData = walletSnap.exists ? (walletSnap.data() || {}) : {};
-    assertWalletNotFrozen(walletData);
-
-    const existingOrders = ordersSnap.docs.map((item) => ({ id: item.id, ...(item.data() || {}) }));
-    const existingWithdrawals = withdrawalsSnap.docs.map((item) => item.data() || {});
-    const existingXchanges = xchangesSnap.docs.map((item) => item.data() || {});
-    const fundingSnapshotBefore = buildWalletFundingSnapshot({
-      orders: existingOrders,
-      withdrawals: existingWithdrawals,
-      walletData,
-      exchangeHistory: existingXchanges,
-    });
-    const eligibility = resolveWelcomeBonusEligibility({
-      walletData,
-      orders: existingOrders,
-      fundingSnapshot: fundingSnapshotBefore,
-    });
-    if (!eligibility.eligible) {
-      throw new HttpsError(
-        "failed-precondition",
-        eligibility.reason === "already-claimed"
-          ? "Bonus bienvenue déjà réclamé."
-          : "Ce compte n'est pas éligible au bonus de bienvenue.",
-        {
-          code: eligibility.reason === "already-claimed"
-            ? "welcome-bonus-already-claimed"
-            : "welcome-bonus-not-eligible",
-          reason: eligibility.reason,
-          launchAtMs: eligibility.launchAtMs,
-        }
-      );
-    }
-
-    const nextWallet = {
-      uid,
-      email: sanitizeEmail(email || walletData.email || "", 160),
-      name: customerName || sanitizeText(walletData.name || String(email || "").split("@")[0] || "Player", 80),
-      phone: customerPhone || sanitizePhone(walletData.phone || ""),
-      welcomeBonusClaimed: true,
-      welcomeBonusOrderId: orderRef.id,
-      welcomeBonusReceivedAtMs: nowMs,
-      welcomeBonusHtgAvailable: safeInt(walletData.welcomeBonusHtgAvailable) + WELCOME_BONUS_HTG_AMOUNT,
-      welcomeBonusHtgConverted: safeInt(walletData.welcomeBonusHtgConverted),
-      welcomeBonusHtgPlayed: safeInt(walletData.welcomeBonusHtgPlayed),
-      pendingPlayFromWelcomeDoes: safeInt(walletData.pendingPlayFromWelcomeDoes),
-      updatedAt: admin.firestore.FieldValue.serverTimestamp(),
-      lastSeenAt: admin.firestore.FieldValue.serverTimestamp(),
-      lastSeenAtMs: nowMs,
-    };
-
-    const welcomeOrder = {
-      uid,
-      clientId: uid,
-      clientUid: uid,
-      amount: WELCOME_BONUS_HTG_AMOUNT,
-      approvedAmountHtg: WELCOME_BONUS_HTG_AMOUNT,
-      methodId,
-      methodName: "Bonus bienvenue",
-      orderType: WELCOME_BONUS_ORDER_TYPE,
-      kind: WELCOME_BONUS_ORDER_TYPE,
-      isWelcomeBonus: true,
-      autoApproved: true,
-      countsAsCashIn: false,
-      countsAsApprovedDeposit: false,
-      countsForReferral: false,
-      countsForDepositBonus: false,
-      excludeFromProfit: true,
-      customerName: nextWallet.name,
-      customerEmail: nextWallet.email,
-      customerPhone: nextWallet.phone,
-      depositorPhone,
-      proofRef,
-      status: "approved",
-      resolutionStatus: "approved",
-      rejectedReason: "",
-      createdAtMs: nowMs,
-      createdAt: nowIso,
-      updatedAtMs: nowMs,
-      updatedAt: nowIso,
-      resolvedAtMs: nowMs,
-      approvedAtMs: nowMs,
-      deviceId: sanitizeText(walletData.deviceId || "", 120),
-      appVersion: sanitizeText(walletData.appVersion || "", 48),
-      country: sanitizeText(walletData.country || "", 48),
-      browser: sanitizeText(walletData.browser || "", 120),
-      ipHash: sanitizeText(walletData.ipHash || "", 64),
-      utmSource: sanitizeText(walletData.utmSource || "", 80),
-      utmCampaign: sanitizeText(walletData.utmCampaign || "", 120),
-      landingPage: sanitizeText(walletData.landingPage || "", 240),
-      creativeId: sanitizeText(walletData.creativeId || "", 120),
-      uniqueCode: `WBON-${crypto.randomBytes(3).toString("hex").toUpperCase()}-${Date.now().toString(36).toUpperCase()}`,
-    };
-
-    const fundingSnapshot = buildWalletFundingSnapshot({
-      orders: [
-        ...existingOrders,
-        welcomeOrder,
-      ],
-      withdrawals: existingWithdrawals,
-      walletData: nextWallet,
-      exchangeHistory: existingXchanges,
-    });
-
-    tx.set(orderRef, welcomeOrder, { merge: true });
-    tx.set(walletRef(uid), {
-      ...buildFundingWalletPatch(fundingSnapshot),
-      welcomeBonusClaimed: true,
-      welcomeBonusOrderId: orderRef.id,
-      welcomeBonusReceivedAtMs: nowMs,
-      pendingPlayFromWelcomeDoes: safeInt(nextWallet.pendingPlayFromWelcomeDoes),
-      updatedAt: admin.firestore.FieldValue.serverTimestamp(),
-      lastSeenAt: admin.firestore.FieldValue.serverTimestamp(),
-      lastSeenAtMs: nowMs,
-    }, { merge: true });
-
-    return {
-      ok: true,
-      orderId: orderRef.id,
-      welcomeBonusHtgGranted: WELCOME_BONUS_HTG_AMOUNT,
-      welcomeBonusClaimed: true,
-      ...fundingSnapshot,
-    };
+  const result = await grantWelcomeBonusForClient({
+    uid,
+    email,
+    customerName,
+    customerPhone,
+    depositorPhone,
+    proofRef,
+    methodId,
   });
+
+  if (result.granted !== true) {
+    throw new HttpsError(
+      "failed-precondition",
+      result.reason === "already-claimed"
+        ? "Bonus bienvenue déjà réclamé."
+        : "Ce compte n'est pas éligible au bonus de bienvenue.",
+      {
+        code: result.reason === "already-claimed"
+          ? "welcome-bonus-already-claimed"
+          : "welcome-bonus-not-eligible",
+        reason: result.reason,
+      }
+    );
+  }
+
+  return {
+    ok: true,
+    orderId: String(result.orderId || ""),
+    welcomeBonusHtgGranted: WELCOME_BONUS_HTG_AMOUNT,
+    welcomeBonusClaimed: true,
+    ...(result.fundingSnapshot || {}),
+  };
 });
 
 exports.notifyDashboardClientCreated = onDocumentCreated(`${CLIENTS_COLLECTION}/{clientId}`, async (event) => {
@@ -16753,6 +17425,13 @@ exports.creditAgentDepositSecure = publicOnCall(
         lastSeenAtMs: nowMs,
       }, { merge: true });
 
+      await trackAgentDepositApprovalTx(tx, {
+        clientUid: clientId,
+        approvedAtMs: nowMs,
+        orderId: orderRef.id,
+        amountHtg,
+      });
+
       return {
         ok: true,
         orderId: orderRef.id,
@@ -16767,6 +17446,703 @@ exports.creditAgentDepositSecure = publicOnCall(
     });
 
     return result;
+  },
+  { invoker: "public" }
+);
+
+exports.searchAgentCandidatesSecure = publicOnCall(
+  "searchAgentCandidatesSecure",
+  async (request) => {
+    assertFinanceAdmin(request);
+    const payload = request.data && typeof request.data === "object" ? request.data : {};
+    const rawQuery = sanitizeText(payload.query || "", 160);
+    const normalizedQuery = normalizeSearchText(rawQuery);
+    const queryDigits = phoneDigits(rawQuery);
+    const queryUsername = sanitizeUsername(rawQuery || "", 24);
+    const queryEmail = sanitizeEmail(rawQuery || "", 160);
+    const results = new Map();
+
+    if (!rawQuery) {
+      return { ok: true, results: [] };
+    }
+
+    const addClientSnap = (docSnap) => {
+      if (!docSnap?.exists) return;
+      results.set(docSnap.id, buildAgentSearchRecord(docSnap.id, docSnap.data() || {}));
+    };
+
+    const addClientDocs = (snap) => {
+      (snap?.docs || []).forEach((docSnap) => addClientSnap(docSnap));
+    };
+
+    if (rawQuery.length >= 20 && /^[A-Za-z0-9_-]+$/.test(rawQuery)) {
+      addClientSnap(await walletRef(rawQuery).get());
+    }
+
+    const exactLookups = [];
+    if (queryEmail) {
+      exactLookups.push(
+        db.collection(CLIENTS_COLLECTION).where("email", "==", queryEmail).limit(6).get()
+      );
+    }
+    if (queryUsername) {
+      exactLookups.push(
+        db.collection(CLIENTS_COLLECTION).where("username", "==", queryUsername).limit(6).get()
+      );
+    }
+    if (queryDigits.length >= 8) {
+      const sanitizedPhone = sanitizePhone(rawQuery, 40);
+      exactLookups.push(
+        db.collection(CLIENTS_COLLECTION).where("phone", "==", sanitizedPhone).limit(6).get()
+      );
+    }
+
+    if (exactLookups.length) {
+      const exactSnaps = await Promise.allSettled(exactLookups);
+      exactSnaps.forEach((entry) => {
+        if (entry.status === "fulfilled") {
+          addClientDocs(entry.value);
+        }
+      });
+    }
+
+    if (results.size < AGENT_SEARCH_RESULT_LIMIT && normalizedQuery.length >= 2) {
+      let fallbackSnap = null;
+      try {
+        fallbackSnap = await db.collection(CLIENTS_COLLECTION)
+          .orderBy("lastSeenAtMs", "desc")
+          .limit(AGENT_DEPOSIT_SEARCH_FALLBACK_LIMIT)
+          .get();
+      } catch (_) {
+        fallbackSnap = await db.collection(CLIENTS_COLLECTION)
+          .limit(AGENT_DEPOSIT_SEARCH_FALLBACK_LIMIT)
+          .get();
+      }
+
+      (fallbackSnap?.docs || []).forEach((docSnap) => {
+        if (results.size >= AGENT_SEARCH_RESULT_LIMIT) return;
+        const raw = docSnap.data() || {};
+        const haystack = [
+          docSnap.id,
+          raw.uid,
+          raw.name,
+          raw.displayName,
+          raw.username,
+          raw.email,
+          raw.phone,
+        ]
+          .map((value) => normalizeSearchText(value))
+          .filter(Boolean)
+          .join(" ");
+
+        const phoneHaystack = phoneDigits(raw.phone || "");
+        const match = haystack.includes(normalizedQuery)
+          || (queryDigits.length >= 4 && phoneHaystack.includes(queryDigits));
+        if (match) {
+          addClientSnap(docSnap);
+        }
+      });
+    }
+
+    const sorted = Array.from(results.values())
+      .sort((left, right) =>
+        safeSignedInt(right.lastSeenAtMs) - safeSignedInt(left.lastSeenAtMs)
+        || safeSignedInt(right.createdAtMs) - safeSignedInt(left.createdAtMs)
+        || String(left.name || left.email || left.id).localeCompare(String(right.name || right.email || right.id), "fr")
+      )
+      .slice(0, AGENT_SEARCH_RESULT_LIMIT);
+
+    return {
+      ok: true,
+      query: rawQuery,
+      results: sorted,
+    };
+  },
+  { invoker: "public" }
+);
+
+exports.upsertAgentSecure = publicOnCall(
+  "upsertAgentSecure",
+  async (request) => {
+    const { uid: adminUid, email: adminEmail } = assertFinanceAdmin(request);
+    const payload = request.data && typeof request.data === "object" ? request.data : {};
+    const clientId = sanitizeText(payload.clientId || payload.uid || "", 160);
+    const requestedStatus = normalizeAgentStatus(payload.status || payload.agentStatus || "");
+    const manualPromoCode = normalizeCode(payload.promoCode || "");
+
+    if (!clientId) {
+      throw new HttpsError("invalid-argument", "Utilisateur introuvable.");
+    }
+
+    const clientRef = walletRef(clientId);
+    const targetAgentRef = agentRef(clientId);
+    const [clientSnap, existingAgentSnap] = await Promise.all([
+      clientRef.get(),
+      targetAgentRef.get(),
+    ]);
+
+    if (!clientSnap.exists) {
+      throw new HttpsError("not-found", "Compte client introuvable.");
+    }
+
+    const clientData = clientSnap.data() || {};
+    const existingAgentData = existingAgentSnap.exists ? (existingAgentSnap.data() || {}) : {};
+
+    if (manualPromoCode && await agentPromoCodeExists(manualPromoCode, clientId)) {
+      throw new HttpsError("already-exists", "Ce code agent existe déjà.");
+    }
+
+    let promoCode = manualPromoCode
+      || normalizeCode(existingAgentData.promoCode || clientData.agentPromoCode || "");
+    if (!promoCode) {
+      promoCode = await generateUniqueAgentPromoCode(clientId);
+    }
+
+    const nowMs = Date.now();
+    const existingDeclaredAtMs = safeSignedInt(existingAgentData.declaredAtMs || clientData.agentDeclaredAtMs);
+    const existingActivatedAtMs = safeSignedInt(existingAgentData.activatedAtMs || clientData.agentActivatedAtMs);
+    const declaredAtMs = existingDeclaredAtMs > 0 ? existingDeclaredAtMs : nowMs;
+    const activatedAtMs = requestedStatus === "active"
+      ? (existingActivatedAtMs > 0 ? existingActivatedAtMs : nowMs)
+      : existingActivatedAtMs;
+
+    await db.runTransaction(async (tx) => {
+      const [liveClientSnap, liveAgentSnap] = await Promise.all([
+        tx.get(clientRef),
+        tx.get(targetAgentRef),
+      ]);
+      if (!liveClientSnap.exists) {
+        throw new HttpsError("not-found", "Compte client introuvable.");
+      }
+
+      const liveClientData = liveClientSnap.data() || {};
+      const liveAgentData = liveAgentSnap.exists ? (liveAgentSnap.data() || {}) : {};
+      const wasActivatedAtMs = safeSignedInt(liveAgentData.activatedAtMs || liveClientData.agentActivatedAtMs);
+      const isFirstActivation = requestedStatus === "active" && wasActivatedAtMs <= 0;
+      const displayName = sanitizeText(
+        liveClientData.name
+        || liveClientData.displayName
+        || liveClientData.username
+        || String(liveClientData.email || "").split("@")[0]
+        || "Agent",
+        120
+      );
+      const nextInitialBudget = resolveAgentSignupBudgetInitialHtg(liveAgentData, liveClientData) > 0
+        ? resolveAgentSignupBudgetInitialHtg(liveAgentData, liveClientData)
+        : (isFirstActivation ? AGENT_INITIAL_SIGNUP_BUDGET_HTG : 0);
+      const nextRemainingBudget = isFirstActivation
+        ? AGENT_INITIAL_SIGNUP_BUDGET_HTG
+        : resolveAgentSignupBudgetRemainingHtg(liveAgentData, liveClientData);
+
+      tx.set(targetAgentRef, {
+        uid: clientId,
+        displayName,
+        status: requestedStatus,
+        promoCode,
+        createdAt: liveAgentSnap.exists ? liveAgentData.createdAt || admin.firestore.FieldValue.serverTimestamp() : admin.firestore.FieldValue.serverTimestamp(),
+        createdAtMs: safeSignedInt(liveAgentData.createdAtMs) || nowMs,
+        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+        updatedAtMs: nowMs,
+        declaredAtMs,
+        declaredByUid: sanitizeText(liveAgentData.declaredByUid || adminUid, 160) || adminUid,
+        declaredByEmail: sanitizeEmail(liveAgentData.declaredByEmail || adminEmail || "", 160),
+        activatedAtMs,
+        signupBudgetInitialHtg: nextInitialBudget,
+        signupBudgetRemainingHtg: nextRemainingBudget,
+        currentMonthEarnedDoes: safeInt(liveAgentData.currentMonthEarnedDoes),
+        currentEarningsMonthKey: sanitizeText(liveAgentData.currentEarningsMonthKey || "", 16),
+        lifetimeEarnedDoes: safeInt(liveAgentData.lifetimeEarnedDoes),
+        totalTrackedSignups: safeInt(liveAgentData.totalTrackedSignups),
+        totalTrackedDeposits: safeInt(liveAgentData.totalTrackedDeposits),
+        totalTrackedWins: safeInt(liveAgentData.totalTrackedWins),
+        totalTrackedLosses: safeInt(liveAgentData.totalTrackedLosses),
+        lastPayrollMonthKey: sanitizeText(liveAgentData.lastPayrollMonthKey || "", 16),
+      }, { merge: true });
+
+      if (isFirstActivation) {
+        tx.set(targetAgentRef.collection(AGENT_LEDGER_SUBCOLLECTION).doc("activation_credit"), {
+          type: "activation_credit",
+          label: "Credit initial budget agent",
+          deltaDoes: 0,
+          deltaHtg: AGENT_INITIAL_SIGNUP_BUDGET_HTG,
+          monthKey: getMonthKeyFromMs(nowMs),
+          createdAt: admin.firestore.FieldValue.serverTimestamp(),
+          createdAtMs: nowMs,
+          createdByUid: adminUid,
+          createdByEmail: sanitizeEmail(adminEmail || "", 160),
+          linkedAgentUid: clientId,
+          signupBudgetRemainingHtg: nextRemainingBudget,
+        }, { merge: true });
+      }
+
+      tx.set(clientRef, {
+        isAgent: true,
+        agentStatus: requestedStatus,
+        agentPromoCode: promoCode,
+        agentDashboardEnabled: true,
+        agentDeclaredAtMs: declaredAtMs,
+        agentDeclaredByUid: adminUid,
+        agentDeclaredByEmail: sanitizeEmail(adminEmail || "", 160),
+        agentActivatedAtMs: activatedAtMs,
+        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+        updatedAtMs: nowMs,
+      }, { merge: true });
+    });
+
+    const [finalClientSnap, finalAgentSnap] = await Promise.all([
+      clientRef.get(),
+      targetAgentRef.get(),
+    ]);
+
+    return {
+      ok: true,
+      agent: buildAgentProfileSummary(
+        clientId,
+        finalClientSnap.exists ? (finalClientSnap.data() || {}) : {},
+        finalAgentSnap.exists ? (finalAgentSnap.data() || {}) : {}
+      ),
+    };
+  },
+  { invoker: "public" }
+);
+
+exports.listAgentsSecure = publicOnCall(
+  "listAgentsSecure",
+  async (request) => {
+    assertFinanceAdmin(request);
+    const payload = request.data && typeof request.data === "object" ? request.data : {};
+    const statusFilter = String(payload.status || "all").trim().toLowerCase();
+    const rawQuery = sanitizeText(payload.query || "", 160);
+    const normalizedQuery = normalizeSearchText(rawQuery);
+
+    let agentsSnap = null;
+    try {
+      agentsSnap = await agentsCollection()
+        .orderBy("updatedAtMs", "desc")
+        .limit(AGENT_LIST_LIMIT)
+        .get();
+    } catch (_) {
+      agentsSnap = await agentsCollection()
+        .limit(AGENT_LIST_LIMIT)
+        .get();
+    }
+
+    const agentDocs = agentsSnap?.docs || [];
+    const clientSnaps = await Promise.all(agentDocs.map((docSnap) => walletRef(docSnap.id).get()));
+
+    const items = agentDocs
+      .map((docSnap, index) => buildAgentProfileSummary(
+        docSnap.id,
+        clientSnaps[index]?.exists ? (clientSnaps[index].data() || {}) : {},
+        docSnap.data() || {}
+      ))
+      .filter((item) => {
+        if (statusFilter !== "all" && item.status !== statusFilter) return false;
+        if (!normalizedQuery) return true;
+        const haystack = [
+          item.uid,
+          item.displayName,
+          item.username,
+          item.email,
+          item.phone,
+          item.promoCode,
+        ]
+          .map((value) => normalizeSearchText(value))
+          .filter(Boolean)
+          .join(" ");
+        return haystack.includes(normalizedQuery);
+      })
+      .sort((left, right) =>
+        safeSignedInt(right.updatedAtMs) - safeSignedInt(left.updatedAtMs)
+        || safeSignedInt(right.activatedAtMs) - safeSignedInt(left.activatedAtMs)
+        || String(left.displayName || left.uid).localeCompare(String(right.displayName || right.uid), "fr")
+      );
+
+    return {
+      ok: true,
+      items,
+      total: items.length,
+    };
+  },
+  { invoker: "public" }
+);
+
+exports.getMyAgentDashboardSecure = publicOnCall(
+  "getMyAgentDashboardSecure",
+  async (request) => {
+    const { uid } = assertAuth(request);
+    const targetAgentRef = agentRef(uid);
+    const [clientSnap, agentSnap] = await Promise.all([
+      walletRef(uid).get(),
+      targetAgentRef.get(),
+    ]);
+
+    const clientData = clientSnap.exists ? (clientSnap.data() || {}) : {};
+    if (!agentSnap.exists && clientData.isAgent !== true) {
+      throw new HttpsError("permission-denied", "Ce compte n'a pas accès au dashboard agent.");
+    }
+
+    const agentData = agentSnap.exists ? (agentSnap.data() || {}) : {};
+    let ledgerSnap = null;
+    try {
+      ledgerSnap = await targetAgentRef.collection(AGENT_LEDGER_SUBCOLLECTION)
+        .orderBy("createdAtMs", "desc")
+        .limit(24)
+        .get();
+    } catch (_) {
+      ledgerSnap = await targetAgentRef.collection(AGENT_LEDGER_SUBCOLLECTION)
+        .limit(24)
+        .get();
+    }
+
+    let statementsSnap = null;
+    try {
+      statementsSnap = await targetAgentRef.collection(AGENT_MONTHLY_STATEMENTS_SUBCOLLECTION)
+        .orderBy("monthKey", "desc")
+        .limit(18)
+        .get();
+    } catch (_) {
+      statementsSnap = await targetAgentRef.collection(AGENT_MONTHLY_STATEMENTS_SUBCOLLECTION)
+        .limit(18)
+        .get();
+    }
+
+    const referralsSnap = await db.collection(CLIENTS_COLLECTION)
+      .where("referredByAgentUid", "==", uid)
+      .limit(60)
+      .get()
+      .catch(() => null);
+
+    const monthlyStatements = (statementsSnap?.docs || [])
+      .map((docSnap) => buildAgentMonthlyStatement(docSnap))
+      .sort((left, right) => String(right.monthKey || "").localeCompare(String(left.monthKey || "")));
+
+    const trend = monthlyStatements
+      .slice()
+      .sort((left, right) => String(left.monthKey || "").localeCompare(String(right.monthKey || "")))
+      .map((item) => ({
+        label: item.monthKey,
+        earnedDoes: safeInt(item.earnedDoes),
+        signupsCount: safeInt(item.signupsCount),
+        paidDoes: safeInt(item.paidDoes),
+      }));
+
+    const recentLedger = (ledgerSnap?.docs || [])
+      .map((docSnap) => buildAgentLedgerItem(docSnap))
+      .sort((left, right) => safeSignedInt(right.createdAtMs) - safeSignedInt(left.createdAtMs));
+
+    const recentReferrals = (referralsSnap?.docs || [])
+      .map((docSnap) => buildAgentReferralClientRecord(docSnap))
+      .sort((left, right) => safeSignedInt(right.createdAtMs) - safeSignedInt(left.createdAtMs))
+      .slice(0, 24);
+
+    const summary = buildAgentProfileSummary(uid, clientData, agentData);
+
+    return {
+      ok: true,
+      agent: summary,
+      recentLedger,
+      monthlyStatements,
+      recentReferrals,
+      trend,
+    };
+  },
+  { invoker: "public" }
+);
+
+exports.getAgentPayrollSnapshotSecure = publicOnCall(
+  "getAgentPayrollSnapshotSecure",
+  async (request) => {
+    assertFinanceAdmin(request);
+    const payload = request.data && typeof request.data === "object" ? request.data : {};
+    const monthKey = normalizeMonthKey(payload.monthKey || "", getPreviousMonthKeyFromMs(Date.now()));
+
+    let agentsSnap = null;
+    try {
+      agentsSnap = await agentsCollection()
+        .orderBy("updatedAtMs", "desc")
+        .limit(AGENT_LIST_LIMIT)
+        .get();
+    } catch (_) {
+      agentsSnap = await agentsCollection()
+        .limit(AGENT_LIST_LIMIT)
+        .get();
+    }
+
+    const agentDocs = agentsSnap?.docs || [];
+    const [clientSnaps, statementSnaps] = await Promise.all([
+      Promise.all(agentDocs.map((docSnap) => walletRef(docSnap.id).get())),
+      Promise.all(agentDocs.map((docSnap) => docSnap.ref.collection(AGENT_MONTHLY_STATEMENTS_SUBCOLLECTION).doc(monthKey).get())),
+    ]);
+
+    const items = agentDocs
+      .map((docSnap, index) => {
+        const summary = buildAgentProfileSummary(
+          docSnap.id,
+          clientSnaps[index]?.exists ? (clientSnaps[index].data() || {}) : {},
+          docSnap.data() || {}
+        );
+        const statement = statementSnaps[index]?.exists
+          ? buildAgentMonthlyStatement(statementSnaps[index])
+          : {
+              monthKey,
+              earnedDoes: 0,
+              paidDoes: 0,
+              signupsCount: 0,
+              depositsCount: 0,
+              winsCount: 0,
+              closedAtMs: 0,
+            };
+        const payableDoes = Math.max(0, safeInt(statement.earnedDoes) - safeInt(statement.paidDoes));
+        return {
+          uid: summary.uid,
+          displayName: summary.displayName,
+          promoCode: summary.promoCode,
+          status: summary.status,
+          monthKey,
+          earnedDoes: safeInt(statement.earnedDoes),
+          paidDoes: safeInt(statement.paidDoes),
+          payableDoes,
+          signupsCount: safeInt(statement.signupsCount),
+          depositsCount: safeInt(statement.depositsCount),
+          winsCount: safeInt(statement.winsCount),
+          closedAtMs: safeSignedInt(statement.closedAtMs),
+        };
+      })
+      .filter((item) => item.earnedDoes > 0 || item.paidDoes > 0 || item.signupsCount > 0 || item.depositsCount > 0 || item.winsCount > 0)
+      .sort((left, right) =>
+        safeInt(right.payableDoes) - safeInt(left.payableDoes)
+        || safeInt(right.earnedDoes) - safeInt(left.earnedDoes)
+        || String(left.displayName || left.uid).localeCompare(String(right.displayName || right.uid), "fr")
+      );
+
+    return {
+      ok: true,
+      monthKey,
+      items,
+      totals: {
+        agents: items.length,
+        earnedDoes: items.reduce((sum, item) => sum + safeInt(item.earnedDoes), 0),
+        paidDoes: items.reduce((sum, item) => sum + safeInt(item.paidDoes), 0),
+        payableDoes: items.reduce((sum, item) => sum + safeInt(item.payableDoes), 0),
+      },
+    };
+  },
+  { invoker: "public" }
+);
+
+exports.getAgentProgramOverviewSecure = publicOnCall(
+  "getAgentProgramOverviewSecure",
+  async (request) => {
+    assertFinanceAdmin(request);
+
+    let agentsSnap = null;
+    try {
+      agentsSnap = await agentsCollection()
+        .orderBy("updatedAtMs", "desc")
+        .limit(AGENT_LIST_LIMIT)
+        .get();
+    } catch (_) {
+      agentsSnap = await agentsCollection()
+        .limit(AGENT_LIST_LIMIT)
+        .get();
+    }
+
+    const monthMap = new Map();
+    const currentMonthKey = getMonthKeyFromMs(Date.now());
+    const agentDocs = agentsSnap?.docs || [];
+    const statementSnaps = await Promise.all(
+      agentDocs.map((docSnap) => docSnap.ref.collection(AGENT_MONTHLY_STATEMENTS_SUBCOLLECTION)
+        .orderBy("monthKey", "desc")
+        .limit(12)
+        .get()
+        .catch(() => null))
+    );
+
+    agentDocs.forEach((docSnap, index) => {
+      const agentData = docSnap.data() || {};
+      const currentEarningsMonthKey = sanitizeText(agentData.currentEarningsMonthKey || "", 16);
+      if (currentEarningsMonthKey === currentMonthKey) {
+        const currentEntry = monthMap.get(currentMonthKey) || {
+          monthKey: currentMonthKey,
+          earnedDoes: 0,
+          paidDoes: 0,
+          signupsCount: 0,
+          depositsCount: 0,
+          winsCount: 0,
+          activeAgents: 0,
+        };
+        currentEntry.earnedDoes += safeInt(agentData.currentMonthEarnedDoes);
+        currentEntry.activeAgents += normalizeAgentStatus(agentData.status || "") === "active" ? 1 : 0;
+        monthMap.set(currentMonthKey, currentEntry);
+      }
+
+      (statementSnaps[index]?.docs || []).forEach((statementDoc) => {
+        const item = buildAgentMonthlyStatement(statementDoc);
+        const base = monthMap.get(item.monthKey) || {
+          monthKey: item.monthKey,
+          earnedDoes: 0,
+          paidDoes: 0,
+          signupsCount: 0,
+          depositsCount: 0,
+          winsCount: 0,
+          activeAgents: 0,
+        };
+        base.earnedDoes += safeInt(item.earnedDoes);
+        base.paidDoes += safeInt(item.paidDoes);
+        base.signupsCount += safeInt(item.signupsCount);
+        base.depositsCount += safeInt(item.depositsCount);
+        base.winsCount += safeInt(item.winsCount);
+        monthMap.set(item.monthKey, base);
+      });
+    });
+
+    const timeline = Array.from(monthMap.values())
+      .sort((left, right) => String(left.monthKey || "").localeCompare(String(right.monthKey || "")))
+      .slice(-12)
+      .map((item) => ({
+        monthKey: item.monthKey,
+        earnedDoes: safeInt(item.earnedDoes),
+        paidDoes: safeInt(item.paidDoes),
+        pendingDoes: Math.max(0, safeInt(item.earnedDoes) - safeInt(item.paidDoes)),
+        signupsCount: safeInt(item.signupsCount),
+        depositsCount: safeInt(item.depositsCount),
+        winsCount: safeInt(item.winsCount),
+        activeAgents: safeInt(item.activeAgents),
+      }));
+
+    const latest = timeline[timeline.length - 1] || null;
+    return {
+      ok: true,
+      timeline,
+      latest,
+      currentMonthKey,
+    };
+  },
+  { invoker: "public" }
+);
+
+exports.closeAgentPayrollMonthSecure = publicOnCall(
+  "closeAgentPayrollMonthSecure",
+  async (request) => {
+    const { uid: adminUid, email: adminEmail } = assertFinanceAdmin(request);
+    const payload = request.data && typeof request.data === "object" ? request.data : {};
+    const monthKey = normalizeMonthKey(payload.monthKey || "", getPreviousMonthKeyFromMs(Date.now()));
+    const nowMs = Date.now();
+    const results = [];
+
+    let agentsSnap = null;
+    try {
+      agentsSnap = await agentsCollection()
+        .orderBy("updatedAtMs", "desc")
+        .limit(AGENT_LIST_LIMIT)
+        .get();
+    } catch (_) {
+      agentsSnap = await agentsCollection()
+        .limit(AGENT_LIST_LIMIT)
+        .get();
+    }
+
+    for (const agentDoc of agentsSnap?.docs || []) {
+      const agentUid = String(agentDoc.id || "").trim();
+      if (!agentUid) continue;
+      const targetAgentRef = agentRef(agentUid);
+      const monthlyRef = targetAgentRef.collection(AGENT_MONTHLY_STATEMENTS_SUBCOLLECTION).doc(monthKey);
+      const ledgerRef = targetAgentRef.collection(AGENT_LEDGER_SUBCOLLECTION).doc(`payroll_${monthKey.replace(/[^0-9-]/g, "")}`);
+
+      const item = await db.runTransaction(async (tx) => {
+        const [agentSnap, clientSnap, monthlySnap, ledgerSnap] = await Promise.all([
+          tx.get(targetAgentRef),
+          tx.get(walletRef(agentUid)),
+          tx.get(monthlyRef),
+          tx.get(ledgerRef),
+        ]);
+
+        if (!agentSnap.exists) return null;
+        const agentData = agentSnap.data() || {};
+        const clientData = clientSnap.exists ? (clientSnap.data() || {}) : {};
+        const monthlyData = monthlySnap.exists ? (monthlySnap.data() || {}) : {};
+        const earnedDoes = safeInt(monthlyData.earnedDoes);
+        const paidDoes = safeInt(monthlyData.paidDoes);
+        const payableDoes = Math.max(0, earnedDoes - paidDoes);
+        if (payableDoes <= 0) {
+          return {
+            uid: agentUid,
+            displayName: sanitizeText(agentData.displayName || clientData.name || clientData.username || "", 120),
+            earnedDoes,
+            paidDoes,
+            payableDoes: 0,
+            closed: false,
+          };
+        }
+
+        const nextPaidDoes = earnedDoes;
+        const currentMonthEarnedDoes = safeInt(agentData.currentMonthEarnedDoes);
+        const currentEarningsMonthKey = sanitizeText(agentData.currentEarningsMonthKey || "", 16);
+        const nextCurrentMonthEarnedDoes = currentEarningsMonthKey === monthKey
+          ? Math.max(0, currentMonthEarnedDoes - payableDoes)
+          : currentMonthEarnedDoes;
+
+        tx.set(monthlyRef, {
+          monthKey,
+          earnedDoes,
+          paidDoes: nextPaidDoes,
+          signupsCount: safeInt(monthlyData.signupsCount),
+          depositsCount: safeInt(monthlyData.depositsCount),
+          winsCount: safeInt(monthlyData.winsCount),
+          closedAtMs: nowMs,
+          closedByUid: adminUid,
+          closedByEmail: sanitizeEmail(adminEmail || "", 160),
+          updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+          updatedAtMs: nowMs,
+        }, { merge: true });
+
+        tx.set(targetAgentRef, {
+          currentMonthEarnedDoes: nextCurrentMonthEarnedDoes,
+          lastPayrollMonthKey: monthKey,
+          updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+          updatedAtMs: nowMs,
+        }, { merge: true });
+
+        if (!ledgerSnap.exists) {
+          tx.set(ledgerRef, {
+            type: "payroll_close",
+            label: `Payroll ${monthKey}`,
+            deltaDoes: -payableDoes,
+            deltaHtg: 0,
+            monthKey,
+            createdAt: admin.firestore.FieldValue.serverTimestamp(),
+            createdAtMs: nowMs,
+            createdByUid: adminUid,
+            createdByEmail: sanitizeEmail(adminEmail || "", 160),
+            linkedAgentUid: agentUid,
+            paidDoes: payableDoes,
+          }, { merge: true });
+        }
+
+        return {
+          uid: agentUid,
+          displayName: sanitizeText(agentData.displayName || clientData.name || clientData.username || "", 120),
+          earnedDoes,
+          paidDoes: nextPaidDoes,
+          payableDoes,
+          closed: true,
+        };
+      });
+
+      if (item) {
+        results.push(item);
+      }
+    }
+
+    const closedItems = results.filter((item) => item.closed === true);
+    return {
+      ok: true,
+      monthKey,
+      closedCount: closedItems.length,
+      paidDoesTotal: closedItems.reduce((sum, item) => sum + safeInt(item.payableDoes), 0),
+      items: results,
+    };
   },
   { invoker: "public" }
 );
@@ -17052,6 +18428,15 @@ exports.resolveDepositReviewSecure = publicOnCall("resolveDepositReviewSecure", 
       withdrawalHoldAtMs: safeInt(nextWallet.withdrawalHoldAtMs),
       updatedAt: admin.firestore.FieldValue.serverTimestamp(),
     }, { merge: true });
+
+    if (decision === "approve") {
+      await trackAgentDepositApprovalTx(tx, {
+        clientUid: ownerUid,
+        approvedAtMs: nowMs,
+        orderId,
+        amountHtg: orderAmountHtg,
+      });
+    }
 
       return {
         ok: true,

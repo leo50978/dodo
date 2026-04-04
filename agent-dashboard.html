@@ -1,0 +1,458 @@
+<!doctype html>
+<html lang="fr">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <script src="./runtime-config.js"></script>
+    <title>Dashboard Agent · Dominoes Lakay</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;700&family=Sora:wght@400;600;700;800&display=swap"
+      rel="stylesheet"
+    />
+    <style>
+      :root {
+        --bg-0: #06101f;
+        --bg-1: #0a1730;
+        --bg-2: #132344;
+        --panel: rgba(11, 20, 39, 0.8);
+        --panel-soft: rgba(255, 255, 255, 0.04);
+        --line: rgba(255, 255, 255, 0.08);
+        --text: #f4f7ff;
+        --muted: #9fb0cf;
+        --accent: #69d2ff;
+        --accent-2: #6ef0b4;
+        --warn: #ffb86c;
+        --shadow: 0 24px 60px rgba(1, 6, 18, 0.45);
+      }
+
+      * { box-sizing: border-box; }
+
+      body {
+        margin: 0;
+        min-height: 100vh;
+        font-family: "Space Grotesk", sans-serif;
+        color: var(--text);
+        background:
+          radial-gradient(circle at top right, rgba(105, 210, 255, 0.16), transparent 24%),
+          radial-gradient(circle at bottom left, rgba(110, 240, 180, 0.12), transparent 28%),
+          linear-gradient(160deg, var(--bg-0) 0%, var(--bg-1) 45%, var(--bg-2) 100%);
+      }
+
+      .page {
+        width: min(1240px, calc(100% - 20px));
+        margin: 0 auto;
+        padding: 14px 0 28px;
+      }
+
+      .glass {
+        border: 1px solid var(--line);
+        border-radius: 28px;
+        background: var(--panel);
+        box-shadow: var(--shadow);
+        backdrop-filter: blur(20px);
+        -webkit-backdrop-filter: blur(20px);
+      }
+
+      .topbar {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+        padding: 16px;
+      }
+
+      .eyebrow {
+        margin: 0;
+        font-size: 0.72rem;
+        letter-spacing: 0.18em;
+        text-transform: uppercase;
+        color: var(--accent);
+        font-weight: 700;
+      }
+
+      h1 {
+        margin: 10px 0 0;
+        font-family: "Sora", sans-serif;
+        font-size: clamp(1.9rem, 3.4vw, 3rem);
+        line-height: 1.04;
+      }
+
+      .copy {
+        margin: 10px 0 0;
+        max-width: 66ch;
+        color: var(--muted);
+        line-height: 1.6;
+        overflow-wrap: anywhere;
+      }
+
+      .actions {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 10px;
+        width: 100%;
+      }
+
+      .btn {
+        border: 1px solid var(--line);
+        border-radius: 16px;
+        background: rgba(255, 255, 255, 0.05);
+        color: var(--text);
+        padding: 12px 14px;
+        font: inherit;
+        font-weight: 700;
+        cursor: pointer;
+        text-decoration: none;
+        text-align: center;
+        flex: 1 1 100%;
+      }
+
+      .btn.primary {
+        background: linear-gradient(135deg, rgba(105, 210, 255, 0.22), rgba(110, 240, 180, 0.18));
+      }
+
+      .status {
+        margin-top: 14px;
+        min-height: 1.2rem;
+        color: var(--muted);
+        font-size: 0.92rem;
+      }
+
+      .status[data-tone="error"] { color: #ff8e9f; }
+      .status[data-tone="success"] { color: var(--accent-2); }
+
+      .grid {
+        display: grid;
+        gap: 16px;
+        margin-top: 18px;
+      }
+
+      .summary-grid {
+        grid-template-columns: 1fr;
+      }
+
+      .content-grid {
+        grid-template-columns: 1fr;
+        align-items: start;
+      }
+
+      .card {
+        padding: 18px;
+        min-width: 0;
+      }
+
+      .card h2 {
+        margin: 0;
+        font-size: 1.08rem;
+      }
+
+      .label {
+        font-size: 0.76rem;
+        letter-spacing: 0.14em;
+        text-transform: uppercase;
+        color: var(--muted);
+        font-weight: 700;
+      }
+
+      .value {
+        margin-top: 10px;
+        font-size: 1.9rem;
+        font-weight: 800;
+      }
+
+      .subvalue {
+        margin-top: 8px;
+        color: var(--muted);
+        font-size: 0.92rem;
+      }
+
+      .promo-box {
+        display: grid;
+        gap: 12px;
+        margin-top: 16px;
+        padding: 16px;
+        border-radius: 22px;
+        border: 1px solid var(--line);
+        background: var(--panel-soft);
+      }
+
+      .promo-row {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: flex-start;
+        justify-content: space-between;
+        gap: 10px;
+      }
+
+      .promo-row > * {
+        min-width: 0;
+      }
+
+      .promo-code {
+        font-size: 1.35rem;
+        font-weight: 800;
+        letter-spacing: 0.08em;
+        overflow-wrap: anywhere;
+      }
+
+      .trend-box {
+        margin-top: 18px;
+        border-radius: 24px;
+        border: 1px solid var(--line);
+        background: rgba(255, 255, 255, 0.03);
+        padding: 16px;
+      }
+
+      .trend-legend {
+        display: flex;
+        flex-direction: column;
+        justify-content: space-between;
+        gap: 12px;
+        align-items: flex-start;
+      }
+
+      .trend-svg {
+        width: 100%;
+        height: 220px;
+        display: block;
+        margin-top: 14px;
+      }
+
+      .hint {
+        margin-top: 10px;
+        color: var(--muted);
+        font-size: 0.9rem;
+      }
+
+      .table-wrap {
+        width: 100%;
+        overflow-x: auto;
+      }
+
+      table {
+        width: 100%;
+        border-collapse: collapse;
+        margin-top: 12px;
+        min-width: 720px;
+      }
+
+      th,
+      td {
+        text-align: left;
+        padding: 12px 10px;
+        border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+        font-size: 0.92rem;
+      }
+
+      th {
+        font-size: 0.74rem;
+        letter-spacing: 0.12em;
+        text-transform: uppercase;
+        color: var(--muted);
+      }
+
+      .pill {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        border-radius: 999px;
+        padding: 8px 12px;
+        background: rgba(255, 255, 255, 0.06);
+        color: var(--text);
+        font-size: 0.82rem;
+        font-weight: 700;
+      }
+
+      .pill.active { color: var(--accent-2); }
+      .pill.inactive { color: var(--warn); }
+
+      .empty {
+        margin-top: 12px;
+        padding: 14px 16px;
+        border-radius: 18px;
+        border: 1px dashed rgba(255, 255, 255, 0.14);
+        color: var(--muted);
+      }
+
+      .list {
+        display: grid;
+        gap: 10px;
+        margin-top: 12px;
+      }
+
+      .list-item {
+        border-radius: 18px;
+        border: 1px solid var(--line);
+        background: rgba(255, 255, 255, 0.03);
+        padding: 14px;
+      }
+
+      .list-item strong {
+        display: block;
+        font-size: 0.96rem;
+        overflow-wrap: anywhere;
+      }
+
+      .list-item span {
+        display: block;
+        margin-top: 6px;
+        color: var(--muted);
+        font-size: 0.88rem;
+        overflow-wrap: anywhere;
+      }
+
+      @media (min-width: 720px) {
+        .page {
+          width: min(1240px, calc(100% - 28px));
+          padding: 24px 0 40px;
+        }
+
+        .topbar {
+          padding: 18px 20px;
+        }
+
+        .actions {
+          width: auto;
+        }
+
+        .btn {
+          flex: 0 0 auto;
+        }
+
+        .summary-grid {
+          grid-template-columns: repeat(2, minmax(0, 1fr));
+        }
+
+        .trend-legend {
+          flex-direction: row;
+          align-items: baseline;
+        }
+      }
+
+      @media (min-width: 980px) {
+        .summary-grid {
+          grid-template-columns: repeat(4, minmax(0, 1fr));
+        }
+
+        .content-grid {
+          grid-template-columns: minmax(0, 1.3fr) minmax(320px, 0.7fr);
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <main class="page">
+      <section class="glass topbar">
+        <div>
+          <p class="eyebrow">Espace Agent</p>
+          <h1>Ton activité agent</h1>
+          <p class="copy">
+            Suis ton code promo, ton budget d'acquisition, tes gains mensuels, tes dépôts suivis et les utilisateurs déjà rattachés à ton activité.
+          </p>
+          <div id="agentDashboardStatus" class="status"></div>
+        </div>
+        <div class="actions">
+          <a class="btn" href="./profil.html">Retour profil</a>
+          <button id="agentDashboardRefreshBtn" class="btn primary" type="button">Actualiser</button>
+        </div>
+      </section>
+
+      <section class="grid summary-grid">
+        <article class="glass card">
+          <div class="label">Statut</div>
+          <div id="agentStatusPill" class="pill inactive" style="margin-top:12px;">Inactif</div>
+          <div id="agentIdentity" class="subvalue">-</div>
+        </article>
+        <article class="glass card">
+          <div class="label">Budget inscription</div>
+          <div id="agentBudgetRemaining" class="value">0 HTG</div>
+          <div id="agentBudgetMeta" class="subvalue">Sur un budget initial de 0 HTG</div>
+        </article>
+        <article class="glass card">
+          <div class="label">Gains du mois</div>
+          <div id="agentCurrentMonthEarned" class="value">0 Does</div>
+          <div id="agentLifetimeEarned" class="subvalue">Cumul: 0 Does</div>
+        </article>
+        <article class="glass card">
+          <div class="label">Suivi réseau</div>
+          <div id="agentTrackedSignups" class="value">0</div>
+          <div id="agentTrackedMeta" class="subvalue">0 dépôts suivis · 0 victoires suivies</div>
+        </article>
+      </section>
+
+      <section class="grid content-grid">
+        <article class="glass card">
+          <h2>Code promo et évolution</h2>
+          <div class="promo-box">
+            <div class="promo-row">
+              <div>
+                <div class="label">Code promo</div>
+                <div id="agentPromoCode" class="promo-code">-</div>
+              </div>
+              <div class="actions">
+                <button id="agentCopyPromoBtn" class="btn" type="button">Copier code</button>
+                <button id="agentCopyLinkBtn" class="btn" type="button">Copier lien</button>
+              </div>
+            </div>
+            <div id="agentPromoLink" class="hint">Lien agent indisponible.</div>
+          </div>
+
+          <div class="trend-box">
+            <div class="trend-legend">
+              <div>
+                <div class="label">Tendance mensuelle</div>
+                <div class="subvalue">Courbe des gains clôturés par mois</div>
+              </div>
+              <div id="agentTrendHighlight" class="subvalue">Aucune clôture mensuelle</div>
+            </div>
+            <svg id="agentTrendSvg" class="trend-svg" viewBox="0 0 720 220" preserveAspectRatio="none"></svg>
+            <div id="agentTrendHint" class="hint">Les mois clôturés apparaitront ici au moment du payroll.</div>
+          </div>
+
+          <div class="glass card" style="margin-top:18px; padding:0;">
+            <div style="padding:18px 18px 0;">
+              <h2>Historique mensuel</h2>
+            </div>
+            <div style="padding:0 18px 18px;">
+              <div class="table-wrap">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>Mois</th>
+                      <th>Gains</th>
+                      <th>Payé</th>
+                      <th>Inscriptions</th>
+                      <th>Dépôts</th>
+                      <th>Victoires</th>
+                      <th>Statut</th>
+                    </tr>
+                  </thead>
+                  <tbody id="agentMonthlyTableBody"></tbody>
+                </table>
+              </div>
+              <div id="agentMonthlyEmpty" class="empty">Aucune clôture mensuelle enregistrée pour l’instant.</div>
+            </div>
+          </div>
+        </article>
+
+        <aside class="grid">
+          <article class="glass card">
+            <h2>Derniers utilisateurs rattachés</h2>
+            <div id="agentReferralsList" class="list"></div>
+            <div id="agentReferralsEmpty" class="empty">Aucun utilisateur rattaché à ce code promo pour le moment.</div>
+          </article>
+
+          <article class="glass card">
+            <h2>Derniers mouvements</h2>
+            <div id="agentLedgerList" class="list"></div>
+            <div id="agentLedgerEmpty" class="empty">Aucun mouvement comptable n’a encore été enregistré.</div>
+          </article>
+        </aside>
+      </section>
+    </main>
+
+    <script type="module" src="./agent-dashboard.js"></script>
+  </body>
+</html>
