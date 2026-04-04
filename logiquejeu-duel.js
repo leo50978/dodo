@@ -3,6 +3,8 @@ import {
   db,
   collection,
   doc,
+  setDoc,
+  serverTimestamp,
   query,
   orderBy,
   onSnapshot,
@@ -40,6 +42,8 @@ const DUEL_DEBUG = false;
 const URL_PARAMS = new URLSearchParams(window.location.search);
 const SUPPORT_RETURN_URL = "./index.html";
 const PRESENCE_PING_MS = 20 * 1000;
+const CLIENT_SITE_PRESENCE_PING_MS = 25 * 1000;
+const CLIENT_SITE_PRESENCE_TTL_MS = 70 * 1000;
 const DUEL_ABANDONED_ROOMS_STORAGE_KEY = "domino_duel_abandoned_rooms_v1";
 
 let duelRoot = null;
@@ -70,6 +74,8 @@ let gameLaunched = false;
 let turnTimer = null;
 let turnTick = null;
 let turnTimeoutRequestInFlight = false;
+let clientPresenceTick = null;
+let clientPresenceInFlight = false;
 let fullscreenHintTimer = null;
 let onlineUsersTick = null;
 let onlineUsersBucket = -1;
@@ -108,6 +114,49 @@ startMorpionLiveNotice();
 function duelDebug(label, payload = {}) {
   if (!DUEL_DEBUG) return;
   console.log(`[DUEL_DEBUG] ${label}`, payload);
+}
+
+async function touchClientSitePresence() {
+  const uid = String(currentUser?.uid || "");
+  if (!uid || clientPresenceInFlight) return;
+  clientPresenceInFlight = true;
+  const nowMs = Date.now();
+  try {
+    await setDoc(doc(db, "clients", uid), {
+      uid,
+      email: String(currentUser?.email || ""),
+      lastSeenAt: serverTimestamp(),
+      lastSeenAtMs: nowMs,
+      updatedAt: serverTimestamp(),
+      sitePresencePage: "domino_duel",
+      sitePresenceExpiresAtMs: nowMs + CLIENT_SITE_PRESENCE_TTL_MS,
+    }, { merge: true });
+  } catch (error) {
+    console.warn("[DUEL] site presence update failed", error);
+  } finally {
+    clientPresenceInFlight = false;
+  }
+}
+
+function stopClientPresenceHeartbeat() {
+  if (clientPresenceTick) {
+    clearInterval(clientPresenceTick);
+    clientPresenceTick = null;
+  }
+}
+
+function startClientPresenceHeartbeat() {
+  const uid = String(currentUser?.uid || "");
+  if (!uid) {
+    stopClientPresenceHeartbeat();
+    return;
+  }
+  stopClientPresenceHeartbeat();
+  void touchClientSitePresence();
+  clientPresenceTick = setInterval(() => {
+    if (document.visibilityState !== "visible") return;
+    void touchClientSitePresence();
+  }, CLIENT_SITE_PRESENCE_PING_MS);
 }
 
 function readAbandonedDuelRoomIds() {
@@ -2252,6 +2301,7 @@ async function bootstrap() {
     authReady = true;
     currentUser = user || null;
     if (!user) {
+      stopClientPresenceHeartbeat();
       resetRoomState();
       setMatchLoading(false);
       setStatus("");
@@ -2259,6 +2309,7 @@ async function bootstrap() {
       return;
     }
 
+    startClientPresenceHeartbeat();
     await refreshWalletState();
     renderApp();
     if (isFriendDuelFlowFromUrl()) {
@@ -2300,13 +2351,20 @@ window.LogiqueJeu = {
 window.addEventListener("xchangeUpdated", refreshDoesHud);
 window.addEventListener("userBalanceUpdated", refreshDoesHud);
 window.addEventListener("storage", refreshDoesHud);
+window.addEventListener("visibilitychange", () => {
+  if (document.visibilityState === "visible") {
+    void touchClientSitePresence();
+  }
+});
 window.addEventListener("pagehide", () => {
+  stopClientPresenceHeartbeat();
   leaveCurrentRoomOnLifecycleExit("pagehide");
 });
 window.addEventListener("offline", () => {
   leaveCurrentRoomOnLifecycleExit("offline");
 });
 window.addEventListener("beforeunload", () => {
+  stopClientPresenceHeartbeat();
   leaveCurrentRoomOnLifecycleExit("beforeunload");
   if (onlineUsersTick) {
     clearInterval(onlineUsersTick);

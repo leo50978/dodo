@@ -212,6 +212,22 @@ export async function getMorpionMatchmakingHintSecure(payload = {}) {
   return invokeCallable("getMorpionMatchmakingHint", payload, "Impossible de charger l'indication de file Morpion.");
 }
 
+export async function getMyMorpionWhatsappPreferenceSecure(payload = {}) {
+  return invokeCallable("getMyMorpionWhatsappPreferenceSecure", payload, "Impossible de charger ton numero WhatsApp morpion.");
+}
+
+export async function saveMorpionWhatsappPreferenceSecure(payload = {}) {
+  return invokeCallable("saveMorpionWhatsappPreferenceSecure", payload, "Impossible d'enregistrer ton numero WhatsApp.");
+}
+
+export async function removeMorpionWhatsappPreferenceSecure(payload = {}) {
+  return invokeCallable("removeMorpionWhatsappPreferenceSecure", payload, "Impossible de retirer ton numero WhatsApp.");
+}
+
+export async function listRecentMorpionWhatsappContactsSecure(payload = {}) {
+  return invokeCallable("listRecentMorpionWhatsappContactsSecure", payload, "Impossible de charger les joueurs recemment actifs.");
+}
+
 export async function getRecruitmentCampaignSnapshotSecure(payload = {}) {
   return invokeCallable("getRecruitmentCampaignSnapshotSecure", payload, "Impossible de charger la campagne de recrutement.");
 }
@@ -234,6 +250,30 @@ export async function recordShareSitePromoSecure(payload = {}) {
 
 export async function getDepositFundingStatusSecure(payload = {}) {
   return invokeCallable("getDepositFundingStatusSecure", payload, "Impossible de charger l'état du dépôt.");
+}
+
+export async function searchAgentCandidatesSecure(payload = {}) {
+  return invokeCallable("searchAgentCandidatesSecure", payload, "Impossible de rechercher les utilisateurs.");
+}
+
+export async function upsertAgentSecure(payload = {}) {
+  return invokeCallable("upsertAgentSecure", payload, "Impossible de mettre à jour l'agent.");
+}
+
+export async function listAgentsSecure(payload = {}) {
+  return invokeCallable("listAgentsSecure", payload, "Impossible de charger les agents.");
+}
+
+export async function getMyAgentDashboardSecure(payload = {}) {
+  return invokeCallable("getMyAgentDashboardSecure", payload, "Impossible de charger le dashboard agent.");
+}
+
+export async function getAgentPayrollSnapshotSecure(payload = {}) {
+  return invokeCallable("getAgentPayrollSnapshotSecure", payload, "Impossible de charger le payroll agent.");
+}
+
+export async function closeAgentPayrollMonthSecure(payload = {}) {
+  return invokeCallable("closeAgentPayrollMonthSecure", payload, "Impossible de clôturer le payroll agent.");
 }
 
 export async function resolveDepositReviewSecure(payload = {}) {

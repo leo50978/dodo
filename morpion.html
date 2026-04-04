@@ -499,6 +499,10 @@
         gap: 10px;
       }
 
+      .modal__actions--stack {
+        grid-template-columns: minmax(0, 1fr);
+      }
+
       .modal__timer {
         display: inline-flex;
         align-items: baseline;
@@ -545,6 +549,185 @@
       .btn--ghost {
         border-color: rgba(255, 255, 255, 0.18);
         background: rgba(255, 255, 255, 0.05);
+      }
+
+      .btn--soft {
+        border-color: rgba(255, 183, 77, 0.26);
+        background: rgba(255, 183, 77, 0.08);
+        color: #ffe0c8;
+      }
+
+      .modal__body {
+        display: grid;
+        gap: 12px;
+      }
+
+      .field-stack {
+        display: grid;
+        gap: 8px;
+      }
+
+      .field-stack__label {
+        font-size: 0.84rem;
+        font-weight: 700;
+        color: #e5edf8;
+      }
+
+      .field-stack__hint {
+        font-size: 0.78rem;
+        line-height: 1.6;
+        color: var(--muted);
+      }
+
+      .field-stack__input {
+        width: 100%;
+        min-height: 52px;
+        border-radius: 16px;
+        border: 1px solid rgba(255, 255, 255, 0.14);
+        background: rgba(255, 255, 255, 0.06);
+        color: var(--text);
+        padding: 0 14px;
+        font-size: 0.96rem;
+        outline: none;
+      }
+
+      .field-stack__input::placeholder {
+        color: rgba(226, 232, 240, 0.42);
+      }
+
+      .field-stack__status {
+        min-height: 20px;
+        font-size: 0.82rem;
+        line-height: 1.5;
+        color: var(--muted);
+      }
+
+      .field-stack__status.is-error {
+        color: #ffb4b4;
+      }
+
+      .field-stack__status.is-success {
+        color: #9ff1b8;
+      }
+
+      .field-stack__saved {
+        display: grid;
+        gap: 6px;
+        padding: 12px 14px;
+        border-radius: 18px;
+        border: 1px solid rgba(255, 255, 255, 0.1);
+        background: rgba(255, 255, 255, 0.04);
+      }
+
+      .field-stack__saved-label {
+        font-size: 0.74rem;
+        font-weight: 800;
+        letter-spacing: 0.12em;
+        text-transform: uppercase;
+        color: var(--muted);
+      }
+
+      .field-stack__saved-value {
+        word-break: break-word;
+        font-size: 1rem;
+        font-weight: 800;
+        color: #fff3e9;
+      }
+
+      .contact-list {
+        display: grid;
+        gap: 10px;
+        max-height: min(54vh, 420px);
+        overflow: auto;
+        padding-right: 2px;
+      }
+
+      .contact-card {
+        display: grid;
+        gap: 10px;
+        padding: 14px;
+        border-radius: 20px;
+        border: 1px solid rgba(255, 255, 255, 0.1);
+        background: rgba(255, 255, 255, 0.04);
+      }
+
+      .contact-card__top {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 10px;
+      }
+
+      .contact-card__identity {
+        min-width: 0;
+        display: grid;
+        gap: 4px;
+      }
+
+      .contact-card__label {
+        font-size: 0.72rem;
+        font-weight: 800;
+        letter-spacing: 0.14em;
+        text-transform: uppercase;
+        color: var(--muted);
+      }
+
+      .contact-card__value {
+        word-break: break-word;
+        font-size: 0.96rem;
+        font-weight: 800;
+        color: #fff5ea;
+      }
+
+      .contact-card__meta {
+        font-size: 0.76rem;
+        color: var(--muted);
+      }
+
+      .contact-card__actions {
+        display: grid;
+        gap: 8px;
+      }
+
+      .presence-pill {
+        display: inline-flex;
+        align-items: center;
+        gap: 7px;
+        min-height: 34px;
+        padding: 0 12px;
+        border-radius: 999px;
+        border: 1px solid rgba(255, 255, 255, 0.12);
+        background: rgba(255, 255, 255, 0.05);
+        font-size: 0.78rem;
+        font-weight: 800;
+        white-space: nowrap;
+      }
+
+      .presence-pill__dot {
+        width: 9px;
+        height: 9px;
+        border-radius: 999px;
+        background: #f87171;
+        box-shadow: 0 0 0 5px rgba(248, 113, 113, 0.14);
+        flex: 0 0 auto;
+      }
+
+      .presence-pill.is-online {
+        color: #c7ffd9;
+      }
+
+      .presence-pill.is-online .presence-pill__dot {
+        background: #34d399;
+        box-shadow: 0 0 0 5px rgba(52, 211, 153, 0.14);
+      }
+
+      .contact-empty {
+        padding: 14px;
+        border-radius: 18px;
+        border: 1px dashed rgba(255, 255, 255, 0.14);
+        color: var(--muted);
+        line-height: 1.65;
+        font-size: 0.9rem;
       }
 
       @media (max-width: 699px) {
@@ -654,6 +837,20 @@
           border-radius: 24px;
           padding: 20px 16px max(16px, calc(env(safe-area-inset-bottom) + 10px));
         }
+
+        .contact-card__top {
+          align-items: flex-start;
+          flex-direction: column;
+        }
+
+        .contact-card__actions {
+          grid-template-columns: repeat(2, minmax(0, 1fr));
+        }
+
+        .btn {
+          min-height: 48px;
+          font-size: 0.9rem;
+        }
       }
 
       @media (min-width: 720px) {
@@ -726,6 +923,10 @@
         }
 
         .modal__actions {
+          grid-template-columns: repeat(2, minmax(0, 1fr));
+        }
+
+        .contact-card__actions {
           grid-template-columns: repeat(2, minmax(0, 1fr));
         }
       }
@@ -807,6 +1008,49 @@
           <button class="btn btn--primary" id="morpionWaitingExtendBtn" type="button">Rester en attente</button>
           <button class="btn btn--ghost hidden" id="morpionWaitingStopExtendBtn" type="button">Quitter l'attente prolongee</button>
           <button class="btn btn--ghost" id="morpionWaitingNotifyBtn" type="button">Activer les notifications</button>
+          <button class="btn btn--soft" id="morpionWaitingWhatsappBtn" type="button">Laisser mon WhatsApp</button>
+          <button class="btn btn--soft" id="morpionWaitingContactsBtn" type="button">Voir les joueurs actifs</button>
+        </div>
+      </div>
+    </div>
+
+    <div id="morpionWhatsappModal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="morpionWhatsappTitle">
+      <div class="modal__backdrop" data-whatsapp-close></div>
+      <div class="modal__card">
+        <div class="modal__eyebrow">Contact WhatsApp</div>
+        <h2 class="modal__title" id="morpionWhatsappTitle">Laisser ton numero</h2>
+        <div class="modal__body">
+          <p class="modal__copy">Si tu acceptes, les joueurs du morpion pourront te contacter directement sur WhatsApp pour t'inviter a jouer.</p>
+          <div class="field-stack__saved hidden" id="morpionWhatsappSavedWrap">
+            <div class="field-stack__saved-label">Numero enregistre</div>
+            <div class="field-stack__saved-value" id="morpionWhatsappSavedValue">+509 ...</div>
+          </div>
+          <label class="field-stack" for="morpionWhatsappInput">
+            <span class="field-stack__label">Numero WhatsApp</span>
+            <input id="morpionWhatsappInput" class="field-stack__input" type="tel" inputmode="tel" autocomplete="tel" placeholder="+509 4175 2992" />
+            <span class="field-stack__hint">Exemple: +509 4175 2992. Tu pourras retirer ton numero plus tard.</span>
+          </label>
+          <div class="field-stack__status" id="morpionWhatsappStatus" aria-live="polite"></div>
+        </div>
+        <div class="modal__actions modal__actions--stack">
+          <button class="btn btn--primary" id="morpionWhatsappSaveBtn" type="button">Enregistrer mon numero</button>
+          <button class="btn btn--ghost hidden" id="morpionWhatsappRemoveBtn" type="button">Retirer mon numero</button>
+          <button class="btn btn--ghost" id="morpionWhatsappCloseBtn" type="button">Fermer</button>
+        </div>
+      </div>
+    </div>
+
+    <div id="morpionContactsModal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="morpionContactsTitle">
+      <div class="modal__backdrop" data-contacts-close></div>
+      <div class="modal__card">
+        <div class="modal__eyebrow">Joueurs recents</div>
+        <h2 class="modal__title" id="morpionContactsTitle">Numeros disponibles</h2>
+        <p class="modal__copy">Copie un numero ou ouvre WhatsApp pour contacter un joueur ayant partage volontairement son contact.</p>
+        <div class="contact-list" id="morpionContactsList">
+          <div class="contact-empty">Chargement de la liste...</div>
+        </div>
+        <div class="modal__actions modal__actions--stack">
+          <button class="btn btn--ghost" id="morpionContactsCloseBtn" type="button">Fermer</button>
         </div>
       </div>
     </div>

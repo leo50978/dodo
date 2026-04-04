@@ -78,6 +78,7 @@ let soldeUiReadyRunId = 0;
 let soldeUiReadyPromise = null;
 let page2HeroRotationTimer = null;
 let page2SharePromoCountdownTimer = null;
+let page2SignupBonusModalShownForUid = "";
 let page2SupportMigrationNoticeTimer = null;
 let page2WelcomeBonusPromptTimer = null;
 let page2WelcomeBonusPromptUid = "";
@@ -90,7 +91,8 @@ let page2FinanceWithdrawalDocs = [];
 let page2FinanceNoticeQueue = [];
 let page2FinanceNoticeActive = null;
 const page2FinanceNoticeSessionSeen = new Set();
-const PAGE2_PRESENCE_PING_MS = 10 * 60 * 1000;
+const PAGE2_PRESENCE_PING_MS = 25 * 1000;
+const PAGE2_PRESENCE_TTL_MS = 70 * 1000;
 const PAGE2_NON_CRITICAL_REFRESH_MS = 2 * 60 * 1000;
 const PAGE2_MORPION_INVITE_POLL_MS = 5000;
 const PAGE2_MORPION_STAKE_DOES = 500;
@@ -585,10 +587,17 @@ async function runPage2BootstrapFlow({
 
   if (hasConfirmedAuth) {
     showGlobalLoading("Préparation du profil...");
-    await profilePromise;
+    const profileResult = await profilePromise;
 
     showGlobalLoading("Synchronisation du solde...");
     await balancePromise;
+
+    if (runId === page2BootstrapRunId && profileResult?.profile) {
+      window.setTimeout(() => {
+        if (runId !== page2BootstrapRunId) return;
+        void showSignupBonusGrantedModal(profileResult.profile || {});
+      }, 220);
+    }
   }
 
   await minDelayPromise;
@@ -870,6 +879,7 @@ function getUserCreationMs(user = null, clientData = {}) {
 
 function isPage2BlockingOverlayOpen() {
   const blockingIds = [
+    "signupBonusGrantedOverlay",
     "welcomeBonusPromptOverlay",
     "welcomeBonusCoachOverlay",
     "financeNoticeOverlay",
@@ -1161,27 +1171,87 @@ function startPage2FinanceNoticeWatchers(user) {
 function consumeAuthSuccessNotice() {
   try {
     const raw = sessionStorage.getItem(AUTH_SUCCESS_NOTICE_STORAGE_KEY) || "";
-    if (!raw) return false;
+    if (!raw) return null;
     sessionStorage.removeItem(AUTH_SUCCESS_NOTICE_STORAGE_KEY);
     const parsed = JSON.parse(raw);
     const ts = Number(parsed?.ts || 0);
-    if (!Number.isFinite(ts) || ts <= 0) return false;
-    return (Date.now() - ts) < 60_000;
+    if (!Number.isFinite(ts) || ts <= 0) return null;
+    return (Date.now() - ts) < 60_000 ? parsed : null;
   } catch (_) {
-    return false;
+    return null;
   }
+}
+
+function isSignupBonusModalPending(profile = {}) {
+  return Number(profile?.signupBonusAutoGrantedAtMs) > 0
+    && Number(profile?.signupBonusAutoGrantedHtg) > 0
+    && Number(profile?.signupBonusModalSeenAtMs) <= 0;
+}
+
+async function showSignupBonusGrantedModal(profile = {}) {
+  const uid = String(page2PresenceUser?.uid || auth.currentUser?.uid || "").trim();
+  if (!uid || page2SignupBonusModalShownForUid === uid || !isSignupBonusModalPending(profile)) return;
+  page2SignupBonusModalShownForUid = uid;
+
+  try {
+    await updateClientProfileSecure({ signupBonusModalSeen: true });
+  } catch (error) {
+    console.warn("[PAGE2] impossible de marquer la modal bonus comme vue", error);
+  }
+
+  const amountHtg = Number(profile?.signupBonusAutoGrantedHtg) || 25;
+  const shell = getPage2Shell();
+  const existing = document.getElementById("signupBonusGrantedOverlay");
+  if (existing) existing.remove();
+
+  shell.insertAdjacentHTML("beforeend", `
+    <div id="signupBonusGrantedOverlay" class="fixed inset-0 z-[3470] flex items-center justify-center bg-[#12192b]/72 px-4 py-4 backdrop-blur-sm">
+      <div id="signupBonusGrantedPanel" class="w-full max-w-sm rounded-[28px] border border-white/15 bg-[linear-gradient(180deg,rgba(82,94,132,0.98),rgba(55,65,95,0.98))] px-5 py-6 text-white shadow-[14px_14px_34px_rgba(16,23,40,0.5),-10px_-10px_24px_rgba(112,126,165,0.2)]">
+        <div class="mx-auto grid h-14 w-14 place-items-center rounded-[18px] border border-[#ffcf9e]/35 bg-[#F57C00]/18 text-[#ffe0bf]">
+          <i class="fa-solid fa-gift text-[22px]"></i>
+        </div>
+        <h3 class="mt-4 text-center text-[1.22rem] font-bold leading-tight">Bonus de bienvenue ajoute</h3>
+        <p class="mt-3 text-center text-sm leading-6 text-white/86">
+          Vous avez obtenu <span class="font-semibold text-[#ffd7b2]">${amountHtg} HTG</span> de bonus sur votre compte.
+        </p>
+        <p class="mt-2 text-center text-xs leading-5 text-white/64">
+          Ce message ne s'affiche qu'une seule fois.
+        </p>
+        <button id="signupBonusGrantedCloseBtn" type="button" class="mt-5 h-11 w-full rounded-[18px] border border-[#ffb26e] bg-[#F57C00] text-sm font-semibold text-white shadow-[9px_9px_20px_rgba(155,78,25,0.45),-7px_-7px_16px_rgba(255,173,96,0.2)] transition hover:-translate-y-0.5">
+          Continuer
+        </button>
+      </div>
+    </div>
+  `);
+
+  document.body.classList.add("overflow-hidden");
+  const overlay = document.getElementById("signupBonusGrantedOverlay");
+  const closeBtn = document.getElementById("signupBonusGrantedCloseBtn");
+  const close = () => {
+    overlay?.remove();
+    if (!isPage2BlockingOverlayOpen()) {
+      document.body.classList.remove("overflow-hidden");
+    }
+  };
+  overlay?.addEventListener("click", (event) => {
+    if (event.target === overlay) close();
+  });
+  closeBtn?.addEventListener("click", close, { once: true });
 }
 
 async function touchClientPresence(user) {
   const uid = String(user?.uid || "");
   if (!uid) return;
+  const nowMs = Date.now();
   try {
     await setDoc(doc(db, "clients", uid), {
       uid,
       email: String(user?.email || ""),
       lastSeenAt: serverTimestamp(),
-      lastSeenAtMs: Date.now(),
+      lastSeenAtMs: nowMs,
       updatedAt: serverTimestamp(),
+      sitePresencePage: "home",
+      sitePresenceExpiresAtMs: nowMs + PAGE2_PRESENCE_TTL_MS,
     }, { merge: true });
   } catch (error) {
     console.error("Erreur update presence client:", error);
@@ -2070,7 +2140,8 @@ export function renderPage2(user, options = {}) {
     </div>
   `);
 
-  if (consumeAuthSuccessNotice()) {
+  const authSuccessNotice = consumeAuthSuccessNotice();
+  if (authSuccessNotice) {
     pageShell.insertAdjacentHTML("beforeend", `
       <div id="authSuccessToast" class="fixed top-4 left-1/2 z-[3500] -translate-x-1/2 rounded-2xl border border-emerald-300/40 bg-emerald-500/20 px-4 py-3 text-sm font-semibold text-emerald-100 shadow-[10px_10px_22px_rgba(14,36,28,0.45),-8px_-8px_18px_rgba(91,153,126,0.16)] backdrop-blur-xl">
         Connexion réussie.

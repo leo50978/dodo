@@ -158,6 +158,9 @@ const MORPION_MATCHMAKING_REASON_SKILLED_WAIT_ONLY = "morpion-skilled-wait-human
 const MORPION_WAITING_ONLINE_WINDOW_MS = 45 * 1000;
 const MORPION_INVITATION_TTL_MS = 90 * 1000;
 const MORPION_WAITING_QUEUE_FETCH_LIMIT = 220;
+const MORPION_WHATSAPP_RECENT_WINDOW_MS = 72 * 60 * 60 * 1000;
+const MORPION_WHATSAPP_LIST_LIMIT = 40;
+const CLIENT_SITE_PRESENCE_WINDOW_MS = 70 * 1000;
 const ACQUISITION_DEFAULT_WINDOW_MS = 30 * 24 * 60 * 60 * 1000;
 const ACQUISITION_MAX_WINDOW_MS = 180 * 24 * 60 * 60 * 1000;
 const ACQUISITION_ACTIVE_LOOKBACK_MS = 7 * 24 * 60 * 60 * 1000;
@@ -1667,6 +1670,25 @@ function getAgentCommissionDoesForWin(gameType = "", stakeDoes = 0) {
   return safeInt(gameMatrix[safeStakeDoes]);
 }
 
+function normalizeRewardSettlementSplit(options = {}) {
+  const rewardAmountDoes = safeInt(options.rewardAmountDoes);
+  const provisionalRewardDoes = Math.min(
+    rewardAmountDoes,
+    safeInt(options.provisionalRewardDoes)
+  );
+  const approvedRewardDoes = Math.max(0, rewardAmountDoes - provisionalRewardDoes);
+  const welcomeRewardDoes = Math.min(
+    approvedRewardDoes,
+    safeInt(options.welcomeRewardDoes)
+  );
+
+  return {
+    approvedRewardDoes,
+    provisionalRewardDoes,
+    welcomeRewardDoes,
+  };
+}
+
 function buildAgentCommissionLedgerId(gameType = "", roomId = "", playerUid = "") {
   const safeType = sanitizeText(gameType || "", 32).toLowerCase().replace(/[^a-z0-9_]/g, "") || "game";
   const safeRoomId = sanitizeText(roomId || "", 160).replace(/[^a-zA-Z0-9_-]/g, "") || "room";
@@ -1694,6 +1716,59 @@ function buildAgentReferralClientRecord(docSnap) {
     doesBalance: safeInt(data.doesBalance),
     referredByAgentUid: sanitizeText(data.referredByAgentUid || "", 160),
     referredByAgentCode: normalizeCode(data.referredByAgentCode || ""),
+  };
+}
+
+function normalizeWhatsappDigits(value = "") {
+  const digits = phoneDigits(value);
+  if (!digits) return "";
+  if (digits.startsWith("00")) return digits.slice(2, 17);
+  return digits.slice(0, 15);
+}
+
+function isValidWhatsappDigits(value = "") {
+  const digits = normalizeWhatsappDigits(value);
+  return digits.length >= 8 && digits.length <= 15;
+}
+
+function formatWhatsappDisplayNumber(value = "") {
+  const digits = normalizeWhatsappDigits(value);
+  if (!digits) return "";
+  return `+${digits}`;
+}
+
+function buildPrivatePlayerAlias(seed = "") {
+  const source = String(seed || "").trim();
+  if (!source) return "Joueur ID-000000";
+  let hash = 0;
+  for (let index = 0; index < source.length; index += 1) {
+    hash = ((hash * 31) + source.charCodeAt(index)) % 1000000;
+  }
+  const normalizedHash = Math.max(0, Math.abs(hash));
+  const safeCode = ((normalizedHash % 900000) + 100000);
+  return `Joueur ID-${String(safeCode).padStart(6, "0")}`;
+}
+
+function isClientOnlineFromPresence(clientData = {}, nowMs = Date.now()) {
+  const expiresAtMs = safeSignedInt(clientData.sitePresenceExpiresAtMs);
+  if (expiresAtMs > nowMs) return true;
+  return (nowMs - safeSignedInt(clientData.lastSeenAtMs)) <= CLIENT_SITE_PRESENCE_WINDOW_MS;
+}
+
+function buildMorpionWhatsappContactRecord(docSnap, nowMs = Date.now()) {
+  const data = docSnap?.data() || {};
+  const digits = normalizeWhatsappDigits(data.morpionWhatsappDigits || data.morpionWhatsappNumber || "");
+  if (!digits || data.morpionWhatsappVisible !== true) return null;
+  const lastInterestAtMs = safeSignedInt(data.morpionLastInterestAtMs);
+  return {
+    uid: String(docSnap?.id || data.uid || "").trim(),
+    label: buildPrivatePlayerAlias(docSnap?.id || data.uid || ""),
+    whatsappNumber: formatWhatsappDisplayNumber(digits),
+    whatsappDigits: digits,
+    online: isClientOnlineFromPresence(data, nowMs),
+    sitePresencePage: sanitizeText(data.sitePresencePage || "", 40).toLowerCase(),
+    lastInterestAtMs,
+    lastSeenAtMs: safeSignedInt(data.lastSeenAtMs),
   };
 }
 
@@ -1802,6 +1877,10 @@ async function awardAgentCommissionForClientWinTx(tx, options = {}) {
     agentUid,
     monthKey,
   };
+}
+
+async function awardAgentCommissionForClientWin(options = {}) {
+  return db.runTransaction(async (tx) => awardAgentCommissionForClientWinTx(tx, options));
 }
 
 async function trackAgentDepositApprovalTx(tx, options = {}) {
@@ -10638,12 +10717,20 @@ exports.claimWinReward = publicOnCall("claimWinReward", async (request) => {
         }
       });
 
-      provisionalRewardDoes = pendingRewardDoes;
-      approvedRewardDoes = Math.max(0, rewardAmountDoes - provisionalRewardPool - welcomeRewardDoes) + promotedApprovedRewardDoes + welcomeRewardDoes;
+      provisionalRewardDoes = Math.max(0, provisionalRewardPool - promotedApprovedRewardDoes);
     } else if (approvedEntryDoes <= 0 && provisionalEntryDoes > 0) {
-      approvedRewardDoes = 0;
       provisionalRewardDoes = rewardAmountDoes;
     }
+
+    ({
+      approvedRewardDoes,
+      provisionalRewardDoes,
+      welcomeRewardDoes,
+    } = normalizeRewardSettlementSplit({
+      rewardAmountDoes,
+      provisionalRewardDoes,
+      welcomeRewardDoes,
+    }));
 
     console.log("[BALANCE_DEBUG][FUNCTIONS][claimWinReward] reward split", JSON.stringify({
       uid,
@@ -10671,14 +10758,6 @@ exports.claimWinReward = publicOnCall("claimWinReward", async (request) => {
       deltaDoes: rewardAmountDoes,
       deltaExchangedGourdes: 0,
     });
-    const agentCommission = await awardAgentCommissionForClientWinTx(tx, {
-      playerUid: uid,
-      gameType: "domino_classic",
-      roomId,
-      stakeDoes: safeInt(room.entryCostDoes || room.stakeDoes),
-      rewardDoes: rewardAmountDoes,
-      wonAtMs: Date.now(),
-    });
     console.log("[BALANCE_DEBUG][FUNCTIONS][claimWinReward] wallet mutation", JSON.stringify({
       uid,
       roomId,
@@ -10702,14 +10781,38 @@ exports.claimWinReward = publicOnCall("claimWinReward", async (request) => {
       ok: true,
       rewardGranted: true,
       rewardAmountDoes,
+      stakeDoes: safeInt(room.entryCostDoes || room.stakeDoes),
       does: walletMutation.afterDoes,
       approvedRewardDoes,
       provisionalRewardDoes,
-      agentCommissionDoes: safeInt(agentCommission.commissionDoes),
     };
   });
 
-  return result;
+  let agentCommissionDoes = 0;
+  if (result?.rewardGranted === true) {
+    try {
+      const agentCommission = await awardAgentCommissionForClientWin({
+        playerUid: uid,
+        gameType: "domino_classic",
+        roomId,
+        stakeDoes: safeInt(result.stakeDoes),
+        rewardDoes: safeInt(result.rewardAmountDoes),
+        wonAtMs: Date.now(),
+      });
+      agentCommissionDoes = safeInt(agentCommission?.commissionDoes);
+    } catch (error) {
+      console.error("[AGENT_COMMISSION][claimWinReward] skipped", {
+        uid,
+        roomId,
+        error: error?.message || String(error || ""),
+      });
+    }
+  }
+
+  return {
+    ...result,
+    agentCommissionDoes,
+  };
 });
 
 function morpionRoomRef(roomId = "") {
@@ -13039,6 +13142,108 @@ exports.getMorpionMatchmakingHint = publicOnCall("getMorpionMatchmakingHint", as
   };
 }, { invoker: "public" });
 
+exports.getMyMorpionWhatsappPreferenceSecure = publicOnCall("getMyMorpionWhatsappPreferenceSecure", async (request) => {
+  const { uid } = assertAuth(request);
+  const clientSnap = await walletRef(uid).get();
+  const clientData = clientSnap.exists ? (clientSnap.data() || {}) : {};
+  const contact = buildMorpionWhatsappContactRecord(clientSnap, Date.now());
+  return {
+    ok: true,
+    contact,
+    hasSavedNumber: isValidWhatsappDigits(clientData.morpionWhatsappDigits || clientData.morpionWhatsappNumber || ""),
+    visibleInRecentList: clientData.morpionWhatsappVisible === true,
+  };
+}, { invoker: "public" });
+
+exports.saveMorpionWhatsappPreferenceSecure = publicOnCall("saveMorpionWhatsappPreferenceSecure", async (request) => {
+  const { uid, email } = assertAuth(request);
+  const payload = request.data && typeof request.data === "object" ? request.data : {};
+  const rawWhatsappNumber = sanitizePhone(payload.whatsappNumber || payload.phone || "", 40);
+  const whatsappDigits = normalizeWhatsappDigits(rawWhatsappNumber);
+  if (!isValidWhatsappDigits(whatsappDigits)) {
+    throw new HttpsError("invalid-argument", "Numero WhatsApp invalide.");
+  }
+
+  const nowMs = Date.now();
+  await walletRef(uid).set({
+    uid,
+    email: sanitizeEmail(email || "", 160),
+    morpionWhatsappNumber: formatWhatsappDisplayNumber(whatsappDigits),
+    morpionWhatsappDigits: whatsappDigits,
+    morpionWhatsappVisible: true,
+    morpionWhatsappConsentAtMs: nowMs,
+    morpionWhatsappUpdatedAtMs: nowMs,
+    morpionLastInterestAtMs: nowMs,
+    lastSeenAt: admin.firestore.FieldValue.serverTimestamp(),
+    lastSeenAtMs: nowMs,
+    sitePresencePage: "morpion",
+    sitePresenceExpiresAtMs: nowMs + CLIENT_SITE_PRESENCE_WINDOW_MS,
+    updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+  }, { merge: true });
+
+  const savedSnap = await walletRef(uid).get();
+  return {
+    ok: true,
+    contact: buildMorpionWhatsappContactRecord(savedSnap, nowMs),
+  };
+}, { invoker: "public" });
+
+exports.removeMorpionWhatsappPreferenceSecure = publicOnCall("removeMorpionWhatsappPreferenceSecure", async (request) => {
+  const { uid, email } = assertAuth(request);
+  const nowMs = Date.now();
+  await walletRef(uid).set({
+    uid,
+    email: sanitizeEmail(email || "", 160),
+    morpionWhatsappVisible: false,
+    morpionWhatsappRemovedAtMs: nowMs,
+    morpionWhatsappNumber: admin.firestore.FieldValue.delete(),
+    morpionWhatsappDigits: admin.firestore.FieldValue.delete(),
+    updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+    lastSeenAt: admin.firestore.FieldValue.serverTimestamp(),
+    lastSeenAtMs: nowMs,
+    sitePresenceExpiresAtMs: nowMs + CLIENT_SITE_PRESENCE_WINDOW_MS,
+  }, { merge: true });
+
+  return {
+    ok: true,
+    removed: true,
+  };
+}, { invoker: "public" });
+
+exports.listRecentMorpionWhatsappContactsSecure = publicOnCall("listRecentMorpionWhatsappContactsSecure", async (request) => {
+  const { uid } = assertAuth(request);
+  const nowMs = Date.now();
+  const cutoffMs = nowMs - MORPION_WHATSAPP_RECENT_WINDOW_MS;
+  const contactsSnap = await db.collection(CLIENTS_COLLECTION)
+    .where("morpionWhatsappVisible", "==", true)
+    .limit(180)
+    .get();
+
+  const contacts = [];
+  contactsSnap.forEach((docSnap) => {
+    const data = docSnap.data() || {};
+    if (String(docSnap.id || "").trim() === uid) return;
+    const lastInterestAtMs = safeSignedInt(data.morpionLastInterestAtMs);
+    if (lastInterestAtMs <= 0 || lastInterestAtMs < cutoffMs) return;
+    const record = buildMorpionWhatsappContactRecord(docSnap, nowMs);
+    if (!record) return;
+    contacts.push(record);
+  });
+
+  contacts.sort((left, right) => {
+    if (left.online !== right.online) return left.online ? -1 : 1;
+    return safeSignedInt(right.lastInterestAtMs) - safeSignedInt(left.lastInterestAtMs)
+      || safeSignedInt(right.lastSeenAtMs) - safeSignedInt(left.lastSeenAtMs);
+  });
+
+  return {
+    ok: true,
+    nowMs,
+    recentWindowMs: MORPION_WHATSAPP_RECENT_WINDOW_MS,
+    contacts: contacts.slice(0, MORPION_WHATSAPP_LIST_LIMIT),
+  };
+}, { invoker: "public" });
+
 exports.inviteMorpionWaitingPlayer = publicOnCall("inviteMorpionWaitingPlayer", async (request) => {
   const { uid: adminUid, email: adminEmail } = assertFinanceAdmin(request);
   const payload = request.data && typeof request.data === "object" ? request.data : {};
@@ -13300,11 +13505,19 @@ exports.claimWinRewardMorpion = publicOnCall("claimWinRewardMorpion", async (req
         Math.round((rewardAmountDoes * welcomeEntryDoes) / Math.max(1, totalEntryDoes))
       );
       provisionalRewardDoes = provisionalRewardPool;
-      approvedRewardDoes = Math.max(0, rewardAmountDoes - provisionalRewardPool - welcomeRewardDoes) + welcomeRewardDoes;
     } else if (approvedEntryDoes <= 0 && provisionalEntryDoes > 0) {
-      approvedRewardDoes = 0;
       provisionalRewardDoes = rewardAmountDoes;
     }
+
+    ({
+      approvedRewardDoes,
+      provisionalRewardDoes,
+      welcomeRewardDoes,
+    } = normalizeRewardSettlementSplit({
+      rewardAmountDoes,
+      provisionalRewardDoes,
+      welcomeRewardDoes,
+    }));
 
     const walletMutation = await applyWalletMutationTx(tx, {
       uid,
@@ -13319,15 +13532,6 @@ exports.claimWinRewardMorpion = publicOnCall("claimWinRewardMorpion", async (req
       deltaDoes: rewardAmountDoes,
       deltaExchangedGourdes: 0,
     });
-    const agentCommission = await awardAgentCommissionForClientWinTx(tx, {
-      playerUid: uid,
-      gameType: "morpion",
-      roomId,
-      stakeDoes: safeInt(room.entryCostDoes || room.stakeDoes),
-      rewardDoes: rewardAmountDoes,
-      wonAtMs: Date.now(),
-    });
-
     tx.set(settlementRef, {
       uid,
       roomId,
@@ -13341,12 +13545,36 @@ exports.claimWinRewardMorpion = publicOnCall("claimWinRewardMorpion", async (req
       ok: true,
       rewardGranted: true,
       rewardAmountDoes,
+      stakeDoes: safeInt(room.entryCostDoes || room.stakeDoes),
       does: walletMutation.afterDoes,
-      agentCommissionDoes: safeInt(agentCommission.commissionDoes),
     };
   });
 
-  return result;
+  let agentCommissionDoes = 0;
+  if (result?.rewardGranted === true) {
+    try {
+      const agentCommission = await awardAgentCommissionForClientWin({
+        playerUid: uid,
+        gameType: "morpion",
+        roomId,
+        stakeDoes: safeInt(result.stakeDoes),
+        rewardDoes: safeInt(result.rewardAmountDoes),
+        wonAtMs: Date.now(),
+      });
+      agentCommissionDoes = safeInt(agentCommission?.commissionDoes);
+    } catch (error) {
+      console.error("[AGENT_COMMISSION][claimWinRewardMorpion] skipped", {
+        uid,
+        roomId,
+        error: error?.message || String(error || ""),
+      });
+    }
+  }
+
+  return {
+    ...result,
+    agentCommissionDoes,
+  };
 }, { invoker: "public" });
 
 exports.getPublicDuelStakeOptionsSecure = publicOnCall("getPublicDuelStakeOptionsSecure", async () => {
@@ -14350,11 +14578,19 @@ exports.claimWinRewardDuel = publicOnCall("claimWinRewardDuel", async (request) 
         Math.round((rewardAmountDoes * welcomeEntryDoes) / Math.max(1, totalEntryDoes))
       );
       provisionalRewardDoes = provisionalRewardPool;
-      approvedRewardDoes = Math.max(0, rewardAmountDoes - provisionalRewardPool - welcomeRewardDoes) + welcomeRewardDoes;
     } else if (approvedEntryDoes <= 0 && provisionalEntryDoes > 0) {
-      approvedRewardDoes = 0;
       provisionalRewardDoes = rewardAmountDoes;
     }
+
+    ({
+      approvedRewardDoes,
+      provisionalRewardDoes,
+      welcomeRewardDoes,
+    } = normalizeRewardSettlementSplit({
+      rewardAmountDoes,
+      provisionalRewardDoes,
+      welcomeRewardDoes,
+    }));
 
     const walletMutation = await applyWalletMutationTx(tx, {
       uid,
@@ -14369,15 +14605,6 @@ exports.claimWinRewardDuel = publicOnCall("claimWinRewardDuel", async (request) 
       deltaDoes: rewardAmountDoes,
       deltaExchangedGourdes: 0,
     });
-    const agentCommission = await awardAgentCommissionForClientWinTx(tx, {
-      playerUid: uid,
-      gameType: "domino_duel",
-      roomId,
-      stakeDoes: safeInt(room.entryCostDoes || room.stakeDoes),
-      rewardDoes: rewardAmountDoes,
-      wonAtMs: Date.now(),
-    });
-
     tx.set(settlementRef, {
       uid,
       roomId,
@@ -14391,14 +14618,38 @@ exports.claimWinRewardDuel = publicOnCall("claimWinRewardDuel", async (request) 
       ok: true,
       rewardGranted: true,
       rewardAmountDoes,
+      stakeDoes: safeInt(room.entryCostDoes || room.stakeDoes),
       does: walletMutation.afterDoes,
       approvedRewardDoes,
       provisionalRewardDoes,
-      agentCommissionDoes: safeInt(agentCommission.commissionDoes),
     };
   });
 
-  return result;
+  let agentCommissionDoes = 0;
+  if (result?.rewardGranted === true) {
+    try {
+      const agentCommission = await awardAgentCommissionForClientWin({
+        playerUid: uid,
+        gameType: "domino_duel",
+        roomId,
+        stakeDoes: safeInt(result.stakeDoes),
+        rewardDoes: safeInt(result.rewardAmountDoes),
+        wonAtMs: Date.now(),
+      });
+      agentCommissionDoes = safeInt(agentCommission?.commissionDoes);
+    } catch (error) {
+      console.error("[AGENT_COMMISSION][claimWinRewardDuel] skipped", {
+        uid,
+        roomId,
+        error: error?.message || String(error || ""),
+      });
+    }
+  }
+
+  return {
+    ...result,
+    agentCommissionDoes,
+  };
 }, { invoker: "public" });
 
 exports.recordAmbassadorOutcome = publicOnCall("recordAmbassadorOutcome", async (request) => {
@@ -17409,6 +17660,13 @@ exports.creditAgentDepositSecure = publicOnCall(
         exchangeHistory: xchangesSnap.docs.map((item) => item.data() || {}),
       });
 
+      await trackAgentDepositApprovalTx(tx, {
+        clientUid: clientId,
+        approvedAtMs: nowMs,
+        orderId: orderRef.id,
+        amountHtg,
+      });
+
       tx.set(orderRef, orderData, { merge: true });
       tx.set(clientRef, {
         ...buildFundingWalletPatch(fundingSnapshot),
@@ -17424,13 +17682,6 @@ exports.creditAgentDepositSecure = publicOnCall(
         lastSeenAt: admin.firestore.FieldValue.serverTimestamp(),
         lastSeenAtMs: nowMs,
       }, { merge: true });
-
-      await trackAgentDepositApprovalTx(tx, {
-        clientUid: clientId,
-        approvedAtMs: nowMs,
-        orderId: orderRef.id,
-        amountHtg,
-      });
 
       return {
         ok: true,
@@ -18406,6 +18657,15 @@ exports.resolveDepositReviewSecure = publicOnCall("resolveDepositReviewSecure", 
       exchangeHistory: xchangesSnap.docs.map((item) => item.data() || {}),
     });
 
+    if (decision === "approve") {
+      await trackAgentDepositApprovalTx(tx, {
+        clientUid: ownerUid,
+        approvedAtMs: nowMs,
+        orderId,
+        amountHtg: orderAmountHtg,
+      });
+    }
+
     tx.set(orderSnap.ref, nextOrder, { merge: true });
     tx.set(walletRef(ownerUid), {
       ...buildFundingWalletPatch(fundingSnapshot),
@@ -18428,15 +18688,6 @@ exports.resolveDepositReviewSecure = publicOnCall("resolveDepositReviewSecure", 
       withdrawalHoldAtMs: safeInt(nextWallet.withdrawalHoldAtMs),
       updatedAt: admin.firestore.FieldValue.serverTimestamp(),
     }, { merge: true });
-
-    if (decision === "approve") {
-      await trackAgentDepositApprovalTx(tx, {
-        clientUid: ownerUid,
-        approvedAtMs: nowMs,
-        orderId,
-        amountHtg: orderAmountHtg,
-      });
-    }
 
       return {
         ok: true,

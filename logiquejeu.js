@@ -3,6 +3,8 @@ import {
   db,
   collection,
   doc,
+  setDoc,
+  serverTimestamp,
   query,
   where,
   orderBy,
@@ -40,6 +42,8 @@ const ONLINE_USERS_MAX = 100000;
 const ONLINE_USERS_STEP_MS = 30000;
 const ONLINE_USERS_WAVE_PERIOD = 29;
 const ONLINE_USERS_SEED = 0x9e3779b9;
+const CLIENT_SITE_PRESENCE_PING_MS = 25 * 1000;
+const CLIENT_SITE_PRESENCE_TTL_MS = 70 * 1000;
 const URL_PARAMS = new URLSearchParams(window.location.search);
 const SHOULD_AUTOSTART = URL_PARAMS.get("autostart") === "1";
 const FRIEND_ROOM_ID_QUERY = String(URL_PARAMS.get("friendRoomId") || "").trim();
@@ -83,6 +87,49 @@ function getSessionRewardDoes() {
   return resolveRoomRewardDoes(window.GameSession || {});
 }
 
+async function touchClientSitePresence() {
+  const uid = String(currentAuthUser?.uid || "");
+  if (!uid || clientPresenceInFlight) return;
+  clientPresenceInFlight = true;
+  const nowMs = Date.now();
+  try {
+    await setDoc(doc(db, "clients", uid), {
+      uid,
+      email: String(currentAuthUser?.email || ""),
+      lastSeenAt: serverTimestamp(),
+      lastSeenAtMs: nowMs,
+      updatedAt: serverTimestamp(),
+      sitePresencePage: "domino_classic",
+      sitePresenceExpiresAtMs: nowMs + CLIENT_SITE_PRESENCE_TTL_MS,
+    }, { merge: true });
+  } catch (error) {
+    console.warn("[DOMINO] site presence update failed", error);
+  } finally {
+    clientPresenceInFlight = false;
+  }
+}
+
+function stopClientPresenceHeartbeat() {
+  if (clientPresenceTick) {
+    clearInterval(clientPresenceTick);
+    clientPresenceTick = null;
+  }
+}
+
+function startClientPresenceHeartbeat() {
+  const uid = String(currentAuthUser?.uid || "");
+  if (!uid) {
+    stopClientPresenceHeartbeat();
+    return;
+  }
+  stopClientPresenceHeartbeat();
+  void touchClientSitePresence();
+  clientPresenceTick = setInterval(() => {
+    if (document.visibilityState !== "visible") return;
+    void touchClientSitePresence();
+  }, CLIENT_SITE_PRESENCE_PING_MS);
+}
+
 function getSessionEntryCostDoes() {
   return Number.parseInt(String(window.GameSession?.entryCostDoes || ENTRY_COST_DOES_RESOLVED), 10) || DEFAULT_ENTRY_COST_DOES;
 }
@@ -118,6 +165,9 @@ let botTurnNudgeKey = "";
 let startTimer = null;
 let waitingStartKickInFlightId = "";
 let waitingStartKickLastAtMs = 0;
+let currentAuthUser = null;
+let clientPresenceTick = null;
+let clientPresenceInFlight = false;
 let turnTimer = null;
 let turnTimerKey = "";
 let turnTick = null;
@@ -2882,7 +2932,13 @@ window.addEventListener("orientationchange", onOrientationMaybeChanged);
 window.addEventListener("xchangeUpdated", refreshDoesHud);
 window.addEventListener("userBalanceUpdated", refreshDoesHud);
 window.addEventListener("storage", refreshDoesHud);
+window.addEventListener("visibilitychange", () => {
+  if (document.visibilityState === "visible") {
+    void touchClientSitePresence();
+  }
+});
 window.addEventListener("beforeunload", () => {
+  stopClientPresenceHeartbeat();
   if (onlineUsersTick) {
     clearInterval(onlineUsersTick);
     onlineUsersTick = null;
@@ -2896,7 +2952,9 @@ refreshDoesHud();
 updateOrientationGuard();
 
 onAuthStateChanged(auth, (user) => {
+  currentAuthUser = user || null;
   if (!user) {
+    stopClientPresenceHeartbeat();
     resetSessionState();
     resumeDeclined = false;
     pendingStartAfterRotate = false;
@@ -2904,6 +2962,7 @@ onAuthStateChanged(auth, (user) => {
     updateOrientationGuard();
     return;
   }
+  startClientPresenceHeartbeat();
   refreshDoesHud();
   updateOrientationGuard();
   resumeSession().then(() => {

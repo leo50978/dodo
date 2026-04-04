@@ -2,6 +2,8 @@ import {
   auth,
   db,
   doc,
+  setDoc,
+  serverTimestamp,
   onSnapshot,
   onAuthStateChanged,
 } from "./firebase-init.js";
@@ -16,6 +18,10 @@ import {
   getMyActiveMorpionInviteSecure,
   respondMorpionPlayInviteSecure,
   getMorpionMatchmakingHintSecure,
+  getMyMorpionWhatsappPreferenceSecure,
+  saveMorpionWhatsappPreferenceSecure,
+  removeMorpionWhatsappPreferenceSecure,
+  listRecentMorpionWhatsappContactsSecure,
 } from "./secure-functions.js";
 
 const MORPION_ROOMS = "morpionRooms";
@@ -26,6 +32,8 @@ const TURN_LIMIT_MS = TURN_LIMIT_SECONDS * 1000;
 const MATCHMAKING_WAIT_SECONDS = 15;
 const MATCHMAKING_WAIT_MS = MATCHMAKING_WAIT_SECONDS * 1000;
 const PRESENCE_PING_MS = 20 * 1000;
+const SITE_PRESENCE_PING_MS = 25 * 1000;
+const SITE_PRESENCE_TTL_MS = 70 * 1000;
 const INVITE_POLL_MS = 6 * 1000;
 const ABANDONED_ROOMS_STORAGE_KEY = "domino_morpion_abandoned_rooms_v1";
 const MORPION_BOT_NUMERIC_IDS = Object.freeze([35601379, 40507232, 41752992]);
@@ -56,6 +64,21 @@ const dom = {
   waitingExtendBtn: document.getElementById("morpionWaitingExtendBtn"),
   waitingStopExtendBtn: document.getElementById("morpionWaitingStopExtendBtn"),
   waitingNotifyBtn: document.getElementById("morpionWaitingNotifyBtn"),
+  waitingWhatsappBtn: document.getElementById("morpionWaitingWhatsappBtn"),
+  waitingContactsBtn: document.getElementById("morpionWaitingContactsBtn"),
+  whatsappModal: document.getElementById("morpionWhatsappModal"),
+  whatsappInput: document.getElementById("morpionWhatsappInput"),
+  whatsappStatus: document.getElementById("morpionWhatsappStatus"),
+  whatsappSaveBtn: document.getElementById("morpionWhatsappSaveBtn"),
+  whatsappRemoveBtn: document.getElementById("morpionWhatsappRemoveBtn"),
+  whatsappCloseBtn: document.getElementById("morpionWhatsappCloseBtn"),
+  whatsappSavedWrap: document.getElementById("morpionWhatsappSavedWrap"),
+  whatsappSavedValue: document.getElementById("morpionWhatsappSavedValue"),
+  whatsappCloseTargets: Array.from(document.querySelectorAll("[data-whatsapp-close]")),
+  contactsModal: document.getElementById("morpionContactsModal"),
+  contactsList: document.getElementById("morpionContactsList"),
+  contactsCloseBtn: document.getElementById("morpionContactsCloseBtn"),
+  contactsCloseTargets: Array.from(document.querySelectorAll("[data-contacts-close]")),
   resultModal: document.getElementById("morpionResultModal"),
   resultEyebrow: document.getElementById("morpionResultEyebrow"),
   resultTitle: document.getElementById("morpionResultTitle"),
@@ -90,6 +113,7 @@ let currentSeatIndex = -1;
 let roomUnsub = null;
 let stateUnsub = null;
 let presenceTimer = null;
+let sitePresenceTimer = null;
 let turnTick = null;
 let waitingEnsureTimer = null;
 let botTurnNudgeTimer = null;
@@ -103,6 +127,7 @@ let startRevealAcked = false;
 let leavingRoom = false;
 let turnTimeoutRequestInFlight = false;
 let presencePingInFlight = false;
+let sitePresencePingInFlight = false;
 let clientUnsub = null;
 let currentDoesBalance = null;
 let endResultTimer = null;
@@ -124,6 +149,9 @@ let matchmakingHintRoomId = "";
 let matchmakingHintCheckedAtMs = 0;
 let matchmakingHintHasOddPlayingHumans = false;
 let matchmakingHintMessage = "";
+let myWhatsappContact = null;
+let recentWhatsappContacts = [];
+let whatsappPreferenceLoaded = false;
 
 function morpionDebug(event, payload = {}) {
   try {
@@ -261,6 +289,226 @@ function renderWalletValue() {
   dom.walletValue.textContent = `${formatDoesAmount(currentDoesBalance)} Does`;
 }
 
+function normalizeWhatsappInput(value = "") {
+  return String(value || "")
+    .replace(/[^\d+\-\s().]/g, "")
+    .trim()
+    .slice(0, 40);
+}
+
+function extractDigits(value = "") {
+  return String(value || "").replace(/\D/g, "");
+}
+
+function formatWhatsappValue(value = "") {
+  const digits = extractDigits(value);
+  if (!digits) return "";
+  return value.startsWith("+") ? value : `+${digits}`;
+}
+
+function formatRecentContactTime(value = 0) {
+  const safeValue = Number(value);
+  if (!Number.isFinite(safeValue) || safeValue <= 0) return "";
+  try {
+    return new Intl.DateTimeFormat("fr-FR", {
+      dateStyle: "short",
+      timeStyle: "short",
+    }).format(new Date(safeValue));
+  } catch (_) {
+    return "";
+  }
+}
+
+function buildWhatsappDeepLink(digits = "") {
+  const normalizedDigits = extractDigits(digits);
+  if (!normalizedDigits) return "";
+  const message = encodeURIComponent("Bonjour, je veux jouer au morpion sur Dominoes Lakay. Es-tu disponible ?");
+  return `https://wa.me/${normalizedDigits}?text=${message}`;
+}
+
+function setWhatsappStatus(message = "", tone = "") {
+  if (!dom.whatsappStatus) return;
+  dom.whatsappStatus.textContent = String(message || "");
+  dom.whatsappStatus.classList.toggle("is-error", tone === "error");
+  dom.whatsappStatus.classList.toggle("is-success", tone === "success");
+}
+
+function renderWhatsappPreference() {
+  const savedNumber = String(myWhatsappContact?.whatsappNumber || "").trim();
+  if (dom.whatsappSavedWrap) dom.whatsappSavedWrap.classList.toggle("hidden", !savedNumber);
+  if (dom.whatsappSavedValue) dom.whatsappSavedValue.textContent = savedNumber || "";
+  if (dom.whatsappRemoveBtn) dom.whatsappRemoveBtn.classList.toggle("hidden", !savedNumber);
+  if (dom.whatsappInput && document.activeElement !== dom.whatsappInput) {
+    dom.whatsappInput.value = savedNumber || dom.whatsappInput.value || "";
+  }
+}
+
+function openWhatsappModal() {
+  dom.whatsappModal?.classList.remove("hidden");
+  renderWhatsappPreference();
+  if (whatsappPreferenceLoaded && myWhatsappContact) {
+    setWhatsappStatus("Ton numero est deja partage. Tu peux le mettre a jour ou le retirer.", "success");
+  } else if (whatsappPreferenceLoaded && !myWhatsappContact) {
+    setWhatsappStatus("Ton numero n'est pas encore partage. Tu peux l'ajouter ici.", "");
+  }
+}
+
+function closeWhatsappModal() {
+  dom.whatsappModal?.classList.add("hidden");
+}
+
+function closeContactsModal() {
+  dom.contactsModal?.classList.add("hidden");
+}
+
+function renderRecentWhatsappContacts() {
+  if (!dom.contactsList) return;
+  if (!Array.isArray(recentWhatsappContacts) || recentWhatsappContacts.length === 0) {
+    dom.contactsList.innerHTML = `
+      <div class="contact-empty">
+        Aucun numero recent n'est disponible pour le moment. Laisse ton WhatsApp pour aider les prochains joueurs a te retrouver.
+      </div>
+    `;
+    return;
+  }
+
+  dom.contactsList.innerHTML = recentWhatsappContacts.map((contact, index) => {
+    const label = String(contact?.label || `Joueur ${index + 1}`);
+    const whatsappNumber = String(contact?.whatsappNumber || "").trim();
+    const whatsappDigits = extractDigits(contact?.whatsappDigits || whatsappNumber);
+    const online = contact?.online === true;
+    const presenceLabel = online ? "En ligne" : "Hors ligne";
+    const lastSeen = formatRecentContactTime(contact?.lastInterestAtMs || contact?.lastSeenAtMs);
+    const whatsappLink = buildWhatsappDeepLink(whatsappDigits);
+    return `
+      <article class="contact-card">
+        <div class="contact-card__top">
+          <div class="contact-card__identity">
+            <div class="contact-card__label">${label}</div>
+            <div class="contact-card__value">${whatsappNumber}</div>
+            <div class="contact-card__meta">${lastSeen ? `Actif le ${lastSeen}` : "Activite recente"}<\/div>
+          </div>
+          <span class="presence-pill ${online ? "is-online" : ""}">
+            <span class="presence-pill__dot"><\/span>
+            ${presenceLabel}
+          <\/span>
+        </div>
+        <div class="contact-card__actions">
+          <button class="btn btn--primary" type="button" data-contact-action="copy" data-contact-number="${whatsappNumber}">
+            Copier
+          <\/button>
+          <a class="btn btn--ghost" href="${whatsappLink || "#"}" ${whatsappLink ? `target="_blank" rel="noopener noreferrer"` : `aria-disabled="true"`}>
+            WhatsApp
+          <\/a>
+        </div>
+      </article>
+    `;
+  }).join("");
+}
+
+async function copyToClipboard(value = "") {
+  const safeValue = String(value || "").trim();
+  if (!safeValue) return false;
+  try {
+    await navigator.clipboard.writeText(safeValue);
+    return true;
+  } catch (_) {
+    return false;
+  }
+}
+
+async function loadWhatsappPreference(force = false) {
+  if (!currentUser?.uid) return;
+  if (whatsappPreferenceLoaded && !force) return;
+  try {
+    const result = await getMyMorpionWhatsappPreferenceSecure({});
+    myWhatsappContact = result?.contact && typeof result.contact === "object" ? result.contact : null;
+    whatsappPreferenceLoaded = true;
+    renderWhatsappPreference();
+  } catch (error) {
+    console.warn("[MORPION] load whatsapp preference failed", error);
+  }
+}
+
+async function saveWhatsappPreference() {
+  const rawValue = normalizeWhatsappInput(dom.whatsappInput?.value || "");
+  if (!extractDigits(rawValue)) {
+    setWhatsappStatus("Entre un numero WhatsApp valide pour continuer.", "error");
+    return;
+  }
+
+  if (dom.whatsappSaveBtn) dom.whatsappSaveBtn.disabled = true;
+  setWhatsappStatus("Enregistrement du numero...", "");
+  try {
+    const result = await saveMorpionWhatsappPreferenceSecure({ whatsappNumber: rawValue });
+    myWhatsappContact = result?.contact && typeof result.contact === "object" ? result.contact : null;
+    whatsappPreferenceLoaded = true;
+    renderWhatsappPreference();
+    setWhatsappStatus("Ton numero WhatsApp est maintenant visible dans la liste des joueurs recents.", "success");
+  } catch (error) {
+    setWhatsappStatus(error?.message || "Impossible d'enregistrer ton numero pour le moment.", "error");
+  } finally {
+    if (dom.whatsappSaveBtn) dom.whatsappSaveBtn.disabled = false;
+  }
+}
+
+async function removeWhatsappPreference() {
+  if (dom.whatsappRemoveBtn) dom.whatsappRemoveBtn.disabled = true;
+  setWhatsappStatus("Retrait du numero...", "");
+  try {
+    await removeMorpionWhatsappPreferenceSecure({});
+    myWhatsappContact = null;
+    whatsappPreferenceLoaded = true;
+    if (dom.whatsappInput) dom.whatsappInput.value = "";
+    renderWhatsappPreference();
+    setWhatsappStatus("Ton numero a ete retire de la liste des joueurs recents.", "success");
+  } catch (error) {
+    setWhatsappStatus(error?.message || "Impossible de retirer ton numero pour le moment.", "error");
+  } finally {
+    if (dom.whatsappRemoveBtn) dom.whatsappRemoveBtn.disabled = false;
+  }
+}
+
+async function loadRecentWhatsappContacts() {
+  if (!dom.contactsList) return;
+  dom.contactsList.innerHTML = `<div class="contact-empty">Chargement des joueurs recents...<\/div>`;
+  try {
+    const result = await listRecentMorpionWhatsappContactsSecure({});
+    recentWhatsappContacts = Array.isArray(result?.contacts) ? result.contacts : [];
+    renderRecentWhatsappContacts();
+  } catch (error) {
+    recentWhatsappContacts = [];
+    dom.contactsList.innerHTML = `<div class="contact-empty">${String(error?.message || "Impossible de charger la liste pour le moment.")}<\/div>`;
+  }
+}
+
+async function openContactsModal() {
+  dom.contactsModal?.classList.remove("hidden");
+  await loadRecentWhatsappContacts();
+}
+
+async function touchClientSitePresence() {
+  if (!currentUser?.uid || sitePresencePingInFlight) return;
+  sitePresencePingInFlight = true;
+  const nowMs = Date.now();
+  try {
+    await setDoc(doc(db, "clients", currentUser.uid), {
+      uid: currentUser.uid,
+      email: String(currentUser.email || ""),
+      lastSeenAt: serverTimestamp(),
+      lastSeenAtMs: nowMs,
+      updatedAt: serverTimestamp(),
+      sitePresencePage: "morpion",
+      sitePresenceExpiresAtMs: nowMs + SITE_PRESENCE_TTL_MS,
+      morpionLastInterestAtMs: nowMs,
+    }, { merge: true });
+  } catch (error) {
+    console.warn("[MORPION] site presence update failed", error);
+  } finally {
+    sitePresencePingInFlight = false;
+  }
+}
+
 function currentBoard() {
   const board = Array.isArray(currentGameState?.board) ? currentGameState.board : [];
   return board.length === 225 ? board : Array.from({ length: 225 }, () => -1);
@@ -334,12 +582,16 @@ function setWaitingActionsVisibility({
   showExtend = true,
   showStopExtended = false,
   showNotify = true,
+  showWhatsapp = true,
+  showContacts = true,
 } = {}) {
   if (dom.waitingHomeBtn) dom.waitingHomeBtn.classList.toggle("hidden", !showHome);
   if (dom.waitingRetryBtn) dom.waitingRetryBtn.classList.toggle("hidden", !showRetry);
   if (dom.waitingExtendBtn) dom.waitingExtendBtn.classList.toggle("hidden", !showExtend);
   if (dom.waitingStopExtendBtn) dom.waitingStopExtendBtn.classList.toggle("hidden", !showStopExtended);
   if (dom.waitingNotifyBtn) dom.waitingNotifyBtn.classList.toggle("hidden", !showNotify);
+  if (dom.waitingWhatsappBtn) dom.waitingWhatsappBtn.classList.toggle("hidden", !showWhatsapp);
+  if (dom.waitingContactsBtn) dom.waitingContactsBtn.classList.toggle("hidden", !showContacts);
 }
 
 function renderMatchmakingWaitingModal() {
@@ -410,6 +662,8 @@ function renderMatchmakingWaitingModal() {
       showExtend: false,
       showStopExtended: true,
       showNotify: showNotifyAction,
+      showWhatsapp: true,
+      showContacts: true,
     });
     return;
   }
@@ -430,6 +684,8 @@ function renderMatchmakingWaitingModal() {
     showExtend: true,
     showStopExtended: false,
     showNotify: showNotifyAction,
+    showWhatsapp: true,
+    showContacts: true,
   });
 }
 
@@ -766,6 +1022,13 @@ function stopPresencePing() {
   }
 }
 
+function stopSitePresencePing() {
+  if (sitePresenceTimer) {
+    window.clearInterval(sitePresenceTimer);
+    sitePresenceTimer = null;
+  }
+}
+
 function stopTurnTick() {
   if (turnTick) {
     window.clearInterval(turnTick);
@@ -821,6 +1084,15 @@ function startPresencePing() {
   presenceTimer = window.setInterval(() => {
     void pingPresence();
   }, PRESENCE_PING_MS);
+}
+
+function startSitePresencePing() {
+  stopSitePresencePing();
+  void touchClientSitePresence();
+  sitePresenceTimer = window.setInterval(() => {
+    if (document.visibilityState !== "visible") return;
+    void touchClientSitePresence();
+  }, SITE_PRESENCE_PING_MS);
 }
 
 function startTurnTicker() {
@@ -1283,6 +1555,40 @@ function bindEvents() {
   dom.waitingNotifyBtn?.addEventListener("click", () => {
     void requestMatchmakingNotifications();
   });
+  dom.waitingWhatsappBtn?.addEventListener("click", () => {
+    if (!whatsappPreferenceLoaded) {
+      void loadWhatsappPreference(true);
+    }
+    openWhatsappModal();
+  });
+  dom.waitingContactsBtn?.addEventListener("click", () => {
+    void openContactsModal();
+  });
+  dom.whatsappSaveBtn?.addEventListener("click", () => {
+    void saveWhatsappPreference();
+  });
+  dom.whatsappRemoveBtn?.addEventListener("click", () => {
+    void removeWhatsappPreference();
+  });
+  dom.whatsappCloseBtn?.addEventListener("click", closeWhatsappModal);
+  dom.whatsappCloseTargets.forEach((target) => target.addEventListener("click", closeWhatsappModal));
+  dom.contactsCloseBtn?.addEventListener("click", closeContactsModal);
+  dom.contactsCloseTargets.forEach((target) => target.addEventListener("click", closeContactsModal));
+  dom.contactsList?.addEventListener("click", (event) => {
+    const target = event.target instanceof HTMLElement ? event.target.closest("[data-contact-action]") : null;
+    if (!(target instanceof HTMLElement)) return;
+    const action = String(target.dataset.contactAction || "").trim();
+    if (action !== "copy") return;
+    const number = String(target.dataset.contactNumber || "").trim();
+    void copyToClipboard(number).then((copied) => {
+      if (copied) {
+        target.textContent = "Copie !";
+        window.setTimeout(() => {
+          target.textContent = "Copier";
+        }, 1200);
+      }
+    });
+  });
   dom.ruleContinueBtn?.addEventListener("click", () => {
     turnRuleAccepted = true;
     closeRuleModal();
@@ -1292,6 +1598,7 @@ function bindEvents() {
   });
 
   window.addEventListener("pagehide", () => {
+    stopSitePresencePing();
     if (currentRoomId) {
       markRoomAbandoned(currentRoomId);
     }
@@ -1300,6 +1607,7 @@ function bindEvents() {
   document.addEventListener("visibilitychange", () => {
     if (document.visibilityState === "visible") {
       void pingPresence();
+      void touchClientSitePresence();
     }
   });
 
@@ -1316,15 +1624,18 @@ function init() {
   onAuthStateChanged(auth, (user) => {
     currentUser = user || null;
     if (!currentUser) {
+      stopSitePresencePing();
       stopInvitePoll();
       closeInviteModal();
       stopClientSubscription();
       window.location.href = "./auth.html";
       return;
     }
+    startSitePresencePing();
     startInvitePoll();
     void pollActiveInvite();
     subscribeToClient(currentUser.uid);
+    void loadWhatsappPreference(true);
     if (!turnRuleAccepted) {
       openRuleModal();
       return;
