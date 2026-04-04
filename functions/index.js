@@ -4205,7 +4205,7 @@ async function computeDuelBotPilotSnapshot(options = {}) {
     if (endedAtMs < range.startMs || endedAtMs > range.endMs) return;
     if (String(data.status || "").trim().toLowerCase() !== "ended") return;
     if (String(data.roomMode || "").trim().toLowerCase() === "duel_friends") return;
-    if (safeInt(data.botCount) <= 0) return;
+    if (inferDuelResultBotCount(data) <= 0) return;
 
     roomsCount += 1;
     const roomCollectedGross = safeInt(data.companyCollectedDoes);
@@ -4535,7 +4535,7 @@ async function computeMorpionPilotSnapshot(options = {}) {
     netDoes += roomNet;
 
     const humanCount = safeInt(data.humanCount);
-    const botCount = safeInt(data.botCount);
+    const botCount = inferDuelResultBotCount(data);
     const composition = getMorpionCompositionMeta(humanCount, botCount);
     const winnerType = String(data.winnerType || "").trim().toLowerCase();
     if (composition.key === "human_only") {
@@ -4889,7 +4889,7 @@ async function computeDuelAnalyticsSnapshot(options = {}) {
 
     matchesPlayed += 1;
 
-    const botCount = safeInt(data.botCount);
+    const botCount = inferDuelResultBotCount(data);
     const withBot = botCount > 0;
     if (withBot) matchesWithBot += 1;
 
@@ -7491,15 +7491,25 @@ function buildExpiredHumanDuelMoves(room, state) {
   }
 
   if (Array.isArray(liveState.stockPile) && liveState.stockPile.length > 0) {
-    const drawnTileId = pickRandomItem(liveState.stockPile);
-    if (Number.isFinite(drawnTileId)) {
-      plannedMoves.push(buildDuelDrawMove(seat, Math.trunc(drawnTileId)));
-      return plannedMoves;
-    }
+    plannedMoves.push(buildDuelDrawMove(seat));
+    return plannedMoves;
   }
 
   plannedMoves.push(buildDuelPassMove(seat));
   return plannedMoves;
+}
+
+function inferDuelResultBotCount(data = {}) {
+  const storedBotCount = safeInt(data.botCount);
+  if (storedBotCount > 0) return storedBotCount;
+  const humanCount = safeInt(data.humanCount);
+  if (humanCount >= 0 && humanCount <= 2) {
+    return Math.max(0, 2 - humanCount);
+  }
+  const playerUids = Array.isArray(data.playerUids)
+    ? data.playerUids.map((item) => String(item || "").trim()).filter(Boolean)
+    : [];
+  return Math.max(0, 2 - playerUids.length);
 }
 
 function buildPlayMoveFromDuelLegal(seat, move) {
@@ -7966,8 +7976,8 @@ function buildStartedDuelRoomTransaction(tx, roomRefDoc, room = {}, options = {}
     startRevealPending: finalState.winnerSeat < 0,
     startRevealAckUids: [],
     startedHumanCount: humans,
-    startedBotCount: 0,
-    botCount: 0,
+    startedBotCount: Math.max(0, 2 - humans),
+    botCount: Math.max(0, 2 - humans),
     botDifficulty: configuredBotDifficulty,
     startedAt: admin.firestore.FieldValue.serverTimestamp(),
     startedAtMs: nowMs,
@@ -13775,8 +13785,7 @@ exports.getMorpionLiveMatchmakingSignal = publicOnCall("getMorpionLiveMatchmakin
   const nowMs = Date.now();
   const queueSnap = await db.collection(MORPION_WAITING_REQUESTS_COLLECTION)
     .where("status", "in", ["pending", "accepted_invite"])
-    .orderBy("updatedAtMs", "desc")
-    .limit(40)
+    .limit(60)
     .get();
 
   const rows = [];
@@ -13793,6 +13802,20 @@ exports.getMorpionLiveMatchmakingSignal = publicOnCall("getMorpionLiveMatchmakin
       createdAtMs: safeSignedInt(data.createdAtMs),
     });
   });
+
+  rows.sort((left, right) => (
+    Math.max(
+      safeSignedInt(right.updatedAtMs),
+      safeSignedInt(right.lastSeenMs),
+      safeSignedInt(right.lastAttemptAtMs),
+      safeSignedInt(right.createdAtMs)
+    ) - Math.max(
+      safeSignedInt(left.updatedAtMs),
+      safeSignedInt(left.lastSeenMs),
+      safeSignedInt(left.lastAttemptAtMs),
+      safeSignedInt(left.createdAtMs)
+    )
+  ));
 
   const activeOthers = rows.filter((row) => row.uid !== uid);
   const newest = activeOthers[0] || null;
