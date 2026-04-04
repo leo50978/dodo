@@ -41,9 +41,9 @@
       }
 
       .page {
-        width: min(1240px, calc(100% - 20px));
+        width: min(1240px, calc(100% - 16px));
         margin: 0 auto;
-        padding: 14px 0 28px;
+        padding: 12px 0 28px;
       }
 
       .glass {
@@ -56,10 +56,7 @@
       }
 
       .topbar {
-        display: flex;
-        flex-wrap: wrap;
-        align-items: center;
-        justify-content: space-between;
+        display: grid;
         gap: 12px;
         padding: 16px;
       }
@@ -88,6 +85,11 @@
         overflow-wrap: anywhere;
       }
 
+      .hero-grid {
+        display: grid;
+        gap: 14px;
+      }
+
       .actions {
         display: flex;
         flex-wrap: wrap;
@@ -107,6 +109,39 @@
         text-decoration: none;
         text-align: center;
         flex: 1 1 100%;
+      }
+
+      .hero-meta {
+        display: grid;
+        gap: 10px;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+      }
+
+      .hero-chip {
+        min-width: 0;
+        border: 1px solid var(--line);
+        border-radius: 18px;
+        padding: 12px;
+        background: rgba(255, 255, 255, 0.035);
+      }
+
+      .hero-chip strong,
+      .hero-chip span {
+        display: block;
+        overflow-wrap: anywhere;
+      }
+
+      .hero-chip strong {
+        font-size: 0.72rem;
+        letter-spacing: 0.12em;
+        text-transform: uppercase;
+        color: var(--muted);
+      }
+
+      .hero-chip span {
+        margin-top: 8px;
+        font-size: 0.98rem;
+        font-weight: 700;
       }
 
       .btn.primary {
@@ -158,8 +193,10 @@
 
       .value {
         margin-top: 10px;
-        font-size: 1.9rem;
+        font-size: clamp(1.48rem, 6vw, 1.9rem);
         font-weight: 800;
+        line-height: 1.06;
+        overflow-wrap: anywhere;
       }
 
       .subvalue {
@@ -220,15 +257,144 @@
         margin-top: 14px;
       }
 
+      .analytics-grid {
+        display: grid;
+        gap: 16px;
+        margin-top: 18px;
+      }
+
+      .chart-card {
+        padding: 16px;
+        border-radius: 24px;
+        border: 1px solid var(--line);
+        background: rgba(255, 255, 255, 0.03);
+      }
+
+      .chart-head {
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+        min-width: 0;
+      }
+
+      .chart-svg {
+        width: 100%;
+        height: 220px;
+        display: block;
+        margin-top: 14px;
+      }
+
+      .donut-wrap {
+        display: grid;
+        gap: 14px;
+        align-items: center;
+      }
+
+      .donut-svg {
+        width: min(100%, 300px);
+        height: 220px;
+        justify-self: center;
+      }
+
+      .legend-list {
+        display: grid;
+        gap: 10px;
+      }
+
+      .legend-item {
+        display: grid;
+        grid-template-columns: auto 1fr auto;
+        gap: 10px;
+        align-items: center;
+        min-width: 0;
+        border-radius: 16px;
+        padding: 10px 12px;
+        background: rgba(255, 255, 255, 0.035);
+        border: 1px solid rgba(255, 255, 255, 0.06);
+      }
+
+      .legend-dot {
+        width: 10px;
+        height: 10px;
+        border-radius: 999px;
+      }
+
+      .legend-item strong,
+      .legend-item span {
+        overflow-wrap: anywhere;
+      }
+
+      .legend-item strong {
+        font-size: 0.9rem;
+      }
+
+      .legend-item span {
+        color: var(--muted);
+        font-size: 0.84rem;
+        text-align: right;
+      }
+
       .hint {
         margin-top: 10px;
         color: var(--muted);
         font-size: 0.9rem;
+        overflow-wrap: anywhere;
       }
 
       .table-wrap {
         width: 100%;
         overflow-x: auto;
+      }
+
+      .desktop-table {
+        display: none;
+      }
+
+      .mobile-statement-list {
+        display: grid;
+        gap: 12px;
+        margin-top: 14px;
+      }
+
+      .statement-card {
+        border-radius: 18px;
+        border: 1px solid var(--line);
+        background: rgba(255, 255, 255, 0.03);
+        padding: 14px;
+      }
+
+      .statement-card-head {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        justify-content: space-between;
+        gap: 8px;
+      }
+
+      .statement-grid {
+        display: grid;
+        gap: 10px;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        margin-top: 12px;
+      }
+
+      .statement-cell strong,
+      .statement-cell span {
+        display: block;
+        overflow-wrap: anywhere;
+      }
+
+      .statement-cell strong {
+        font-size: 0.72rem;
+        letter-spacing: 0.1em;
+        text-transform: uppercase;
+        color: var(--muted);
+      }
+
+      .statement-cell span {
+        margin-top: 6px;
+        font-size: 0.92rem;
+        font-weight: 700;
       }
 
       table {
@@ -313,6 +479,11 @@
           padding: 18px 20px;
         }
 
+        .hero-grid {
+          grid-template-columns: minmax(0, 1.45fr) minmax(280px, 0.55fr);
+          align-items: start;
+        }
+
         .actions {
           width: auto;
         }
@@ -329,6 +500,18 @@
           flex-direction: row;
           align-items: baseline;
         }
+
+        .donut-wrap {
+          grid-template-columns: minmax(220px, 0.9fr) minmax(0, 1.1fr);
+        }
+
+        .desktop-table {
+          display: block;
+        }
+
+        .mobile-statement-list {
+          display: none;
+        }
       }
 
       @media (min-width: 980px) {
@@ -339,19 +522,43 @@
         .content-grid {
           grid-template-columns: minmax(0, 1.3fr) minmax(320px, 0.7fr);
         }
+
+        .analytics-grid {
+          grid-template-columns: repeat(2, minmax(0, 1fr));
+        }
       }
     </style>
   </head>
   <body>
     <main class="page">
       <section class="glass topbar">
-        <div>
-          <p class="eyebrow">Espace Agent</p>
-          <h1>Ton activité agent</h1>
-          <p class="copy">
-            Suis ton code promo, ton budget d'acquisition, tes gains mensuels, tes dépôts suivis et les utilisateurs déjà rattachés à ton activité.
-          </p>
-          <div id="agentDashboardStatus" class="status"></div>
+        <div class="hero-grid">
+          <div>
+            <p class="eyebrow">Espace Agent</p>
+            <h1>Ton activité agent</h1>
+            <p class="copy">
+              Suis ton code promo, ton budget d'acquisition, tes gains mensuels, tes dépôts suivis et les utilisateurs déjà rattachés à ton activité.
+            </p>
+            <div id="agentDashboardStatus" class="status"></div>
+          </div>
+          <div class="hero-meta">
+            <div class="hero-chip">
+              <strong>Statut payroll</strong>
+              <span id="agentHeroPayrollMonth">Aucun mois clôturé</span>
+            </div>
+            <div class="hero-chip">
+              <strong>Dernière activité</strong>
+              <span id="agentHeroLastSeen">-</span>
+            </div>
+            <div class="hero-chip">
+              <strong>Activation</strong>
+              <span id="agentHeroActivatedAt">-</span>
+            </div>
+            <div class="hero-chip">
+              <strong>Code promo</strong>
+              <span id="agentHeroPromo">-</span>
+            </div>
+          </div>
         </div>
         <div class="actions">
           <a class="btn" href="./profil.html">Retour profil</a>
@@ -411,12 +618,40 @@
             <div id="agentTrendHint" class="hint">Les mois clôturés apparaitront ici au moment du payroll.</div>
           </div>
 
+          <div class="analytics-grid">
+            <section class="chart-card">
+              <div class="chart-head">
+                <div>
+                  <div class="label">Diagramme réseau</div>
+                  <div class="subvalue">Répartition de ton entonnoir entre inscriptions, dépôts et victoires suivies.</div>
+                </div>
+              </div>
+              <div class="donut-wrap">
+                <svg id="agentNetworkSvg" class="donut-svg" viewBox="0 0 240 220" preserveAspectRatio="xMidYMid meet"></svg>
+                <div id="agentNetworkLegend" class="legend-list"></div>
+              </div>
+              <div id="agentNetworkHint" class="hint">Les nouveaux filleuls et leurs performances apparaîtront ici.</div>
+            </section>
+
+            <section class="chart-card">
+              <div class="chart-head">
+                <div>
+                  <div class="label">Diagramme mensuel</div>
+                  <div class="subvalue">Comparaison rapide des inscriptions, dépôts et victoires sur les derniers mois.</div>
+                </div>
+              </div>
+              <svg id="agentVolumeSvg" class="chart-svg" viewBox="0 0 720 220" preserveAspectRatio="none"></svg>
+              <div id="agentVolumeHint" class="hint">Le mois le plus récent apparait à droite.</div>
+            </section>
+          </div>
+
           <div class="glass card" style="margin-top:18px; padding:0;">
             <div style="padding:18px 18px 0;">
               <h2>Historique mensuel</h2>
             </div>
             <div style="padding:0 18px 18px;">
-              <div class="table-wrap">
+              <div id="agentMonthlyCards" class="mobile-statement-list"></div>
+              <div class="table-wrap desktop-table">
                 <table>
                   <thead>
                     <tr>

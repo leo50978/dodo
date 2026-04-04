@@ -16,10 +16,20 @@ const dom = {
   promoLink: document.getElementById("agentPromoLink"),
   copyPromoBtn: document.getElementById("agentCopyPromoBtn"),
   copyLinkBtn: document.getElementById("agentCopyLinkBtn"),
+  heroPayrollMonth: document.getElementById("agentHeroPayrollMonth"),
+  heroLastSeen: document.getElementById("agentHeroLastSeen"),
+  heroActivatedAt: document.getElementById("agentHeroActivatedAt"),
+  heroPromo: document.getElementById("agentHeroPromo"),
   trendHighlight: document.getElementById("agentTrendHighlight"),
   trendSvg: document.getElementById("agentTrendSvg"),
   trendHint: document.getElementById("agentTrendHint"),
+  networkSvg: document.getElementById("agentNetworkSvg"),
+  networkLegend: document.getElementById("agentNetworkLegend"),
+  networkHint: document.getElementById("agentNetworkHint"),
+  volumeSvg: document.getElementById("agentVolumeSvg"),
+  volumeHint: document.getElementById("agentVolumeHint"),
   monthlyBody: document.getElementById("agentMonthlyTableBody"),
+  monthlyCards: document.getElementById("agentMonthlyCards"),
   monthlyEmpty: document.getElementById("agentMonthlyEmpty"),
   referralsList: document.getElementById("agentReferralsList"),
   referralsEmpty: document.getElementById("agentReferralsEmpty"),
@@ -48,6 +58,16 @@ function formatDateTime(ms) {
   const safeMs = safeInt(ms);
   if (!safeMs) return "-";
   return new Date(safeMs).toLocaleString("fr-FR");
+}
+
+function formatDateShort(ms) {
+  const safeMs = safeInt(ms);
+  if (!safeMs) return "-";
+  return new Date(safeMs).toLocaleDateString("fr-FR", {
+    day: "2-digit",
+    month: "short",
+    year: "numeric",
+  });
 }
 
 function escapeHtml(value = "") {
@@ -152,10 +172,182 @@ function renderTrend(trend = []) {
   `;
 }
 
+function renderNetworkBreakdown(agent = {}) {
+  const items = [
+    {
+      key: "signups",
+      label: "Inscriptions suivies",
+      value: safeInt(agent.totalTrackedSignups),
+      color: "#69d2ff",
+      helper: "Personnes rattachées à ton code promo",
+    },
+    {
+      key: "deposits",
+      label: "Dépôts suivis",
+      value: safeInt(agent.totalTrackedDeposits),
+      color: "#6ef0b4",
+      helper: "Filleuls ayant déjà validé un dépôt",
+    },
+    {
+      key: "wins",
+      label: "Victoires suivies",
+      value: safeInt(agent.totalTrackedWins),
+      color: "#ffb86c",
+      helper: "Parties gagnées qui t’ont rapporté",
+    },
+  ];
+
+  const total = items.reduce((sum, item) => sum + item.value, 0);
+  if (dom.networkLegend) {
+    dom.networkLegend.innerHTML = items.map((item) => `
+      <div class="legend-item">
+        <span class="legend-dot" style="background:${item.color};"></span>
+        <div>
+          <strong>${escapeHtml(item.label)}</strong>
+          <div class="subvalue" style="margin-top:4px;">${escapeHtml(item.helper)}</div>
+        </div>
+        <span>${formatInt(item.value)}</span>
+      </div>
+    `).join("");
+  }
+
+  if (!dom.networkSvg) return;
+  if (total <= 0) {
+    dom.networkSvg.innerHTML = `
+      <circle cx="120" cy="108" r="68" fill="none" stroke="rgba(255,255,255,0.08)" stroke-width="22"></circle>
+      <circle cx="120" cy="108" r="68" fill="none" stroke="rgba(105,210,255,0.18)" stroke-width="22" stroke-dasharray="140 288" transform="rotate(-90 120 108)"></circle>
+      <text x="120" y="104" text-anchor="middle" fill="#f4f7ff" font-size="20" font-weight="800">0</text>
+      <text x="120" y="126" text-anchor="middle" fill="rgba(255,255,255,0.58)" font-size="12">activité suivie</text>
+    `;
+    if (dom.networkHint) {
+      dom.networkHint.textContent = "Dès que ton réseau commence à convertir, le diagramme se remplit automatiquement.";
+    }
+    return;
+  }
+
+  const radius = 68;
+  const circumference = 2 * Math.PI * radius;
+  let offset = 0;
+  const arcs = items.map((item) => {
+    const ratio = item.value / total;
+    const segment = Math.max(0, ratio * circumference);
+    const markup = `
+      <circle
+        cx="120"
+        cy="108"
+        r="${radius}"
+        fill="none"
+        stroke="${item.color}"
+        stroke-width="22"
+        stroke-linecap="round"
+        stroke-dasharray="${segment} ${circumference - segment}"
+        stroke-dashoffset="${-offset}"
+        transform="rotate(-90 120 108)"
+      ></circle>
+    `;
+    offset += segment;
+    return markup;
+  }).join("");
+
+  dom.networkSvg.innerHTML = `
+    <circle cx="120" cy="108" r="${radius}" fill="none" stroke="rgba(255,255,255,0.08)" stroke-width="22"></circle>
+    ${arcs}
+    <circle cx="120" cy="108" r="44" fill="rgba(6,16,31,0.9)"></circle>
+    <text x="120" y="100" text-anchor="middle" fill="#f4f7ff" font-size="23" font-weight="800">${escapeHtml(formatInt(total))}</text>
+    <text x="120" y="122" text-anchor="middle" fill="rgba(255,255,255,0.58)" font-size="12">points suivis</text>
+  `;
+  if (dom.networkHint) {
+    const conversion = items[0].value > 0 ? Math.round((items[1].value / Math.max(1, items[0].value)) * 100) : 0;
+    dom.networkHint.textContent = `Taux de transformation inscription vers dépôt: ${conversion}%`;
+  }
+}
+
+function renderMonthlyVolume(monthlyStatements = []) {
+  if (!dom.volumeSvg) return;
+  const items = Array.isArray(monthlyStatements)
+    ? monthlyStatements
+      .slice(0, 6)
+      .slice()
+      .reverse()
+    : [];
+
+  if (items.length === 0) {
+    dom.volumeSvg.innerHTML = `
+      <rect x="0" y="0" width="720" height="220" fill="rgba(255,255,255,0.02)"></rect>
+      <text x="24" y="34" fill="rgba(255,255,255,0.58)" font-size="14">Aucun volume mensuel disponible pour le moment.</text>
+    `;
+    if (dom.volumeHint) {
+      dom.volumeHint.textContent = "Les barres apparaitront ici après les premières clôtures mensuelles.";
+    }
+    return;
+  }
+
+  const width = 720;
+  const height = 220;
+  const leftPad = 28;
+  const rightPad = 18;
+  const topPad = 24;
+  const bottomPad = 34;
+  const chartWidth = width - leftPad - rightPad;
+  const chartHeight = height - topPad - bottomPad;
+  const maxValue = Math.max(
+    1,
+    ...items.map((item) => Math.max(
+      safeInt(item.signupsCount),
+      safeInt(item.depositsCount),
+      safeInt(item.winsCount),
+    )),
+  );
+  const groupWidth = chartWidth / Math.max(1, items.length);
+  const barWidth = Math.min(24, Math.max(10, (groupWidth - 18) / 3));
+  const colors = {
+    signups: "#69d2ff",
+    deposits: "#6ef0b4",
+    wins: "#ffb86c",
+  };
+
+  const bars = items.map((item, index) => {
+    const baseX = leftPad + (index * groupWidth) + (groupWidth / 2) - (barWidth * 1.5) - 6;
+    const metrics = [
+      { key: "signupsCount", color: colors.signups },
+      { key: "depositsCount", color: colors.deposits },
+      { key: "winsCount", color: colors.wins },
+    ];
+    return metrics.map((metric, metricIndex) => {
+      const value = safeInt(item[metric.key]);
+      const barHeight = (value / maxValue) * chartHeight;
+      const x = baseX + metricIndex * (barWidth + 6);
+      const y = topPad + chartHeight - barHeight;
+      return `<rect x="${x}" y="${y}" width="${barWidth}" height="${barHeight}" rx="8" fill="${metric.color}" opacity="0.92"></rect>`;
+    }).join("");
+  }).join("");
+
+  const labels = items.map((item, index) => {
+    const x = leftPad + (index * groupWidth) + (groupWidth / 2);
+    return `<text x="${x}" y="${height - 10}" text-anchor="middle" fill="rgba(255,255,255,0.58)" font-size="12">${escapeHtml(String(item.monthKey || ""))}</text>`;
+  }).join("");
+
+  dom.volumeSvg.innerHTML = `
+    <rect x="0" y="0" width="${width}" height="${height}" fill="rgba(255,255,255,0.02)"></rect>
+    <line x1="${leftPad}" y1="${topPad + chartHeight}" x2="${width - rightPad}" y2="${topPad + chartHeight}" stroke="rgba(255,255,255,0.08)" stroke-width="1"></line>
+    <line x1="${leftPad}" y1="${topPad}" x2="${leftPad}" y2="${topPad + chartHeight}" stroke="rgba(255,255,255,0.05)" stroke-width="1"></line>
+    ${bars}
+    ${labels}
+  `;
+
+  if (dom.volumeHint) {
+    const latest = items[items.length - 1];
+    dom.volumeHint.textContent = latest
+      ? `${latest.monthKey} · ${formatInt(latest.signupsCount)} inscriptions · ${formatInt(latest.depositsCount)} dépôts · ${formatInt(latest.winsCount)} victoires`
+      : "Le mois le plus récent apparait à droite.";
+  }
+}
+
 function renderMonthlyStatements(items = []) {
-  if (!dom.monthlyBody || !dom.monthlyEmpty) return;
+  if (!dom.monthlyBody || !dom.monthlyEmpty || !dom.monthlyCards) return;
   if (!Array.isArray(items) || items.length === 0) {
     dom.monthlyBody.innerHTML = "";
+    dom.monthlyCards.innerHTML = "";
     dom.monthlyEmpty.style.display = "block";
     return;
   }
@@ -171,6 +363,40 @@ function renderMonthlyStatements(items = []) {
       <td>${formatInt(item.winsCount)}</td>
       <td>${escapeHtml(item.closedAtMs ? formatDateTime(item.closedAtMs) : "Ouvert")}</td>
     </tr>
+  `).join("");
+  dom.monthlyCards.innerHTML = items.map((item) => `
+    <article class="statement-card">
+      <div class="statement-card-head">
+        <strong>${escapeHtml(item.monthKey || "-")}</strong>
+        <span class="pill ${item.closedAtMs ? "active" : "inactive"}">${escapeHtml(item.closedAtMs ? "Clôturé" : "Ouvert")}</span>
+      </div>
+      <div class="statement-grid">
+        <div class="statement-cell">
+          <strong>Gains</strong>
+          <span>${formatDoes(item.earnedDoes)}</span>
+        </div>
+        <div class="statement-cell">
+          <strong>Payé</strong>
+          <span>${formatDoes(item.paidDoes)}</span>
+        </div>
+        <div class="statement-cell">
+          <strong>Inscriptions</strong>
+          <span>${formatInt(item.signupsCount)}</span>
+        </div>
+        <div class="statement-cell">
+          <strong>Dépôts</strong>
+          <span>${formatInt(item.depositsCount)}</span>
+        </div>
+        <div class="statement-cell">
+          <strong>Victoires</strong>
+          <span>${formatInt(item.winsCount)}</span>
+        </div>
+        <div class="statement-cell">
+          <strong>Statut</strong>
+          <span>${escapeHtml(item.closedAtMs ? formatDateShort(item.closedAtMs) : "En cours")}</span>
+        </div>
+      </div>
+    </article>
   `).join("");
 }
 
@@ -217,6 +443,7 @@ function renderLedger(items = []) {
 function renderSnapshot(snapshot = {}) {
   const agent = snapshot.agent || {};
   const trend = Array.isArray(snapshot.trend) ? snapshot.trend : [];
+  const monthlyStatements = Array.isArray(snapshot.monthlyStatements) ? snapshot.monthlyStatements : [];
 
   if (dom.statusPill) {
     const isActive = String(agent.status || "").toLowerCase() === "active";
@@ -242,6 +469,14 @@ function renderSnapshot(snapshot = {}) {
   }
   if (dom.promoCode) dom.promoCode.textContent = agent.promoCode || "-";
   if (dom.promoLink) dom.promoLink.textContent = agent.promoLink || "Lien agent indisponible.";
+  if (dom.heroPromo) dom.heroPromo.textContent = agent.promoCode || "-";
+  if (dom.heroPayrollMonth) {
+    dom.heroPayrollMonth.textContent = agent.lastPayrollMonthKey
+      ? `Dernier mois payé: ${agent.lastPayrollMonthKey}`
+      : "Aucun mois clôturé";
+  }
+  if (dom.heroLastSeen) dom.heroLastSeen.textContent = formatDateTime(agent.lastSeenAtMs);
+  if (dom.heroActivatedAt) dom.heroActivatedAt.textContent = formatDateShort(agent.activatedAtMs || agent.declaredAtMs);
 
   if (dom.trendHighlight) {
     const latestPoint = trend[trend.length - 1];
@@ -261,7 +496,9 @@ function renderSnapshot(snapshot = {}) {
   }
 
   renderTrend(trend);
-  renderMonthlyStatements(snapshot.monthlyStatements || []);
+  renderNetworkBreakdown(agent);
+  renderMonthlyVolume(monthlyStatements);
+  renderMonthlyStatements(monthlyStatements);
   renderReferrals(snapshot.recentReferrals || []);
   renderLedger(snapshot.recentLedger || []);
 }
