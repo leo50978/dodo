@@ -7692,7 +7692,11 @@ function applyResolvedDuelMove(state, room, move, actorUid) {
 
     const requestedTileId = safeSignedInt(move.tileId, -1);
     let stockIndex = nextState.stockPile.findIndex((tileId) => tileId === requestedTileId);
+    const canFallbackToRandomDraw = String(actorUid || "").startsWith("server:");
     if (stockIndex < 0 && requestedTileId < 0) {
+      stockIndex = randomInt(0, nextState.stockPile.length - 1);
+    }
+    if (stockIndex < 0 && canFallbackToRandomDraw) {
       stockIndex = randomInt(0, nextState.stockPile.length - 1);
     }
     if (stockIndex < 0) {
