@@ -4416,12 +4416,28 @@ export function renderPage2(user, options = {}) {
         && error?.roomId
       ) {
         const roomMode = String(error?.roomMode || "");
+        const roomStatus = String(error?.status || "").trim().toLowerCase();
         const nextStake = Number.parseInt(String(error?.stakeDoes || stakeAmount), 10) || MORPION_FRIEND_FIXED_STAKE_DOES;
         closeMorpionFriendCreate();
         if (roomMode === "morpion_friends") {
           morpionFriendRoomDraft.roomId = String(error.roomId || "");
           morpionFriendRoomDraft.seatIndex = Number.parseInt(String(error?.seatIndex || 0), 10) || 0;
           morpionFriendRoomDraft.stakeDoes = nextStake;
+          morpionFriendRoomDraft.inviteCode = String(error?.inviteCode || morpionFriendRoomDraft.inviteCode || "").trim();
+          if (roomStatus === "waiting" && morpionFriendRoomDraft.inviteCode) {
+            if (morpionFriendCodeValue) {
+              morpionFriendCodeValue.textContent = morpionFriendRoomDraft.inviteCode || "------";
+            }
+            if (morpionFriendCodeStakeMeta) {
+              const rewardDoes = buildPrivateMorpionRewardDoes(morpionFriendRoomDraft.stakeDoes);
+              morpionFriendCodeStakeMeta.textContent = `${morpionFriendRoomDraft.stakeDoes.toLocaleString("fr-FR")} Does obligatoires pour 2 joueurs. Gain ${rewardDoes.toLocaleString("fr-FR")} Does.`;
+            }
+            if (morpionFriendCodeCopyBtn) {
+              morpionFriendCodeCopyBtn.textContent = "Copier le code";
+            }
+            openMorpionFriendCode();
+            return;
+          }
           navigateToFriendMorpionRoom(morpionFriendRoomDraft);
           return;
         }
