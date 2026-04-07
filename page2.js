@@ -65,7 +65,7 @@ const DEFAULT_MORPION_STAKE_OPTIONS = Object.freeze([
 ]);
 const ALLOWED_DUEL_STAKE_AMOUNTS = Object.freeze([500, 1000]);
 const ALLOWED_MORPION_STAKE_AMOUNTS = Object.freeze([500]);
-const MAX_MORPION_FRIEND_STAKE_DOES = 100_000_000;
+const MORPION_FRIEND_FIXED_STAKE_DOES = 500;
 let page2NonCriticalRefreshTimer = null;
 let page2NonCriticalVisibilityHandler = null;
 let page2NonCriticalUid = "";
@@ -353,7 +353,7 @@ function buildMorpionGameUrl(stakeDoes = 500) {
 function buildFriendMorpionGameUrl(roomId, seatIndex, stakeDoes) {
   const params = new URLSearchParams();
   params.set("autostart", "1");
-  params.set("stake", String(Math.max(1, Number.parseInt(String(stakeDoes || 0), 10) || 500)));
+  params.set("stake", String(Math.max(1, Number.parseInt(String(stakeDoes || 0), 10) || MORPION_FRIEND_FIXED_STAKE_DOES)));
   params.set("friendMorpionRoomId", String(roomId || "").trim());
   params.set("seat", String(Math.max(0, Number.parseInt(String(seatIndex || 0), 10) || 0)));
   params.set("roomMode", "morpion_friends");
@@ -1893,7 +1893,7 @@ export function renderPage2(user, options = {}) {
           <button id="morpionFriendCreateOpenBtn" type="button" class="flex min-h-[58px] w-full items-center justify-between gap-3 rounded-2xl border border-[#8de7ff]/28 bg-[linear-gradient(135deg,rgba(33,118,171,0.22),rgba(18,40,78,0.55))] px-4 py-3 text-left transition hover:bg-[linear-gradient(135deg,rgba(33,118,171,0.28),rgba(18,40,78,0.62))]">
             <span>
               <span class="block text-sm font-semibold text-white">Creer une salle</span>
-              <span class="mt-1 block text-xs text-white/70">Choisis une mise entiere libre, genere un code et invite ton ami.</span>
+              <span class="mt-1 block text-xs text-white/70">Genere un code et invite ton ami. La mise privee Morpion est fixe a 500 Does.</span>
             </span>
             <i class="fa-solid fa-plus text-[#c6f4ff]"></i>
           </button>
@@ -1908,20 +1908,20 @@ export function renderPage2(user, options = {}) {
         <div class="flex items-center justify-between gap-3">
           <div>
             <p class="text-xs font-semibold uppercase tracking-[0.22em] text-[#9fe8ff]/78">Salle privee</p>
-            <h3 class="mt-2 text-xl font-bold">Choisis ta mise libre</h3>
+            <h3 class="mt-2 text-xl font-bold">Morpion entre amis</h3>
           </div>
           <button id="morpionFriendCreateClose" type="button" class="grid h-10 w-10 place-items-center rounded-full border border-white/20 bg-white/10 text-white">
             <i class="fa-solid fa-xmark"></i>
           </button>
         </div>
-        <p class="mt-3 text-sm leading-6 text-white/82">Entre un montant entier en Does. Les nombres decimaux ne sont pas acceptes. Le gain du vainqueur est calcule avec une cote de 1.8.</p>
-        <label for="morpionFriendStakeInput" class="mt-5 block text-xs font-semibold uppercase tracking-[0.16em] text-white/58">Mise en Does</label>
-        <input id="morpionFriendStakeInput" type="text" inputmode="numeric" autocomplete="off" placeholder="500" class="mt-2 h-12 w-full rounded-2xl border border-white/18 bg-white/10 px-4 text-base font-semibold text-white outline-none placeholder:text-white/38 focus:border-[#8de7ff]/45 focus:bg-white/12" />
+        <p class="mt-3 text-sm leading-6 text-white/82">La salle privee Morpion entre amis se joue uniquement avec une mise fixe de 500 Does. Le gain du vainqueur est calcule avec une cote de 1.8.</p>
+        <label for="morpionFriendStakeInput" class="mt-5 block text-xs font-semibold uppercase tracking-[0.16em] text-white/58">Mise fixe</label>
+        <input id="morpionFriendStakeInput" type="text" inputmode="numeric" autocomplete="off" value="500" readonly class="mt-2 h-12 w-full rounded-2xl border border-white/18 bg-white/10 px-4 text-base font-semibold text-white outline-none placeholder:text-white/38 focus:border-[#8de7ff]/45 focus:bg-white/12" />
         <div class="mt-3 rounded-2xl border border-white/12 bg-white/[0.06] px-4 py-3">
           <p class="text-xs font-semibold uppercase tracking-[0.14em] text-white/58">Apercu</p>
-          <p id="morpionFriendCreateSummary" class="mt-2 text-sm leading-6 text-white/84">Entre un montant entier pour voir le gain estime du vainqueur.</p>
+          <p id="morpionFriendCreateSummary" class="mt-2 text-sm leading-6 text-white/84">Mise 500 Does. Gain du vainqueur: 900 Does.</p>
         </div>
-        <p id="morpionFriendCreateHint" class="mt-3 min-h-[1.25rem] text-xs text-white/64">Exemple: 500, 750, 1200. Pas de virgule ni de point.</p>
+        <p id="morpionFriendCreateHint" class="mt-3 min-h-[1.25rem] text-xs text-white/64">Le mode ami Morpion est actuellement disponible uniquement en 500 Does.</p>
         <button id="morpionFriendCreateSubmitBtn" type="button" class="mt-5 h-12 w-full rounded-[18px] border border-[#8de7ff]/35 bg-[linear-gradient(135deg,rgba(32,145,212,0.9),rgba(12,80,138,0.96))] text-sm font-semibold text-white shadow-[9px_9px_20px_rgba(14,58,97,0.4),-7px_-7px_16px_rgba(146,229,255,0.14)] transition hover:-translate-y-0.5">
           Generer le code
         </button>
@@ -3535,7 +3535,7 @@ export function renderPage2(user, options = {}) {
   const morpionFriendRoomDraft = {
     roomId: "",
     seatIndex: 0,
-    stakeDoes: 0,
+    stakeDoes: MORPION_FRIEND_FIXED_STAKE_DOES,
     inviteCode: "",
   };
 
@@ -3571,7 +3571,7 @@ export function renderPage2(user, options = {}) {
   const navigateToFriendMorpionRoom = (roomData = {}) => {
     const nextRoomId = String(roomData?.roomId || morpionFriendRoomDraft.roomId || "").trim();
     const nextSeatIndex = Number.parseInt(String(roomData?.seatIndex ?? morpionFriendRoomDraft.seatIndex ?? 0), 10) || 0;
-    const nextStakeDoes = Number.parseInt(String(roomData?.stakeDoes || morpionFriendRoomDraft.stakeDoes || 0), 10) || 500;
+    const nextStakeDoes = Number.parseInt(String(roomData?.stakeDoes || morpionFriendRoomDraft.stakeDoes || 0), 10) || MORPION_FRIEND_FIXED_STAKE_DOES;
     if (!nextRoomId) {
       throw new Error("Salle morpion privee introuvable.");
     }
@@ -3696,12 +3696,11 @@ export function renderPage2(user, options = {}) {
   };
 
   const syncMorpionFriendCreateSummary = () => {
-    const stakeDoes = parseStrictWholeNumber(morpionFriendStakeInput?.value || "");
-    if (!morpionFriendCreateSummary) return;
-    if (stakeDoes <= 0) {
-      morpionFriendCreateSummary.textContent = "Entre un montant entier pour voir le gain estime du vainqueur.";
-      return;
+    const stakeDoes = MORPION_FRIEND_FIXED_STAKE_DOES;
+    if (morpionFriendStakeInput) {
+      morpionFriendStakeInput.value = String(MORPION_FRIEND_FIXED_STAKE_DOES);
     }
+    if (!morpionFriendCreateSummary) return;
     const rewardDoes = buildPrivateMorpionRewardDoes(stakeDoes);
     morpionFriendCreateSummary.textContent = `Mise ${stakeDoes.toLocaleString("fr-FR")} Does. Gain du vainqueur: ${rewardDoes.toLocaleString("fr-FR")} Does.`;
   };
@@ -4125,10 +4124,10 @@ export function renderPage2(user, options = {}) {
     if (page2AccountFrozen) return;
     closeMorpionFriendMode();
     if (morpionFriendStakeInput) {
-      morpionFriendStakeInput.value = "";
+      morpionFriendStakeInput.value = String(MORPION_FRIEND_FIXED_STAKE_DOES);
     }
     if (morpionFriendCreateHint) {
-      morpionFriendCreateHint.textContent = "Exemple: 500, 750, 1200. Pas de virgule ni de point.";
+      morpionFriendCreateHint.textContent = "Le mode ami Morpion est actuellement disponible uniquement en 500 Does.";
     }
     syncMorpionFriendCreateSummary();
     openMorpionFriendCreate();
@@ -4358,9 +4357,9 @@ export function renderPage2(user, options = {}) {
   });
 
   morpionFriendStakeInput?.addEventListener("input", () => {
-    morpionFriendStakeInput.value = normalizeWholeNumberInput(morpionFriendStakeInput.value);
+    morpionFriendStakeInput.value = String(MORPION_FRIEND_FIXED_STAKE_DOES);
     if (morpionFriendCreateHint) {
-      morpionFriendCreateHint.textContent = "Exemple: 500, 750, 1200. Pas de virgule ni de point.";
+      morpionFriendCreateHint.textContent = "Le mode ami Morpion est actuellement disponible uniquement en 500 Does.";
     }
     syncMorpionFriendCreateSummary();
   });
@@ -4373,21 +4372,7 @@ export function renderPage2(user, options = {}) {
   });
 
   morpionFriendCreateSubmitBtn?.addEventListener("click", async () => {
-    const stakeAmount = parseStrictWholeNumber(morpionFriendStakeInput?.value || "");
-    if (stakeAmount <= 0) {
-      if (morpionFriendCreateHint) {
-        morpionFriendCreateHint.textContent = "Entre une mise entiere positive en Does.";
-      }
-      morpionFriendStakeInput?.focus();
-      return;
-    }
-    if (stakeAmount > MAX_MORPION_FRIEND_STAKE_DOES) {
-      if (morpionFriendCreateHint) {
-        morpionFriendCreateHint.textContent = `La mise maximale autorisee est ${MAX_MORPION_FRIEND_STAKE_DOES.toLocaleString("fr-FR")} Does.`;
-      }
-      morpionFriendStakeInput?.focus();
-      return;
-    }
+    const stakeAmount = MORPION_FRIEND_FIXED_STAKE_DOES;
 
     try {
       await withButtonLoading(morpionFriendCreateSubmitBtn, async () => {
@@ -4407,7 +4392,7 @@ export function renderPage2(user, options = {}) {
         const result = await createFriendMorpionRoomSecure({ stakeDoes: stakeAmount });
         morpionFriendRoomDraft.roomId = String(result?.roomId || "");
         morpionFriendRoomDraft.seatIndex = Number.parseInt(String(result?.seatIndex || 0), 10) || 0;
-        morpionFriendRoomDraft.stakeDoes = Number.parseInt(String(result?.stakeDoes || stakeAmount), 10) || stakeAmount;
+        morpionFriendRoomDraft.stakeDoes = Number.parseInt(String(result?.stakeDoes || stakeAmount), 10) || MORPION_FRIEND_FIXED_STAKE_DOES;
         morpionFriendRoomDraft.inviteCode = String(result?.inviteCode || "").trim();
 
         if (morpionFriendCodeValue) {
@@ -4431,7 +4416,7 @@ export function renderPage2(user, options = {}) {
         && error?.roomId
       ) {
         const roomMode = String(error?.roomMode || "");
-        const nextStake = Number.parseInt(String(error?.stakeDoes || stakeAmount), 10) || stakeAmount;
+        const nextStake = Number.parseInt(String(error?.stakeDoes || stakeAmount), 10) || MORPION_FRIEND_FIXED_STAKE_DOES;
         closeMorpionFriendCreate();
         if (roomMode === "morpion_friends") {
           morpionFriendRoomDraft.roomId = String(error.roomId || "");

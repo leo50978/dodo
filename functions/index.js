@@ -11443,14 +11443,11 @@ function parseStrictWholePositiveDoes(value, fallback = 0) {
 }
 
 function resolveMorpionFriendStakeDoes(value) {
-  const parsedStakeDoes = parseStrictWholePositiveDoes(value, 0);
+  const parsedStakeDoes = parseStrictWholePositiveDoes(value, 500);
   if (parsedStakeDoes <= 0) {
-    throw new HttpsError("invalid-argument", "La mise morpion privee doit etre un nombre entier positif.");
+    return 500;
   }
-  if (parsedStakeDoes > MAX_FRIEND_MORPION_STAKE_DOES) {
-    throw new HttpsError("invalid-argument", "La mise morpion privee depasse la limite autorisee.");
-  }
-  return parsedStakeDoes;
+  return 500;
 }
 
 function buildZeroMorpionEntryFunding() {
@@ -13671,16 +13668,17 @@ exports.getMyActiveMorpionInvite = publicOnCall("getMyActiveMorpionInvite", asyn
   const nowMs = Date.now();
   const inviteSnap = await db.collection(MORPION_PLAY_INVITATIONS_COLLECTION)
     .where("targetUid", "==", uid)
-    .where("status", "==", "pending")
-    .orderBy("createdAtMs", "desc")
-    .limit(4)
+    .limit(12)
     .get();
 
   if (inviteSnap.empty) {
     return { ok: true, invitation: null };
   }
 
-  const activeDoc = inviteSnap.docs.find((docSnap) => safeSignedInt(docSnap.data()?.expiresAtMs) > nowMs);
+  const activeDoc = inviteSnap.docs
+    .filter((docSnap) => String(docSnap.data()?.status || "").trim().toLowerCase() === "pending")
+    .sort((left, right) => safeSignedInt(right.data()?.createdAtMs) - safeSignedInt(left.data()?.createdAtMs))
+    .find((docSnap) => safeSignedInt(docSnap.data()?.expiresAtMs) > nowMs);
   if (!activeDoc) {
     return { ok: true, invitation: null };
   }

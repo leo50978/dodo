@@ -1542,7 +1542,7 @@ async function resumeFriendMorpionFromUrl() {
   openWaitingModal("Connexion en cours...", "Nous rejoignons la salle privee de morpion.");
 
   try {
-    await refreshWallet();
+    subscribeToClient(currentUser.uid);
     currentRoomId = friendRoomId;
     currentSeatIndex = safeInt(URL_PARAMS.get("seat"), 0);
     clearRoomAbandoned(currentRoomId);
