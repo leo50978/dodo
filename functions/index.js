@@ -8184,8 +8184,14 @@ async function applyWalletMutationTx(tx, options) {
   const rewardWelcomeDoes = safeInt(options.welcomeRewardDoes);
 
   const ref = walletRef(uid);
-  const snap = await tx.get(ref);
-  const data = snap.exists ? (snap.data() || {}) : {};
+  const hasPreloadedWallet = Object.prototype.hasOwnProperty.call(options, "preloadedWalletData");
+  const snap = hasPreloadedWallet ? null : await tx.get(ref);
+  const walletExists = hasPreloadedWallet
+    ? options.preloadedWalletExists !== false
+    : snap.exists;
+  const data = hasPreloadedWallet
+    ? (options.preloadedWalletData || {})
+    : (snap.exists ? (snap.data() || {}) : {});
   if (type === "xchange_buy" || type === "xchange_sell" || type === "game_entry") {
     assertWalletNotFrozen(data);
   }
@@ -8243,6 +8249,14 @@ async function applyWalletMutationTx(tx, options) {
 
   const loadAllOrders = async () => {
     if (cachedOrders) return cachedOrders;
+    if (Array.isArray(options.preloadedOrders)) {
+      cachedOrders = options.preloadedOrders.map((item) => ({
+        id: item.id,
+        ref: item.ref,
+        data: item.data || {},
+      }));
+      return cachedOrders;
+    }
     const ordersSnap = await tx.get(orderCollectionRef);
     cachedOrders = ordersSnap.docs.map((item) => ({
       id: item.id,
@@ -8254,6 +8268,10 @@ async function applyWalletMutationTx(tx, options) {
 
   const loadExchangeHistory = async () => {
     if (cachedExchangeHistory) return cachedExchangeHistory;
+    if (Array.isArray(options.preloadedExchangeHistory)) {
+      cachedExchangeHistory = options.preloadedExchangeHistory.map((item) => item || {});
+      return cachedExchangeHistory;
+    }
     const historySnap = await tx.get(xchangeHistoryCollectionRef);
     cachedExchangeHistory = historySnap.docs.map((item) => item.data() || {});
     return cachedExchangeHistory;
@@ -8674,7 +8692,7 @@ async function applyWalletMutationTx(tx, options) {
     updatedAt: admin.firestore.FieldValue.serverTimestamp(),
   };
 
-  if (!snap.exists) {
+  if (!walletExists) {
     nextWallet.createdAt = admin.firestore.FieldValue.serverTimestamp();
   }
 
@@ -9015,8 +9033,34 @@ async function chargeRoomEntriesTx(tx, room = {}, playerUids = [], stakeDoes = 0
 
   const entryFundingByUid = {};
   const afterDoesByUid = {};
+  const preloadedDataByUid = new Map();
+
+  const preloadedEntries = await Promise.all(uniquePlayerUids.map(async (playerUid) => {
+    const ordersRef = db.collection(CLIENTS_COLLECTION).doc(playerUid).collection("orders");
+    const [walletSnap, ordersSnap, historySnap] = await Promise.all([
+      tx.get(walletRef(playerUid)),
+      tx.get(ordersRef),
+      tx.get(walletHistoryRef(playerUid)),
+    ]);
+    return {
+      playerUid,
+      walletExists: walletSnap.exists,
+      walletData: walletSnap.exists ? (walletSnap.data() || {}) : {},
+      orders: ordersSnap.docs.map((item) => ({
+        id: item.id,
+        ref: item.ref,
+        data: item.data() || {},
+      })),
+      exchangeHistory: historySnap.docs.map((item) => item.data() || {}),
+    };
+  }));
+
+  preloadedEntries.forEach((entry) => {
+    preloadedDataByUid.set(entry.playerUid, entry);
+  });
 
   for (const playerUid of uniquePlayerUids) {
+    const preloaded = preloadedDataByUid.get(playerUid) || null;
     const walletMutation = await applyWalletMutationTx(tx, {
       uid: playerUid,
       email: "",
@@ -9026,6 +9070,10 @@ async function chargeRoomEntriesTx(tx, room = {}, playerUids = [], stakeDoes = 0
       amountGourdes: 0,
       deltaDoes: -normalizedStakeDoes,
       deltaExchangedGourdes: 0,
+      preloadedWalletData: preloaded?.walletData || {},
+      preloadedWalletExists: preloaded?.walletExists === true,
+      preloadedOrders: preloaded?.orders || [],
+      preloadedExchangeHistory: preloaded?.exchangeHistory || [],
     });
 
     entryFundingByUid[playerUid] = {
