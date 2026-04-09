@@ -136,6 +136,7 @@ const DUEL_TURN_LIMIT_MS = 15 * 1000;
 const MORPION_TURN_LIMIT_MS = 30 * 1000;
 const FRIEND_ROOM_WAIT_MS = 10 * 60 * 1000;
 const FRIEND_ROOM_CODE_SIZE = 6;
+const START_REVEAL_AUTO_RELEASE_GRACE_MS = 12 * 1000;
 const ROOM_DISCONNECT_TAKEOVER_MS = 45 * 1000;
 const ROOM_DISCONNECT_GRACE_MS = 45 * 1000;
 const BOT_THINK_DELAY_MIN_MS = 650;
@@ -218,6 +219,15 @@ const USER_TOURNAMENT_WARMUP_MS = 60 * 1000;
 const USER_TOURNAMENT_OBSERVER_IDLE_MS = 5 * 60 * 1000;
 const USER_TOURNAMENT_ACTIVITY_PROBE_MS = 30 * 1000;
 const USER_TOURNAMENT_OBSERVER_TICK_MS = 20 * 1000;
+
+function shouldAutoReleaseStartReveal(room = {}, humanUids = [], nowMs = Date.now()) {
+  if (String(room?.status || "") !== "playing") return false;
+  if (room?.startRevealPending !== true) return false;
+  if (!Array.isArray(humanUids) || humanUids.length <= 0) return false;
+  const startedAtMs = safeSignedInt(room?.startedAtMs, 0);
+  if (startedAtMs <= 0) return false;
+  return (nowMs - startedAtMs) >= START_REVEAL_AUTO_RELEASE_GRACE_MS;
+}
 const USER_TOURNAMENT_MIN_BOTS = 11; // user + 11 = 12 players
 const USER_TOURNAMENT_MAX_BOTS = 19; // user + 19 = 20 players
 const USER_TOURNAMENT_WIN_REWARD_DOES = 10000;
@@ -10438,6 +10448,7 @@ exports.touchRoomPresence = publicOnCall("touchRoomPresence", async (request) =>
 
   const roomRef = db.collection(ROOMS_COLLECTION).doc(roomId);
   let shouldNudgeBots = false;
+  let autoReleasedStartReveal = false;
 
   const result = await db.runTransaction(async (tx) => {
     const roomSnap = await tx.get(roomRef);
@@ -10533,8 +10544,22 @@ exports.touchRoomPresence = publicOnCall("touchRoomPresence", async (request) =>
       seats: updates.seats || room.seats,
       botTakeoverSeats: updates.botTakeoverSeats,
     };
+    const effectiveHumanUids = Array.isArray(effectiveRoom.playerUids)
+      ? effectiveRoom.playerUids.map((item) => String(item || "").trim()).filter(Boolean)
+      : [];
+    if (shouldAutoReleaseStartReveal(room, effectiveHumanUids, nowMs)) {
+      updates.startRevealPending = false;
+      updates.startRevealAckUids = effectiveHumanUids;
+      autoReleasedStartReveal = true;
+      console.warn("[START_REVEAL_AUTO_RELEASE][ROOM]", JSON.stringify({
+        roomId,
+        humanCount: effectiveHumanUids.length,
+        startedAtMs: safeSignedInt(room.startedAtMs, 0),
+        nowMs,
+      }));
+    }
 
-    if (String(room.status || "") === "playing" && room.startRevealPending !== true) {
+    if (String(room.status || "") === "playing" && (room.startRevealPending !== true || autoReleasedStartReveal === true)) {
       const currentPlayerSeat = safeInt(room.currentPlayer);
       if (currentPlayerSeat >= 0 && currentPlayerSeat < 4 && !isSeatHuman(effectiveRoom, currentPlayerSeat)) {
         shouldNudgeBots = true;
@@ -13628,6 +13653,7 @@ exports.touchRoomPresenceMorpion = publicOnCall("touchRoomPresenceMorpion", asyn
   const roomRefDoc = morpionRoomRef(roomId);
   let shouldNudgeBots = false;
   let shouldResolveExpiredHumanTurn = false;
+  let autoReleasedStartReveal = false;
   const result = await db.runTransaction(async (tx) => {
     const roomSnap = await tx.get(roomRefDoc);
     if (!roomSnap.exists) {
@@ -13642,8 +13668,34 @@ exports.touchRoomPresenceMorpion = publicOnCall("touchRoomPresenceMorpion", asyn
 
     const nowMs = Date.now();
     const presenceResult = buildMorpionPresenceUpdates(room, uid, nowMs);
+    const effectiveHumanUids = Array.isArray(presenceResult?.updates?.playerUids)
+      ? presenceResult.updates.playerUids.map((item) => String(item || "").trim()).filter(Boolean)
+      : (Array.isArray(room.playerUids)
+        ? room.playerUids.map((item) => String(item || "").trim()).filter(Boolean)
+        : []);
+    if (shouldAutoReleaseStartReveal(room, effectiveHumanUids, nowMs)) {
+      presenceResult.updates.startRevealPending = false;
+      presenceResult.updates.startRevealAckUids = effectiveHumanUids;
+      autoReleasedStartReveal = true;
+      logMorpionServerDebug("autoReleaseStartReveal", {
+        roomId,
+        humanCount: effectiveHumanUids.length,
+        startedAtMs: safeSignedInt(room.startedAtMs, 0),
+        nowMs,
+      });
+    }
     shouldNudgeBots = presenceResult.shouldNudgeBots === true;
     shouldResolveExpiredHumanTurn = presenceResult.shouldResolveExpiredHumanTurn === true;
+    if (autoReleasedStartReveal === true) {
+      const effectiveRoom = {
+        ...room,
+        playerUids: presenceResult.updates.playerUids || room.playerUids,
+      };
+      const activeSeat = safeSignedInt(room.currentPlayer, -1);
+      if (activeSeat >= 0 && activeSeat <= 1 && !isMorpionSeatHuman(effectiveRoom, activeSeat)) {
+        shouldNudgeBots = true;
+      }
+    }
     tx.update(roomRefDoc, presenceResult.updates);
     tx.set(morpionWaitingRequestRef(uid), {
       uid,
@@ -15102,6 +15154,7 @@ exports.touchRoomPresenceDuel = publicOnCall("touchRoomPresenceDuel", async (req
   const roomRefDoc = duelRoomRef(roomId);
   let shouldNudgeBots = false;
   let shouldResolveExpiredHumanTurn = false;
+  let autoReleasedStartReveal = false;
   const result = await db.runTransaction(async (tx) => {
     const roomSnap = await tx.get(roomRefDoc);
     if (!roomSnap.exists) {
@@ -15116,8 +15169,34 @@ exports.touchRoomPresenceDuel = publicOnCall("touchRoomPresenceDuel", async (req
 
     const nowMs = Date.now();
     const presenceResult = buildDuelPresenceUpdates(room, uid, nowMs);
+    const effectiveHumanUids = Array.isArray(presenceResult?.updates?.playerUids)
+      ? presenceResult.updates.playerUids.map((item) => String(item || "").trim()).filter(Boolean)
+      : (Array.isArray(room.playerUids)
+        ? room.playerUids.map((item) => String(item || "").trim()).filter(Boolean)
+        : []);
+    if (shouldAutoReleaseStartReveal(room, effectiveHumanUids, nowMs)) {
+      presenceResult.updates.startRevealPending = false;
+      presenceResult.updates.startRevealAckUids = effectiveHumanUids;
+      autoReleasedStartReveal = true;
+      console.warn("[START_REVEAL_AUTO_RELEASE][DUEL]", JSON.stringify({
+        roomId,
+        humanCount: effectiveHumanUids.length,
+        startedAtMs: safeSignedInt(room.startedAtMs, 0),
+        nowMs,
+      }));
+    }
     shouldNudgeBots = presenceResult.shouldNudgeBots === true;
     shouldResolveExpiredHumanTurn = presenceResult.shouldResolveExpiredHumanTurn === true;
+    if (autoReleasedStartReveal === true) {
+      const effectiveRoom = {
+        ...room,
+        playerUids: presenceResult.updates.playerUids || room.playerUids,
+      };
+      const activeSeat = safeSignedInt(room.currentPlayer, -1);
+      if (activeSeat >= 0 && activeSeat <= 1 && !isSeatHuman(effectiveRoom, activeSeat)) {
+        shouldNudgeBots = true;
+      }
+    }
     tx.update(roomRefDoc, presenceResult.updates);
 
     return {
@@ -15131,7 +15210,7 @@ exports.touchRoomPresenceDuel = publicOnCall("touchRoomPresenceDuel", async (req
     };
   });
 
-  if (result?.status === "playing" && (shouldNudgeBots || shouldResolveExpiredHumanTurn)) {
+  if (result?.status === "playing" && (shouldNudgeBots || shouldResolveExpiredHumanTurn || autoReleasedStartReveal === true)) {
     await processPendingBotTurnsDuel(roomId);
   }
 
