@@ -353,7 +353,7 @@ function buildMorpionGameUrl(stakeDoes = 500) {
 function buildFriendMorpionGameUrl(roomId, seatIndex, stakeDoes) {
   const params = new URLSearchParams();
   params.set("autostart", "1");
-  params.set("stake", String(Math.max(1, Number.parseInt(String(stakeDoes || 0), 10) || MORPION_FRIEND_FIXED_STAKE_DOES)));
+  params.set("stake", String(MORPION_FRIEND_FIXED_STAKE_DOES));
   params.set("friendMorpionRoomId", String(roomId || "").trim());
   params.set("seat", String(Math.max(0, Number.parseInt(String(seatIndex || 0), 10) || 0)));
   params.set("roomMode", "morpion_friends");

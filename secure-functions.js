@@ -180,6 +180,10 @@ export async function joinFriendMorpionRoomByCodeSecure(payload = {}) {
   return invokeCallable("joinFriendMorpionRoomByCode", payload, "Impossible de rejoindre la salle morpion entre amis.");
 }
 
+export async function resumeFriendMorpionRoomSecure(payload = {}) {
+  return invokeCallable("resumeFriendMorpionRoom", payload, "Impossible de reprendre la salle morpion privee.");
+}
+
 export async function ensureRoomReadyMorpionSecure(payload = {}) {
   return invokeCallable("ensureRoomReadyMorpion", payload, "Impossible de demarrer la partie de morpion.");
 }

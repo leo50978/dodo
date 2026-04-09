@@ -11477,23 +11477,32 @@ async function findActiveMorpionRoomForUser(uid) {
 
   if (membershipSnap.empty) return null;
 
-  let playingCandidate = null;
-  let waitingCandidate = null;
+  const candidate = membershipSnap.docs
+    .filter((docSnap) => {
+      const data = docSnap.data() || {};
+      if (getBlockedRejoinSet(data).has(uid)) return false;
+      const status = String(data.status || "");
+      return status === "playing" || status === "waiting";
+    })
+    .sort((left, right) => {
+      const leftData = left.data() || {};
+      const rightData = right.data() || {};
+      const statusScore = (value) => (String(value || "") === "playing" ? 2 : 1);
+      const statusDelta = statusScore(rightData.status) - statusScore(leftData.status);
+      if (statusDelta !== 0) return statusDelta;
+      const rightUpdated = Math.max(
+        safeSignedInt(rightData.updatedAtMs),
+        safeSignedInt(rightData.startedAtMs),
+        safeSignedInt(rightData.createdAtMs),
+      );
+      const leftUpdated = Math.max(
+        safeSignedInt(leftData.updatedAtMs),
+        safeSignedInt(leftData.startedAtMs),
+        safeSignedInt(leftData.createdAtMs),
+      );
+      return rightUpdated - leftUpdated;
+    })[0] || null;
 
-  membershipSnap.docs.forEach((docSnap) => {
-    const data = docSnap.data() || {};
-    if (getBlockedRejoinSet(data).has(uid)) return;
-    const status = String(data.status || "");
-    if (status === "playing" && !playingCandidate) {
-      playingCandidate = docSnap;
-      return;
-    }
-    if (status === "waiting" && !waitingCandidate) {
-      waitingCandidate = docSnap;
-    }
-  });
-
-  const candidate = playingCandidate || waitingCandidate;
   if (!candidate) return null;
 
   const data = candidate.data() || {};
@@ -12871,6 +12880,9 @@ exports.createFriendMorpionRoom = publicOnCall("createFriendMorpionRoom", async 
     const walletSnap = await tx.get(walletRef(uid));
     const walletData = walletSnap.exists ? (walletSnap.data() || {}) : {};
     assertWalletNotFrozen(walletData);
+    if (safeInt(walletData.doesBalance) < stakeDoes) {
+      throw new HttpsError("failed-precondition", "Solde Does insuffisant.");
+    }
 
     const nowMs = Date.now();
     const waitingDeadlineMs = nowMs + FRIEND_ROOM_WAIT_MS;
@@ -12910,7 +12922,7 @@ exports.createFriendMorpionRoom = publicOnCall("createFriendMorpionRoom", async 
       stakeDoes,
       entryCostDoes: stakeDoes,
       rewardAmountDoes,
-      stakeConfigId: "morpion_friends_custom",
+      stakeConfigId: "morpion_friends_500",
     });
 
     return {
@@ -12928,6 +12940,59 @@ exports.createFriendMorpionRoom = publicOnCall("createFriendMorpionRoom", async 
       privateDeckOrder: [],
     };
   });
+}, { invoker: "public" });
+
+exports.resumeFriendMorpionRoom = publicOnCall("resumeFriendMorpionRoom", async (request) => {
+  const { uid } = assertAuth(request);
+  const payload = request.data && typeof request.data === "object" ? request.data : {};
+  const roomId = String(payload.roomId || "").trim();
+  if (!roomId) {
+    throw new HttpsError("invalid-argument", "roomId requis.");
+  }
+
+  const roomSnap = await morpionRoomRef(roomId).get();
+  if (!roomSnap.exists) {
+    throw new HttpsError("not-found", "Salle morpion introuvable.");
+  }
+
+  const room = roomSnap.data() || {};
+  if (!isFriendMorpionRoom(room)) {
+    throw new HttpsError("failed-precondition", "Cette salle morpion n'est pas une salle privee valide.");
+  }
+  if (getBlockedRejoinSet(room).has(uid)) {
+    throw new HttpsError("permission-denied", "Tu ne peux plus rejoindre cette salle morpion.");
+  }
+
+  const seatIndex = getSeatForUser(room, uid);
+  if (seatIndex < 0) {
+    throw new HttpsError("permission-denied", "Tu ne fais pas partie de cette salle morpion.");
+  }
+
+  const status = String(room.status || "").trim().toLowerCase();
+  const nowMs = Date.now();
+  const waitingDeadlineMs = resolveMorpionWaitingDeadlineMs(room, nowMs);
+  const humans = Array.isArray(room.playerUids)
+    ? room.playerUids.map((item) => String(item || "").trim()).filter(Boolean).length
+    : safeInt(room.humanCount);
+
+  if (status === "closed") {
+    throw new HttpsError("failed-precondition", "Cette salle morpion n'est plus disponible.");
+  }
+  if (status === "waiting" && humans < 2 && nowMs >= waitingDeadlineMs) {
+    throw new HttpsError("failed-precondition", "Cette salle morpion a expire.");
+  }
+
+  return {
+    ok: true,
+    roomId,
+    seatIndex,
+    status,
+    roomMode: "morpion_friends",
+    stakeDoes: safeInt(room.entryCostDoes || room.stakeDoes),
+    rewardAmountDoes: safeInt(room.rewardAmountDoes || buildPrivateMorpionRewardDoes(room.entryCostDoes || room.stakeDoes)),
+    inviteCode: String(room.inviteCode || "").trim(),
+    waitingDeadlineMs,
+  };
 }, { invoker: "public" });
 
 exports.joinFriendMorpionRoomByCode = publicOnCall("joinFriendMorpionRoomByCode", async (request) => {

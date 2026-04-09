@@ -9,6 +9,7 @@ import {
 } from "./firebase-init.js";
 import {
   joinMatchmakingMorpionSecure,
+  resumeFriendMorpionRoomSecure,
   ensureRoomReadyMorpionSecure,
   touchRoomPresenceMorpionSecure,
   ackRoomStartSeenMorpionSecure,
@@ -31,6 +32,7 @@ const TURN_LIMIT_SECONDS = 30;
 const TURN_LIMIT_MS = TURN_LIMIT_SECONDS * 1000;
 const MATCHMAKING_WAIT_SECONDS = 15;
 const MATCHMAKING_WAIT_MS = MATCHMAKING_WAIT_SECONDS * 1000;
+const MORPION_FRIEND_FIXED_STAKE_DOES = 500;
 const PRESENCE_PING_MS = 20 * 1000;
 const SITE_PRESENCE_PING_MS = 25 * 1000;
 const SITE_PRESENCE_TTL_MS = 70 * 1000;
@@ -47,11 +49,11 @@ function getFriendMorpionRoomIdFromUrl() {
 }
 
 function isFriendMorpionFlowFromUrl() {
-  return getFriendMorpionRoomIdFromUrl().length > 0 || String(URL_PARAMS.get("roomMode") || "").trim() === "morpion_friends";
+  return getFriendMorpionRoomIdFromUrl().length > 0;
 }
 
 const selectedStakeDoes = isFriendMorpionFlowFromUrl()
-  ? Math.max(1, Number.parseInt(String(requestedStake || 0), 10) || 500)
+  ? MORPION_FRIEND_FIXED_STAKE_DOES
   : (ALLOWED_MORPION_STAKE_AMOUNTS.includes(requestedStake) ? requestedStake : 500);
 
 const dom = {
@@ -763,6 +765,7 @@ function openResultModal(eyebrow = "", title = "", copy = "") {
   if (dom.resultEyebrow) dom.resultEyebrow.textContent = String(eyebrow || "Fin de partie");
   if (dom.resultTitle) dom.resultTitle.textContent = String(title || "Fin de partie");
   if (dom.resultCopy) dom.resultCopy.textContent = String(copy || "");
+  syncReplayActionLabels();
   dom.resultModal?.classList.remove("hidden");
 }
 
@@ -771,6 +774,7 @@ function closeResultModal() {
 }
 
 function openQuitModal() {
+  syncReplayActionLabels();
   dom.quitModal?.classList.remove("hidden");
 }
 
@@ -1485,6 +1489,10 @@ async function abandonAndNavigate(destination = "home") {
   }
   await leaveCurrentRoom();
   if (destination === "replay") {
+    if (isFriendMorpionFlowFromUrl() || String(currentRoomData?.roomMode || "").trim() === "morpion_friends") {
+      window.location.href = "./index.html";
+      return;
+    }
     window.location.href = `./morpion.html?stake=${selectedStakeDoes}`;
     return;
   }
@@ -1548,20 +1556,32 @@ async function resumeFriendMorpionFromUrl() {
   openWaitingModal("Connexion en cours...", "Nous rejoignons la salle privee de morpion.");
 
   try {
+    const result = await resumeFriendMorpionRoomSecure({ roomId: friendRoomId });
     subscribeToClient(currentUser.uid);
-    currentRoomId = friendRoomId;
-    currentSeatIndex = safeInt(URL_PARAMS.get("seat"), 0);
+    currentRoomId = String(result?.roomId || friendRoomId).trim();
+    currentSeatIndex = safeInt(result?.seatIndex, 0);
     clearRoomAbandoned(currentRoomId);
     subscribeToRoom(currentRoomId);
     startPresencePing();
     startTurnTicker();
     void pingPresence();
+    if (String(result?.status || "").trim().toLowerCase() === "waiting") {
+      startMatchmakingWaitCycle();
+    }
   } catch (error) {
     console.error("[MORPION] resumeFriendMorpionFromUrl failed", error);
     openResultModal("Connexion impossible", "Impossible de rejoindre cette salle privee", error?.message || "Reessaie dans un instant.");
   } finally {
     joining = false;
   }
+}
+
+function syncReplayActionLabels() {
+  const replayLabel = isFriendMorpionFlowFromUrl() || String(currentRoomData?.roomMode || "").trim() === "morpion_friends"
+    ? "Nouvelle salle privee"
+    : "Rejouer";
+  if (dom.resultReplayBtn) dom.resultReplayBtn.textContent = replayLabel;
+  if (dom.quitReplayBtn) dom.quitReplayBtn.textContent = replayLabel;
 }
 
 function joinOrResumeCurrentFlow() {
