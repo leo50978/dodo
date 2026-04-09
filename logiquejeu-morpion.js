@@ -35,6 +35,7 @@ const PRESENCE_PING_MS = 20 * 1000;
 const SITE_PRESENCE_PING_MS = 25 * 1000;
 const SITE_PRESENCE_TTL_MS = 70 * 1000;
 const INVITE_POLL_MS = 6 * 1000;
+const MORPION_WHATSAPP_GROUP_URL = "https://chat.whatsapp.com/I8VfW1Tdv6nF1d7ZkMfOg0?mode=gi_t";
 const ABANDONED_ROOMS_STORAGE_KEY = "domino_morpion_abandoned_rooms_v1";
 const MORPION_BOT_NUMERIC_IDS = Object.freeze([35601379, 40507232, 41752992]);
 
@@ -74,6 +75,7 @@ const dom = {
   waitingExtendBtn: document.getElementById("morpionWaitingExtendBtn"),
   waitingStopExtendBtn: document.getElementById("morpionWaitingStopExtendBtn"),
   waitingNotifyBtn: document.getElementById("morpionWaitingNotifyBtn"),
+  waitingGroupBtn: document.getElementById("morpionWaitingGroupBtn"),
   waitingWhatsappBtn: document.getElementById("morpionWaitingWhatsappBtn"),
   waitingContactsBtn: document.getElementById("morpionWaitingContactsBtn"),
   whatsappModal: document.getElementById("morpionWhatsappModal"),
@@ -592,6 +594,7 @@ function setWaitingActionsVisibility({
   showExtend = true,
   showStopExtended = false,
   showNotify = true,
+  showGroup = false,
   showWhatsapp = true,
   showContacts = true,
 } = {}) {
@@ -600,6 +603,7 @@ function setWaitingActionsVisibility({
   if (dom.waitingExtendBtn) dom.waitingExtendBtn.classList.toggle("hidden", !showExtend);
   if (dom.waitingStopExtendBtn) dom.waitingStopExtendBtn.classList.toggle("hidden", !showStopExtended);
   if (dom.waitingNotifyBtn) dom.waitingNotifyBtn.classList.toggle("hidden", !showNotify);
+  if (dom.waitingGroupBtn) dom.waitingGroupBtn.classList.toggle("hidden", !showGroup);
   if (dom.waitingWhatsappBtn) dom.waitingWhatsappBtn.classList.toggle("hidden", !showWhatsapp);
   if (dom.waitingContactsBtn) dom.waitingContactsBtn.classList.toggle("hidden", !showContacts);
 }
@@ -672,6 +676,7 @@ function renderMatchmakingWaitingModal() {
       showExtend: false,
       showStopExtended: true,
       showNotify: showNotifyAction,
+      showGroup: true,
       showWhatsapp: true,
       showContacts: true,
     });
@@ -683,8 +688,8 @@ function renderMatchmakingWaitingModal() {
     oddPlayingHint
       ? matchmakingHintMessage
       : (notificationsGranted
-        ? "Aucun joueur n'a rejoint dans les 15 secondes. Les notifications sont deja activees, nous te previendrons quand des joueurs seront disponibles."
-        : "Aucun joueur n'a rejoint dans les 15 secondes. Active les notifications pour etre alerte quand des joueurs sont disponibles.")
+        ? "Aucun joueur n'a rejoint dans les 15 secondes. Rejoins aussi le groupe WhatsApp pour trouver rapidement des joueurs."
+        : "Aucun joueur n'a rejoint dans les 15 secondes. Active les notifications ou rejoins le groupe WhatsApp pour trouver des joueurs.")
   );
   if (dom.waitingTimerWrap) dom.waitingTimerWrap.classList.add("hidden");
   if (dom.waitingActions) dom.waitingActions.classList.remove("hidden");
@@ -694,6 +699,7 @@ function renderMatchmakingWaitingModal() {
     showExtend: true,
     showStopExtended: false,
     showNotify: showNotifyAction,
+    showGroup: true,
     showWhatsapp: true,
     showContacts: true,
   });
@@ -1601,6 +1607,10 @@ function bindEvents() {
   });
   dom.waitingNotifyBtn?.addEventListener("click", () => {
     void requestMatchmakingNotifications();
+  });
+  dom.waitingGroupBtn?.addEventListener("click", () => {
+    if (typeof window === "undefined") return;
+    window.open(MORPION_WHATSAPP_GROUP_URL, "_blank", "noopener,noreferrer");
   });
   dom.waitingWhatsappBtn?.addEventListener("click", () => {
     if (!whatsappPreferenceLoaded) {
