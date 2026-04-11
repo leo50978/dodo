@@ -55,6 +55,7 @@ const PENDING_ONECLICK_ID_STORAGE_KEY = "domino_pending_oneclick_id";
 const CLIENT_DEVICE_STORAGE_KEY = "domino_device_id_v1";
 const DEVICE_ACCOUNT_LOCK_STORAGE_KEY = "domino_device_account_lock_v1";
 const AUTH_SUCCESS_NOTICE_STORAGE_KEY = "domino_auth_success_notice_v1";
+const USER_IMPORTANCE_NOTICE_STORAGE_KEY = "domino_user_importance_notice_v1";
 const AUTH_PROFILE_HINT_STORAGE_KEY = "domino_auth_profile_hint_v1";
 const verificationEmailSentByUid = new Set();
 const APP_HOME_ROUTE = "./index.html";
@@ -351,6 +352,15 @@ function storeAuthSuccessNotice() {
     sessionStorage.setItem(
       AUTH_SUCCESS_NOTICE_STORAGE_KEY,
       JSON.stringify({ ts: Date.now(), type: "auth_success" })
+    );
+  } catch (_) {}
+}
+
+function storeUserImportanceNotice() {
+  try {
+    sessionStorage.setItem(
+      USER_IMPORTANCE_NOTICE_STORAGE_KEY,
+      JSON.stringify({ ts: Date.now(), type: "signup_success" })
     );
   } catch (_) {}
 }
@@ -1471,6 +1481,7 @@ function bindPage1Events() {
             await signupWithPhone(phone, password);
             await syncCurrentUserDisplayName(username);
             saveAuthProfileHint(auth.currentUser, { username, phone });
+            storeUserImportanceNotice();
             pageAuthDebug("submitAuth:signupSuccess", {
               uid: String(auth.currentUser?.uid || ""),
               username,
@@ -1665,6 +1676,7 @@ function bindPage1Events() {
           await signupWithUsername(username, password);
           await syncCurrentUserDisplayName(username);
           saveAuthProfileHint(auth.currentUser, { username });
+          storeUserImportanceNotice();
           pageAuthDebug("oneClickSignup:success", {
             uid: String(auth.currentUser?.uid || ""),
             username,

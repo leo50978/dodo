@@ -30,6 +30,8 @@ import { startMorpionLiveNotice } from "./morpion-live-notice.js";
 const CHAT_COLLECTION = "globalChannelMessages";
 const SUPPORT_THREADS_COLLECTION = "supportThreads";
 const AUTH_SUCCESS_NOTICE_STORAGE_KEY = "domino_auth_success_notice_v1";
+const USER_IMPORTANCE_NOTICE_STORAGE_KEY = "domino_user_importance_notice_v1";
+const USER_IMPORTANCE_DISMISS_STORAGE_KEY = "domino_user_importance_notice_hidden_v1";
 const DEPOSIT_INFO_DISMISSED_KEY = "domino_deposit_info_hidden_v1";
 const TOURNAMENT_INTRO_SEEN_STORAGE_KEY = "domino_tournament_intro_seen_v1";
 const DUEL_INTRO_SEEN_STORAGE_KEY = "domino_duel_intro_seen_v1";
@@ -37,6 +39,8 @@ const SUPPORT_MIGRATION_NOTICE_STORAGE_KEY = "domino_support_migration_notice_se
 const SUPPORT_MIGRATION_CUTOFF_MS = Date.parse("2026-03-23T18:15:00Z");
 const SUPPORT_MIGRATION_PHONE = "50940507232";
 const SUPPORT_MIGRATION_WHATSAPP_LINK = `https://wa.me/${SUPPORT_MIGRATION_PHONE}?text=${encodeURIComponent("Bonjour, j'avais ecrit a l'ancien numero d'assistance. Je vous recontacte ici sur le nouveau numero.")}`;
+const USER_IMPORTANCE_WHATSAPP_PHONE = "50935601379";
+const USER_IMPORTANCE_WHATSAPP_LINK = `https://wa.me/${USER_IMPORTANCE_WHATSAPP_PHONE}?text=${encodeURIComponent("Bonjou, mwen bezwen asistans sou kont mwen. Mwen vle mande ranbousman ak dedomajman.")}`;
 const WELCOME_BONUS_PROMPT_OFFER_LABEL = "Cette offre se termine le 1 avril 2026 à 23:59:59.";
 const WELCOME_BONUS_PROMPT_RETRY_MS = 1200;
 const DEFAULT_STAKE_REWARD_MULTIPLIER = 3;
@@ -56,6 +60,15 @@ const DEFAULT_GAME_STAKE_OPTIONS = Object.freeze([
   Object.freeze({ id: "stake_1000", stakeDoes: 1000, rewardDoes: 3000, enabled: false, sortOrder: 30 }),
   Object.freeze({ id: "stake_5000", stakeDoes: 5000, rewardDoes: 15000, enabled: false, sortOrder: 40 }),
 ]);
+const FRIEND_ROOM_STAKE_OPTIONS = Object.freeze([
+  Object.freeze({ id: "friend_500", stakeDoes: 500, rewardDoes: 1500, enabled: true, sortOrder: 10 }),
+  Object.freeze({ id: "friend_1000", stakeDoes: 1000, rewardDoes: 3000, enabled: true, sortOrder: 20 }),
+  Object.freeze({ id: "friend_1500", stakeDoes: 1500, rewardDoes: 4500, enabled: true, sortOrder: 30 }),
+  Object.freeze({ id: "friend_2000", stakeDoes: 2000, rewardDoes: 6000, enabled: true, sortOrder: 40 }),
+  Object.freeze({ id: "friend_5000", stakeDoes: 5000, rewardDoes: 15000, enabled: true, sortOrder: 50 }),
+  Object.freeze({ id: "friend_10000", stakeDoes: 10000, rewardDoes: 30000, enabled: true, sortOrder: 60 }),
+  Object.freeze({ id: "friend_50000", stakeDoes: 50000, rewardDoes: 150000, enabled: true, sortOrder: 70 }),
+]);
 const DEFAULT_DUEL_STAKE_OPTIONS = Object.freeze([
   Object.freeze({ id: "duel_500", stakeDoes: 500, rewardDoes: 925, enabled: true, sortOrder: 10 }),
   Object.freeze({ id: "duel_1000", stakeDoes: 1000, rewardDoes: 1850, enabled: true, sortOrder: 20 }),
@@ -65,7 +78,9 @@ const DEFAULT_MORPION_STAKE_OPTIONS = Object.freeze([
 ]);
 const ALLOWED_DUEL_STAKE_AMOUNTS = Object.freeze([500, 1000]);
 const ALLOWED_MORPION_STAKE_AMOUNTS = Object.freeze([500]);
+const MORPION_BOT_TEST_STAKE_DOES = 0;
 const MORPION_FRIEND_FIXED_STAKE_DOES = 500;
+const ENABLE_MORPION_BOT_TEST = false;
 let page2NonCriticalRefreshTimer = null;
 let page2NonCriticalVisibilityHandler = null;
 let page2NonCriticalUid = "";
@@ -87,6 +102,11 @@ let page2WelcomeBonusPromptTimer = null;
 let page2WelcomeBonusPromptUid = "";
 let page2WelcomeBonusFundingCache = null;
 let page2WelcomeBonusFundingPromise = null;
+let page2UserImportanceNoticeTimer = null;
+let page2UserImportanceNoticeUid = "";
+let page2UserImportanceNoticePayload = null;
+let page2UserImportanceNoticeShownForUid = "";
+let page2UserImportanceDismissedInSession = false;
 let page2FinanceNoticeUid = "";
 let page2FinanceNoticeUnsubs = [];
 let page2FinanceOrderDocs = [];
@@ -311,6 +331,11 @@ function parseStrictWholeNumber(value) {
   return Number.isFinite(parsed) && parsed > 0 ? parsed : 0;
 }
 
+function isValidMorpionFriendStake(stakeDoes = 0) {
+  const safeStake = parseStrictWholeNumber(stakeDoes);
+  return safeStake >= MORPION_FRIEND_FIXED_STAKE_DOES && safeStake % 100 === 0;
+}
+
 function buildPrivateMorpionRewardDoes(stakeDoes = 0) {
   const safeStakeDoes = Math.max(0, Number.parseInt(String(stakeDoes || 0), 10) || 0);
   if (safeStakeDoes <= 0) return 0;
@@ -350,10 +375,23 @@ function buildMorpionGameUrl(stakeDoes = 500) {
   return `./morpion.html?${params.toString()}`;
 }
 
+function buildMorpionBotTestGameUrl(roomId, seatIndex = 0) {
+  const params = new URLSearchParams();
+  params.set("autostart", "1");
+  params.set("stake", String(MORPION_BOT_TEST_STAKE_DOES));
+  const safeRoomId = String(roomId || "").trim();
+  if (safeRoomId) {
+    params.set("botTestMorpionRoomId", safeRoomId);
+    params.set("seat", String(Math.max(0, Number.parseInt(String(seatIndex || 0), 10) || 0)));
+  }
+  params.set("roomMode", "morpion_bot_test");
+  return `./morpion.html?${params.toString()}`;
+}
+
 function buildFriendMorpionGameUrl(roomId, seatIndex, stakeDoes) {
   const params = new URLSearchParams();
   params.set("autostart", "1");
-  params.set("stake", String(MORPION_FRIEND_FIXED_STAKE_DOES));
+  params.set("stake", String(Math.max(MORPION_FRIEND_FIXED_STAKE_DOES, Number.parseInt(String(stakeDoes || 0), 10) || MORPION_FRIEND_FIXED_STAKE_DOES)));
   params.set("friendMorpionRoomId", String(roomId || "").trim());
   params.set("seat", String(Math.max(0, Number.parseInt(String(seatIndex || 0), 10) || 0)));
   params.set("roomMode", "morpion_friends");
@@ -763,6 +801,12 @@ function clearPage2SupportMigrationNoticeTimer() {
   page2SupportMigrationNoticeTimer = null;
 }
 
+function clearPage2UserImportanceNoticeTimer() {
+  if (!page2UserImportanceNoticeTimer) return;
+  window.clearTimeout(page2UserImportanceNoticeTimer);
+  page2UserImportanceNoticeTimer = null;
+}
+
 async function refreshDiscussionFabState(user) {
   const badge = document.getElementById("discussionFabBadge");
   const uid = String(user?.uid || "");
@@ -915,6 +959,7 @@ function isPage2BlockingOverlayOpen() {
     "financeNoticeOverlay",
     "sharePromoOverlay",
     "sharePromoSuccessOverlay",
+    "userImportanceOverlay",
     "gameModeOverlay",
     "stakeSelectionOverlay",
     "morpionStakeOverlay",
@@ -963,6 +1008,45 @@ function openSupportMigrationNotice() {
 function maybeShowSupportMigrationNotice(user = null, clientData = {}) {
   clearPage2SupportMigrationNoticeTimer();
   closeSupportMigrationNotice();
+}
+
+function closeUserImportanceNotice() {
+  const overlay = document.getElementById("userImportanceOverlay");
+  if (!overlay) return;
+  overlay.classList.add("hidden");
+  overlay.classList.remove("flex");
+  if (!isPage2BlockingOverlayOpen()) {
+    document.body.classList.remove("overflow-hidden");
+  }
+}
+
+function showUserImportanceNotice() {
+  const overlay = document.getElementById("userImportanceOverlay");
+  if (!overlay || isPage2BlockingOverlayOpen()) return false;
+  overlay.classList.remove("hidden");
+  overlay.classList.add("flex");
+  document.body.classList.add("overflow-hidden");
+  return true;
+}
+
+function maybeShowUserImportanceNotice(user = page2PresenceUser) {
+  clearPage2UserImportanceNoticeTimer();
+  const uid = String(user?.uid || "");
+  if (!uid) return;
+  if (page2UserImportanceNoticeShownForUid === uid) return;
+  if (page2UserImportanceDismissedInSession) return;
+  if (hasUserImportanceDismissed(uid)) return;
+
+  const welcomeCoachOpen = document.getElementById("welcomeBonusCoachOverlay")?.classList.contains("flex");
+  if (isPage2BlockingOverlayOpen() || welcomeCoachOpen) {
+    page2UserImportanceNoticeTimer = window.setTimeout(() => {
+      maybeShowUserImportanceNotice(user);
+    }, 900);
+    return;
+  }
+
+  page2UserImportanceNoticeShownForUid = uid;
+  showUserImportanceNotice();
 }
 
 function formatFinanceAmountHtg(value = 0) {
@@ -1216,6 +1300,40 @@ function consumeAuthSuccessNotice() {
   }
 }
 
+function getUserImportanceDismissKey(uid = "") {
+  const safeUid = String(uid || "").trim();
+  return safeUid ? `${USER_IMPORTANCE_DISMISS_STORAGE_KEY}:${safeUid}` : USER_IMPORTANCE_DISMISS_STORAGE_KEY;
+}
+
+function hasUserImportanceDismissed(uid = "") {
+  try {
+    return window.localStorage?.getItem(getUserImportanceDismissKey(uid)) === "1";
+  } catch (_) {
+    return false;
+  }
+}
+
+function markUserImportanceDismissed(uid = "") {
+  try {
+    window.localStorage?.setItem(getUserImportanceDismissKey(uid), "1");
+  } catch (_) {
+  }
+}
+
+function consumeUserImportanceNotice() {
+  try {
+    const raw = sessionStorage.getItem(USER_IMPORTANCE_NOTICE_STORAGE_KEY) || "";
+    if (!raw) return null;
+    sessionStorage.removeItem(USER_IMPORTANCE_NOTICE_STORAGE_KEY);
+    const parsed = JSON.parse(raw);
+    const ts = Number(parsed?.ts || 0);
+    if (!Number.isFinite(ts) || ts <= 0) return null;
+    return (Date.now() - ts) < 10 * 60_000 ? parsed : null;
+  } catch (_) {
+    return null;
+  }
+}
+
 function isSignupBonusModalPending(profile = {}) {
   return Number(profile?.signupBonusAutoGrantedAtMs) > 0
     && Number(profile?.signupBonusAutoGrantedHtg) > 0
@@ -1401,6 +1519,14 @@ export function renderPage2(user, options = {}) {
   const hasConfirmedAuth = Boolean(incomingUid && currentAuthUid && incomingUid === currentAuthUid);
   const isOptimisticAuth = options?.optimisticAuth === true && !hasConfirmedAuth && Boolean(incomingUid);
   const isAuthenticated = Boolean(incomingUid);
+  if (page2UserImportanceNoticeUid !== incomingUid) {
+    page2UserImportanceNoticeUid = incomingUid;
+    page2UserImportanceNoticePayload = null;
+    page2UserImportanceNoticeShownForUid = "";
+    page2UserImportanceDismissedInSession = false;
+    clearPage2UserImportanceNoticeTimer();
+    closeUserImportanceNotice();
+  }
   if (page2WelcomeBonusPromptUid !== incomingUid) {
     page2WelcomeBonusPromptUid = incomingUid;
     page2WelcomeBonusFundingCache = null;
@@ -1617,6 +1743,31 @@ export function renderPage2(user, options = {}) {
           </button>
           <a id="supportMigrationContactBtn" href="${SUPPORT_MIGRATION_WHATSAPP_LINK}" target="_blank" rel="noopener noreferrer" class="inline-flex h-11 items-center justify-center rounded-[18px] border border-[#ffb26e] bg-[#F57C00] text-sm font-semibold text-white shadow-[9px_9px_20px_rgba(155,78,25,0.45),-7px_-7px_16px_rgba(255,173,96,0.2)] transition hover:-translate-y-0.5">
             Recontacter
+          </a>
+        </div>
+      </div>
+    </div>
+  `);
+
+  pageShell.insertAdjacentHTML("beforeend", `
+    <div id="userImportanceOverlay" class="fixed inset-0 z-[3458] hidden items-end justify-center bg-[#12192b]/72 px-[max(12px,env(safe-area-inset-left))] pb-[max(12px,env(safe-area-inset-bottom))] pt-[max(12px,env(safe-area-inset-top))] backdrop-blur-sm sm:items-center sm:px-4 sm:py-4">
+      <div id="userImportancePanel" class="w-full rounded-[28px] border border-white/15 bg-[linear-gradient(180deg,rgba(82,94,132,0.98),rgba(55,65,95,0.98))] px-4 pb-[max(1rem,env(safe-area-inset-bottom))] pt-5 text-white shadow-[0_-16px_38px_rgba(12,18,31,0.42)] sm:max-w-md sm:rounded-[30px] sm:border-white/20 sm:px-6 sm:pb-6 sm:pt-6 sm:shadow-[14px_14px_34px_rgba(16,23,40,0.5),-10px_-10px_24px_rgba(112,126,165,0.2)]">
+        <div class="mx-auto flex h-14 w-14 items-center justify-center rounded-[20px] border border-[#ffcf9f]/45 bg-[#F57C00]/22 text-[#ffe1c4] shadow-[inset_4px_4px_10px_rgba(20,28,45,0.42),inset_-4px_-4px_10px_rgba(123,137,180,0.18)]">
+          <i class="fa-solid fa-heart text-xl"></i>
+        </div>
+        <div class="mt-4 flex justify-center">
+          <span class="inline-flex w-fit rounded-full border border-[#ffb26e]/35 bg-[#F57C00]/16 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.18em] text-[#ffd5ae]">Mesaj enpotan</span>
+        </div>
+        <h3 class="mt-4 text-center text-[1.28rem] font-bold leading-tight sm:text-[1.45rem]">Opinyon w enpotan</h3>
+        <p class="mt-3 text-center text-sm leading-6 text-white/88">
+          Opinyon w enpotan. Ou enpotan, lajan w enpotan. Si ou rankontre pwoblem, ou dwe kontakte asistans lan pou mande ranbousman ak dedomajman, paske se dwa ou. Site la la pou kapab fe kob nan bon kodisyon siw fo nan on jwet, nou baw opotinite fe lajan ak talan w, nou pa la pou pran kob ou mal kontakte assistance lan siw gen on probleme.
+        </p>
+        <div class="mt-5 grid grid-cols-1 gap-3 sm:grid-cols-2">
+          <button id="userImportanceDismissBtn" type="button" class="h-11 rounded-[18px] border border-white/18 bg-white/10 text-sm font-semibold text-white transition hover:bg-white/15">
+            Pa montre mesaj sa anko
+          </button>
+          <a id="userImportanceContactBtn" href="${USER_IMPORTANCE_WHATSAPP_LINK}" target="_blank" rel="noopener noreferrer" class="inline-flex h-11 items-center justify-center rounded-[18px] border border-[#ffb26e] bg-[#F57C00] text-sm font-semibold text-white shadow-[9px_9px_20px_rgba(155,78,25,0.45),-7px_-7px_16px_rgba(255,173,96,0.2)] transition hover:-translate-y-0.5">
+            Kontakte asistans
           </a>
         </div>
       </div>
@@ -1914,14 +2065,14 @@ export function renderPage2(user, options = {}) {
             <i class="fa-solid fa-xmark"></i>
           </button>
         </div>
-        <p class="mt-3 text-sm leading-6 text-white/82">La salle privee Morpion entre amis se joue uniquement avec une mise fixe de 500 Does. Le gain du vainqueur est calcule avec une cote de 1.8.</p>
-        <label for="morpionFriendStakeInput" class="mt-5 block text-xs font-semibold uppercase tracking-[0.16em] text-white/58">Mise fixe</label>
-        <input id="morpionFriendStakeInput" type="text" inputmode="numeric" autocomplete="off" value="500" readonly class="mt-2 h-12 w-full rounded-2xl border border-white/18 bg-white/10 px-4 text-base font-semibold text-white outline-none placeholder:text-white/38 focus:border-[#8de7ff]/45 focus:bg-white/12" />
+        <p class="mt-3 text-sm leading-6 text-white/82">Choisis librement ta mise pour la salle privee Morpion entre amis. Les mises autorisees commencent a 500 Does et avancent par tranche de 100 Does.</p>
+        <label for="morpionFriendStakeInput" class="mt-5 block text-xs font-semibold uppercase tracking-[0.16em] text-white/58">Choisis la mise</label>
+        <input id="morpionFriendStakeInput" type="text" inputmode="numeric" autocomplete="off" value="500" class="mt-2 h-12 w-full rounded-2xl border border-white/18 bg-white/10 px-4 text-base font-semibold text-white outline-none placeholder:text-white/38 focus:border-[#8de7ff]/45 focus:bg-white/12" />
         <div class="mt-3 rounded-2xl border border-white/12 bg-white/[0.06] px-4 py-3">
           <p class="text-xs font-semibold uppercase tracking-[0.14em] text-white/58">Apercu</p>
           <p id="morpionFriendCreateSummary" class="mt-2 text-sm leading-6 text-white/84">Mise 500 Does. Gain du vainqueur: 900 Does.</p>
         </div>
-        <p id="morpionFriendCreateHint" class="mt-3 min-h-[1.25rem] text-xs text-white/64">Le mode ami Morpion est actuellement disponible uniquement en 500 Does.</p>
+        <p id="morpionFriendCreateHint" class="mt-3 min-h-[1.25rem] text-xs text-white/64">Entre une mise comme 500, 600, 700, 800. Les montants doivent etre des multiples de 100 et tu dois avoir ce solde disponible.</p>
         <button id="morpionFriendCreateSubmitBtn" type="button" class="mt-5 h-12 w-full rounded-[18px] border border-[#8de7ff]/35 bg-[linear-gradient(135deg,rgba(32,145,212,0.9),rgba(12,80,138,0.96))] text-sm font-semibold text-white shadow-[9px_9px_20px_rgba(14,58,97,0.4),-7px_-7px_16px_rgba(146,229,255,0.14)] transition hover:-translate-y-0.5">
           Generer le code
         </button>
@@ -2200,6 +2351,12 @@ export function renderPage2(user, options = {}) {
             Chargement des mises...
           </div>
         </div>
+        <label for="friendCreateCustomStake" class="mt-5 block text-xs font-semibold uppercase tracking-[0.16em] text-white/58">Choisir une mise</label>
+        <input id="friendCreateCustomStake" type="text" inputmode="numeric" autocomplete="off" placeholder="Minimum 500 Does" class="mt-2 h-12 w-full rounded-2xl border border-white/18 bg-white/10 px-4 text-base font-semibold text-white outline-none placeholder:text-white/45 focus:border-[#ffb26e]/45 focus:bg-white/12" />
+        <p id="friendCreateCustomHint" class="mt-2 min-h-[1.2rem] text-xs text-white/62">Les mises doivent etre des nombres entiers sans decimales.</p>
+        <button id="friendCreateCustomSubmit" type="button" class="mt-4 h-12 w-full rounded-[18px] border border-[#ffb26e] bg-[#F57C00] text-sm font-semibold text-white shadow-[9px_9px_20px_rgba(155,78,25,0.45),-7px_-7px_16px_rgba(255,173,96,0.2)] transition hover:-translate-y-0.5">
+          Creer avec cette mise
+        </button>
       </div>
     </div>
   `);
@@ -2389,6 +2546,9 @@ export function renderPage2(user, options = {}) {
   const friendCreatePanel = document.getElementById("friendCreatePanel");
   const friendCreateClose = document.getElementById("friendCreateClose");
   const friendCreateStakeGrid = document.getElementById("friendCreateStakeGrid");
+  const friendCreateCustomStake = document.getElementById("friendCreateCustomStake");
+  const friendCreateCustomHint = document.getElementById("friendCreateCustomHint");
+  const friendCreateCustomSubmit = document.getElementById("friendCreateCustomSubmit");
   const friendJoinOverlay = document.getElementById("friendJoinOverlay");
   const friendJoinPanel = document.getElementById("friendJoinPanel");
   const friendJoinClose = document.getElementById("friendJoinClose");
@@ -2432,6 +2592,10 @@ export function renderPage2(user, options = {}) {
   const supportMigrationPanel = document.getElementById("supportMigrationPanel");
   const supportMigrationLaterBtn = document.getElementById("supportMigrationLaterBtn");
   const supportMigrationContactBtn = document.getElementById("supportMigrationContactBtn");
+  const userImportanceOverlay = document.getElementById("userImportanceOverlay");
+  const userImportancePanel = document.getElementById("userImportancePanel");
+  const userImportanceDismissBtn = document.getElementById("userImportanceDismissBtn");
+  const userImportanceContactBtn = document.getElementById("userImportanceContactBtn");
   const welcomeBonusPromptOverlay = document.getElementById("welcomeBonusPromptOverlay");
   const welcomeBonusPromptPanel = document.getElementById("welcomeBonusPromptPanel");
   const welcomeBonusPromptAcceptBtn = document.getElementById("welcomeBonusPromptAcceptBtn");
@@ -2944,6 +3108,7 @@ export function renderPage2(user, options = {}) {
       ) {
         startWelcomeBonusCoach();
       }
+      maybeShowUserImportanceNotice(page2PresenceUser);
     }
   };
 
@@ -3539,6 +3704,12 @@ export function renderPage2(user, options = {}) {
     inviteCode: "",
   };
 
+  const morpionBotTestRoomDraft = {
+    roomId: "",
+    seatIndex: 0,
+    stakeDoes: MORPION_BOT_TEST_STAKE_DOES,
+  };
+
   const duelFriendRoomDraft = {
     roomId: "",
     seatIndex: 0,
@@ -3577,6 +3748,13 @@ export function renderPage2(user, options = {}) {
     }
     showGlobalLoading("Connexion du morpion prive en cours...");
     window.location.href = buildFriendMorpionGameUrl(nextRoomId, nextSeatIndex, nextStakeDoes);
+  };
+
+  const navigateToMorpionBotTestRoom = (roomData = {}) => {
+    const nextRoomId = String(roomData?.roomId || morpionBotTestRoomDraft.roomId || "").trim();
+    const nextSeatIndex = Number.parseInt(String(roomData?.seatIndex ?? morpionBotTestRoomDraft.seatIndex ?? 0), 10) || 0;
+    showGlobalLoading("Lancement du test bot...");
+    window.location.href = buildMorpionBotTestGameUrl(nextRoomId, nextSeatIndex);
   };
 
   const openDuelFriendMode = () => {
@@ -3696,11 +3874,12 @@ export function renderPage2(user, options = {}) {
   };
 
   const syncMorpionFriendCreateSummary = () => {
-    const stakeDoes = MORPION_FRIEND_FIXED_STAKE_DOES;
-    if (morpionFriendStakeInput) {
-      morpionFriendStakeInput.value = String(MORPION_FRIEND_FIXED_STAKE_DOES);
-    }
+    const stakeDoes = parseStrictWholeNumber(morpionFriendStakeInput?.value || MORPION_FRIEND_FIXED_STAKE_DOES);
     if (!morpionFriendCreateSummary) return;
+    if (!isValidMorpionFriendStake(stakeDoes)) {
+      morpionFriendCreateSummary.textContent = "Choisis une mise valide comme 500, 600, 700, 800.";
+      return;
+    }
     const rewardDoes = buildPrivateMorpionRewardDoes(stakeDoes);
     morpionFriendCreateSummary.textContent = `Mise ${stakeDoes.toLocaleString("fr-FR")} Does. Gain du vainqueur: ${rewardDoes.toLocaleString("fr-FR")} Does.`;
   };
@@ -3765,9 +3944,21 @@ export function renderPage2(user, options = {}) {
     document.body.classList.remove("overflow-hidden");
   };
 
+  const setFriendCreateCustomHint = (message = "", tone = "neutral") => {
+    if (!friendCreateCustomHint) return;
+    const toneMap = {
+      neutral: "text-white/62",
+      error: "text-rose-200",
+      success: "text-emerald-200",
+    };
+    const className = toneMap[tone] || toneMap.neutral;
+    friendCreateCustomHint.className = `mt-2 min-h-[1.2rem] text-xs ${className}`;
+    friendCreateCustomHint.textContent = message || "";
+  };
+
   const renderFriendCreateStakeOptions = (options = []) => {
     if (!friendCreateStakeGrid) return;
-    const items = normalizeGameStakeOptions(options);
+    const items = normalizeGameStakeOptions(FRIEND_ROOM_STAKE_OPTIONS);
     friendCreateStakeGrid.innerHTML = items.map((option) => {
       const enabled = option.enabled === true;
       const classes = enabled
@@ -3903,7 +4094,7 @@ export function renderPage2(user, options = {}) {
   const renderMorpionStakeOptions = (options = []) => {
     currentMorpionStakeOptions = normalizeMorpionStakeOptions(options);
     if (!morpionStakeOptionsGrid) return;
-    morpionStakeOptionsGrid.innerHTML = currentMorpionStakeOptions.map((option) => {
+    const regularOptions = currentMorpionStakeOptions.map((option) => {
       const enabled = option.enabled === true;
       const classes = enabled
         ? "morpion-stake-option-btn h-14 rounded-2xl border border-[#8de7ff]/35 bg-[linear-gradient(135deg,rgba(18,147,216,0.2),rgba(10,31,62,0.74))] text-sm font-semibold text-white shadow-[8px_8px_20px_rgba(10,27,48,0.28),-6px_-6px_14px_rgba(97,186,224,0.1)] transition hover:-translate-y-0.5"
@@ -3921,6 +4112,23 @@ export function renderPage2(user, options = {}) {
         </button>
       `;
     }).join("");
+
+    const botTestOption = ENABLE_MORPION_BOT_TEST
+      ? `
+        <button
+          data-stake="${MORPION_BOT_TEST_STAKE_DOES}"
+          data-bot-test="1"
+          data-available="1"
+          type="button"
+          class="morpion-stake-option-btn h-14 rounded-2xl border border-emerald-300/35 bg-[linear-gradient(135deg,rgba(16,185,129,0.18),rgba(12,44,35,0.78))] text-sm font-semibold text-white shadow-[8px_8px_20px_rgba(8,35,28,0.3),-6px_-6px_14px_rgba(110,231,183,0.08)] transition hover:-translate-y-0.5"
+        >
+          <span class="block">0 Does</span>
+          <span class="text-[11px] font-medium text-white/75">Tester le bot</span>
+        </button>
+      `
+      : "";
+
+    morpionStakeOptionsGrid.innerHTML = `${regularOptions}${botTestOption}`;
   };
 
   const renderDuelFriendCreateStakeOptions = (options = []) => {
@@ -4034,6 +4242,7 @@ export function renderPage2(user, options = {}) {
   renderDuelStakeOptions(currentDuelStakeOptions);
   renderDuelFriendCreateStakeOptions(currentDuelStakeOptions);
   renderFriendCreateStakeOptions(currentStakeOptions);
+  setFriendCreateCustomHint("Les mises doivent etre des nombres entiers sans decimales.", "neutral");
   syncMorpionFriendCreateSummary();
 
   const handleDuelEntry = async () => {
@@ -4127,7 +4336,7 @@ export function renderPage2(user, options = {}) {
       morpionFriendStakeInput.value = String(MORPION_FRIEND_FIXED_STAKE_DOES);
     }
     if (morpionFriendCreateHint) {
-      morpionFriendCreateHint.textContent = "Le mode ami Morpion est actuellement disponible uniquement en 500 Does.";
+      morpionFriendCreateHint.textContent = "Entre une mise comme 500, 600, 700, 800. Les montants doivent etre des multiples de 100 et tu dois avoir ce solde disponible.";
     }
     syncMorpionFriendCreateSummary();
     openMorpionFriendCreate();
@@ -4357,9 +4566,9 @@ export function renderPage2(user, options = {}) {
   });
 
   morpionFriendStakeInput?.addEventListener("input", () => {
-    morpionFriendStakeInput.value = String(MORPION_FRIEND_FIXED_STAKE_DOES);
+    morpionFriendStakeInput.value = String(morpionFriendStakeInput.value || "").replace(/[^\d]/g, "");
     if (morpionFriendCreateHint) {
-      morpionFriendCreateHint.textContent = "Le mode ami Morpion est actuellement disponible uniquement en 500 Does.";
+      morpionFriendCreateHint.textContent = "Entre une mise comme 500, 600, 700, 800. Les montants doivent etre des multiples de 100 et tu dois avoir ce solde disponible.";
     }
     syncMorpionFriendCreateSummary();
   });
@@ -4372,7 +4581,16 @@ export function renderPage2(user, options = {}) {
   });
 
   morpionFriendCreateSubmitBtn?.addEventListener("click", async () => {
-    const stakeAmount = MORPION_FRIEND_FIXED_STAKE_DOES;
+    const rawStake = String(morpionFriendStakeInput?.value || "").trim();
+    const stakeAmount = parseStrictWholeNumber(rawStake);
+    if (!isValidMorpionFriendStake(stakeAmount)) {
+      if (morpionFriendCreateHint) {
+        morpionFriendCreateHint.textContent = "La mise doit etre 500 Does ou plus, par tranche de 100. Exemples: 500, 600, 700.";
+      }
+      morpionFriendStakeInput?.focus();
+      syncMorpionFriendCreateSummary();
+      return;
+    }
 
     try {
       await withButtonLoading(morpionFriendCreateSubmitBtn, async () => {
@@ -4392,7 +4610,7 @@ export function renderPage2(user, options = {}) {
         const result = await createFriendMorpionRoomSecure({ stakeDoes: stakeAmount });
         morpionFriendRoomDraft.roomId = String(result?.roomId || "");
         morpionFriendRoomDraft.seatIndex = Number.parseInt(String(result?.seatIndex || 0), 10) || 0;
-        morpionFriendRoomDraft.stakeDoes = Number.parseInt(String(result?.stakeDoes || stakeAmount), 10) || MORPION_FRIEND_FIXED_STAKE_DOES;
+        morpionFriendRoomDraft.stakeDoes = Number.parseInt(String(result?.stakeDoes || stakeAmount), 10) || stakeAmount;
         morpionFriendRoomDraft.inviteCode = String(result?.inviteCode || "").trim();
 
         if (morpionFriendCodeValue) {
@@ -4417,7 +4635,7 @@ export function renderPage2(user, options = {}) {
       ) {
         const roomMode = String(error?.roomMode || "");
         const roomStatus = String(error?.status || "").trim().toLowerCase();
-        const nextStake = Number.parseInt(String(error?.stakeDoes || stakeAmount), 10) || MORPION_FRIEND_FIXED_STAKE_DOES;
+        const nextStake = Number.parseInt(String(error?.stakeDoes || stakeAmount), 10) || stakeAmount;
         closeMorpionFriendCreate();
         if (roomMode === "morpion_friends") {
           morpionFriendRoomDraft.roomId = String(error.roomId || "");
@@ -4593,6 +4811,92 @@ export function renderPage2(user, options = {}) {
     }
   });
 
+  const submitFriendCustomStake = async () => {
+    if (!friendCreateCustomStake || !friendCreateCustomSubmit) return;
+    const raw = String(friendCreateCustomStake.value || "").trim().replace(/\s+/g, "");
+    if (!raw) {
+      setFriendCreateCustomHint("Antre yon miz anvan.", "error");
+      return;
+    }
+    if (!/^\d+$/.test(raw)) {
+      setFriendCreateCustomHint("Miz la dwe yon nonb antye san desimal.", "error");
+      return;
+    }
+    const stakeAmount = Number.parseInt(raw, 10) || 0;
+    if (stakeAmount < 500) {
+      setFriendCreateCustomHint("Miz minimom nan se 500 Does.", "error");
+      return;
+    }
+
+    try {
+      await withButtonLoading(friendCreateCustomSubmit, async () => {
+        const xchangeModule = await loadXchangeModule();
+        await xchangeModule.ensureXchangeState(user?.uid);
+        const state = xchangeModule.getXchangeState(window.__userBaseBalance || window.__userBalance || 0, user?.uid);
+        if (getPlayableDoesBalance(state) < stakeAmount) {
+          closeFriendCreate();
+          if (doesRequiredOverlay) {
+            doesRequiredOverlay.classList.remove("hidden");
+            doesRequiredOverlay.classList.add("flex");
+          }
+          return;
+        }
+
+        const result = await createFriendRoomSecure({
+          stakeDoes: stakeAmount,
+          requiredHumans: 4,
+        });
+        friendRoomDraft.roomId = String(result?.roomId || "");
+        friendRoomDraft.seatIndex = Number.parseInt(String(result?.seatIndex || 0), 10) || 0;
+        friendRoomDraft.stakeDoes = Number.parseInt(String(result?.stakeDoes || stakeAmount), 10) || stakeAmount;
+        friendRoomDraft.inviteCode = String(result?.inviteCode || "").trim();
+
+        if (friendCodeValue) {
+          friendCodeValue.textContent = friendRoomDraft.inviteCode || "------";
+        }
+        if (friendCodeStakeMeta) {
+          friendCodeStakeMeta.textContent = `${friendRoomDraft.stakeDoes} Does obligatoires pour 4 joueurs.`;
+        }
+        if (friendCodeCopyBtn) {
+          friendCodeCopyBtn.textContent = "Copier le code";
+        }
+
+        closeFriendCreate();
+        openFriendCode();
+      }, { loadingLabel: "Creation..." });
+      setFriendCreateCustomHint("Salle creee avec succes.", "success");
+    } catch (error) {
+      console.error("[FRIEND_ROOM] create custom failed", error);
+      if (
+        String(error?.code || "") === "active-room-exists"
+        && String(error?.roomMode || "public") === "friends"
+        && error?.roomId
+      ) {
+        friendRoomDraft.roomId = String(error.roomId || "");
+        friendRoomDraft.seatIndex = Number.parseInt(String(error?.seatIndex || 0), 10) || 0;
+        friendRoomDraft.stakeDoes = stakeAmount;
+        closeFriendCreate();
+        navigateToFriendRoom(friendRoomDraft);
+        return;
+      }
+      setFriendCreateCustomHint(error?.message || "Impossible de creer la salle pour le moment.", "error");
+    }
+  };
+
+  if (friendCreateCustomSubmit) {
+    friendCreateCustomSubmit.addEventListener("click", () => {
+      void submitFriendCustomStake();
+    });
+  }
+  if (friendCreateCustomStake) {
+    friendCreateCustomStake.addEventListener("keydown", (event) => {
+      if (event.key === "Enter") {
+        event.preventDefault();
+        void submitFriendCustomStake();
+      }
+    });
+  }
+
   friendCodeCopyBtn?.addEventListener("click", async () => {
     const codeToCopy = String(friendRoomDraft.inviteCode || "").trim();
     if (!codeToCopy) return;
@@ -4696,6 +5000,12 @@ export function renderPage2(user, options = {}) {
         title: "Mise indisponible",
         message: "Cette mise morpion sera active prochainement.",
       });
+      return;
+    }
+    if (btn.getAttribute("data-bot-test") === "1") {
+      if (!ENABLE_MORPION_BOT_TEST) return;
+      closeMorpionStakeSelection();
+      navigateToMorpionBotTestRoom({});
       return;
     }
     const parsedStakeAmount = Number.parseInt(String(btn.getAttribute("data-stake") ?? 500), 10);
@@ -5014,6 +5324,33 @@ export function renderPage2(user, options = {}) {
       event.stopPropagation();
     });
   }
+  if (userImportanceDismissBtn) {
+    userImportanceDismissBtn.addEventListener("click", () => {
+      const uid = String(page2PresenceUser?.uid || auth.currentUser?.uid || "");
+      if (uid) markUserImportanceDismissed(uid);
+      page2UserImportanceDismissedInSession = true;
+      closeUserImportanceNotice();
+    });
+  }
+  if (userImportanceContactBtn) {
+    userImportanceContactBtn.addEventListener("click", () => {
+      page2UserImportanceDismissedInSession = true;
+      closeUserImportanceNotice();
+    });
+  }
+  if (userImportanceOverlay) {
+    userImportanceOverlay.addEventListener("click", (event) => {
+      if (event.target === userImportanceOverlay) {
+        page2UserImportanceDismissedInSession = true;
+        closeUserImportanceNotice();
+      }
+    });
+  }
+  if (userImportancePanel) {
+    userImportancePanel.addEventListener("click", (event) => {
+      event.stopPropagation();
+    });
+  }
   if (welcomeBonusPromptAcceptBtn) {
     welcomeBonusPromptAcceptBtn.addEventListener("click", () => {
       void handleWelcomeBonusPromptChoice("accepted");
@@ -5073,6 +5410,7 @@ export function renderPage2(user, options = {}) {
   if (hasConfirmedAuth) {
     void refreshPage2AccountState(page2PresenceUser);
     maybeShowSupportMigrationNotice(page2PresenceUser, page2ClientData);
+    maybeShowUserImportanceNotice(page2PresenceUser);
   }
 
   const effectiveUser = hasConfirmedAuth ? user : null;

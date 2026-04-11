@@ -1,4 +1,4 @@
-const CACHE_VERSION = "domino-static-v6";
+const CACHE_VERSION = "domino-static-v8";
 const PAGE_CACHE = `${CACHE_VERSION}-pages`;
 const ASSET_CACHE = `${CACHE_VERSION}-assets`;
 const MEDIA_CACHE = `${CACHE_VERSION}-media`;
@@ -12,6 +12,10 @@ const CORE_PRECACHE = [
   "/contrat.html",
   "/morpion.html",
   "/logiquejeu-morpion.js",
+  "/page2.js",
+  "/secure-functions.js",
+  "/firebase-init.js",
+  "/morpion-live-notice.js",
   "/jeu.html",
   "/jeu-duel.html",
   "/site.webmanifest",

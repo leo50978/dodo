@@ -176,12 +176,20 @@ export async function createFriendMorpionRoomSecure(payload = {}) {
   return invokeCallable("createFriendMorpionRoom", payload, "Impossible de creer une salle morpion entre amis.");
 }
 
+export async function createMorpionBotTestRoomSecure(payload = {}) {
+  return invokeCallable("createMorpionBotTestRoom", payload, "Impossible de creer la salle de test morpion.");
+}
+
 export async function joinFriendMorpionRoomByCodeSecure(payload = {}) {
   return invokeCallable("joinFriendMorpionRoomByCode", payload, "Impossible de rejoindre la salle morpion entre amis.");
 }
 
 export async function resumeFriendMorpionRoomSecure(payload = {}) {
   return invokeCallable("resumeFriendMorpionRoom", payload, "Impossible de reprendre la salle morpion privee.");
+}
+
+export async function resumeMorpionBotTestRoomSecure(payload = {}) {
+  return invokeCallable("resumeMorpionBotTestRoom", payload, "Impossible de reprendre la salle de test morpion.");
 }
 
 export async function ensureRoomReadyMorpionSecure(payload = {}) {
@@ -206,6 +214,10 @@ export async function submitActionMorpionSecure(payload = {}) {
 
 export async function claimWinRewardMorpionSecure(payload = {}) {
   return invokeCallable("claimWinRewardMorpion", payload, "Impossible de valider le gain morpion.");
+}
+
+export async function requestFriendMorpionRematchSecure(payload = {}) {
+  return invokeCallable("requestFriendMorpionRematch", payload, "Impossible de demander la revanche morpion.");
 }
 
 export async function getMyActiveMorpionInviteSecure(payload = {}) {

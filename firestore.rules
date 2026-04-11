@@ -64,6 +64,7 @@ service cloud.firestore {
           "updatedAt",
           "sitePresencePage",
           "sitePresenceExpiresAtMs",
+          "morpionLastInterestAtMs",
         ])
         && request.resource.data.uid == uid;
     }
@@ -77,6 +78,7 @@ service cloud.firestore {
           "updatedAt",
           "sitePresencePage",
           "sitePresenceExpiresAtMs",
+          "morpionLastInterestAtMs",
         ])
         && request.resource.data.uid == resource.data.uid;
     }

@@ -10,12 +10,15 @@ import {
 import {
   joinMatchmakingMorpionSecure,
   resumeFriendMorpionRoomSecure,
+  resumeMorpionBotTestRoomSecure,
+  createMorpionBotTestRoomSecure,
   ensureRoomReadyMorpionSecure,
   touchRoomPresenceMorpionSecure,
   ackRoomStartSeenMorpionSecure,
   leaveRoomMorpionSecure,
   submitActionMorpionSecure,
   claimWinRewardMorpionSecure,
+  requestFriendMorpionRematchSecure,
   getMyActiveMorpionInviteSecure,
   respondMorpionPlayInviteSecure,
   getMorpionMatchmakingHintSecure,
@@ -28,6 +31,7 @@ import {
 const MORPION_ROOMS = "morpionRooms";
 const MORPION_GAME_STATES = "morpionGameStates";
 const ALLOWED_MORPION_STAKE_AMOUNTS = Object.freeze([500]);
+const MORPION_BOT_TEST_STAKE_DOES = 0;
 const TURN_LIMIT_SECONDS = 30;
 const TURN_LIMIT_MS = TURN_LIMIT_SECONDS * 1000;
 const MATCHMAKING_WAIT_SECONDS = 15;
@@ -37,6 +41,8 @@ const PRESENCE_PING_MS = 20 * 1000;
 const SITE_PRESENCE_PING_MS = 25 * 1000;
 const SITE_PRESENCE_TTL_MS = 70 * 1000;
 const INVITE_POLL_MS = 6 * 1000;
+const BOT_TURN_NUDGE_COOLDOWN_MS = 4 * 1000;
+const TIMEOUT_NUDGE_COOLDOWN_MS = 4 * 1000;
 const MORPION_WHATSAPP_GROUP_URL = "https://chat.whatsapp.com/I8VfW1Tdv6nF1d7ZkMfOg0?mode=gi_t";
 const ABANDONED_ROOMS_STORAGE_KEY = "domino_morpion_abandoned_rooms_v1";
 const MORPION_BOT_NUMERIC_IDS = Object.freeze([35601379, 40507232, 41752992]);
@@ -44,17 +50,41 @@ const MORPION_BOT_NUMERIC_IDS = Object.freeze([35601379, 40507232, 41752992]);
 const URL_PARAMS = new URLSearchParams(window.location.search);
 const parsedRequestedStake = Number.parseInt(String(URL_PARAMS.get("stake") ?? 500), 10);
 const requestedStake = Number.isFinite(parsedRequestedStake) ? parsedRequestedStake : 500;
+const requestedRoomMode = String(URL_PARAMS.get("roomMode") || "").trim();
+
+function buildMorpionBotTestGameUrl(roomId = "", seatIndex = 0) {
+  const params = new URLSearchParams();
+  params.set("autostart", "1");
+  params.set("stake", String(MORPION_BOT_TEST_STAKE_DOES));
+  const safeRoomId = String(roomId || "").trim();
+  if (safeRoomId) {
+    params.set("botTestMorpionRoomId", safeRoomId);
+    params.set("seat", String(Math.max(0, Number.parseInt(String(seatIndex || 0), 10) || 0)));
+  }
+  params.set("roomMode", "morpion_bot_test");
+  return `./morpion.html?${params.toString()}`;
+}
 function getFriendMorpionRoomIdFromUrl() {
   return String(URL_PARAMS.get("friendMorpionRoomId") || "").trim();
+}
+
+function getBotTestMorpionRoomIdFromUrl() {
+  return String(URL_PARAMS.get("botTestMorpionRoomId") || "").trim();
 }
 
 function isFriendMorpionFlowFromUrl() {
   return getFriendMorpionRoomIdFromUrl().length > 0;
 }
 
+function isBotTestMorpionFlowFromUrl() {
+  return getBotTestMorpionRoomIdFromUrl().length > 0 || requestedRoomMode === "morpion_bot_test";
+}
+
 const selectedStakeDoes = isFriendMorpionFlowFromUrl()
   ? MORPION_FRIEND_FIXED_STAKE_DOES
-  : (ALLOWED_MORPION_STAKE_AMOUNTS.includes(requestedStake) ? requestedStake : 500);
+  : (isBotTestMorpionFlowFromUrl()
+    ? MORPION_BOT_TEST_STAKE_DOES
+    : (ALLOWED_MORPION_STAKE_AMOUNTS.includes(requestedStake) ? requestedStake : 500));
 
 const dom = {
   board: document.getElementById("morpionBoard"),
@@ -137,6 +167,7 @@ let ensuringRoom = false;
 let actionSending = false;
 let rewardClaiming = false;
 let rewardClaimed = false;
+let rematchRequestInFlight = false;
 let startRevealAcked = false;
 let leavingRoom = false;
 let turnTimeoutRequestInFlight = false;
@@ -166,15 +197,117 @@ let matchmakingHintMessage = "";
 let myWhatsappContact = null;
 let recentWhatsappContacts = [];
 let whatsappPreferenceLoaded = false;
+let sitePresenceWarned = false;
+let lastRoomTraceKey = "";
+let lastStateTraceKey = "";
+let botTurnStallKey = "";
+let botTurnStallSinceMs = 0;
+let botTurnStallLastReportedMs = 0;
+let queuedPresenceReason = "";
+let presencePingStartedAtMs = 0;
+let lastBotTurnNudgeKey = "";
+let lastBotTurnNudgeAtMs = 0;
+let lastTimeoutNudgeKey = "";
+let lastTimeoutNudgeAtMs = 0;
 
-function morpionDebug(event, payload = {}) {
+function buildMorpionLogPayload(payload = {}) {
+  return {
+    ts: new Date().toISOString(),
+    roomId: currentRoomId || "",
+    seat: currentSeatIndex,
+    ...payload,
+  };
+}
+
+function getPresenceReasonPriority(reason = "") {
+  switch (String(reason || "")) {
+    case "timeoutNudge":
+      return 3;
+    case "botTurnNudge":
+      return 2;
+    default:
+      return 1;
+  }
+}
+
+function queuePresenceReason(reason = "") {
+  const safeReason = String(reason || "presence");
+  if (!queuedPresenceReason || getPresenceReasonPriority(safeReason) >= getPresenceReasonPriority(queuedPresenceReason)) {
+    queuedPresenceReason = safeReason;
+  }
+}
+
+function resetTurnNudgeTracking() {
+  lastBotTurnNudgeKey = "";
+  lastBotTurnNudgeAtMs = 0;
+  lastTimeoutNudgeKey = "";
+  lastTimeoutNudgeAtMs = 0;
+}
+
+function buildTurnNudgeKey(kind = "") {
+  return [
+    String(kind || ""),
+    currentRoomId || "",
+    safeInt(currentRoomData?.currentPlayer, -1),
+    safeInt(currentRoomData?.lastActionSeq, 0),
+    safeInt(currentRoomData?.turnLockedUntilMs, 0),
+    safeInt(currentRoomData?.turnDeadlineMs, 0),
+  ].join(":");
+}
+
+function shouldThrottleTurnNudge(kind = "bot") {
+  const key = buildTurnNudgeKey(kind);
+  const nowMs = Date.now();
+  const cooldownMs = kind === "timeout" ? TIMEOUT_NUDGE_COOLDOWN_MS : BOT_TURN_NUDGE_COOLDOWN_MS;
+  const lastKey = kind === "timeout" ? lastTimeoutNudgeKey : lastBotTurnNudgeKey;
+  const lastAtMs = kind === "timeout" ? lastTimeoutNudgeAtMs : lastBotTurnNudgeAtMs;
+  const throttled = key === lastKey && lastAtMs > 0 && (nowMs - lastAtMs) < cooldownMs;
+
+  if (!throttled) {
+    if (kind === "timeout") {
+      lastTimeoutNudgeKey = key;
+      lastTimeoutNudgeAtMs = nowMs;
+    } else {
+      lastBotTurnNudgeKey = key;
+      lastBotTurnNudgeAtMs = nowMs;
+    }
+  }
+
+  return {
+    key,
+    nowMs,
+    throttled,
+    cooldownMs,
+    remainingMs: throttled ? Math.max(0, cooldownMs - (nowMs - lastAtMs)) : 0,
+  };
+}
+
+function withTimeout(promise, timeoutMs = 8000, timeoutMessage = "operation-timeout") {
+  let timeoutId = null;
+  return Promise.race([
+    promise,
+    new Promise((_, reject) => {
+      timeoutId = window.setTimeout(() => {
+        reject(new Error(timeoutMessage));
+      }, timeoutMs);
+    }),
+  ]).finally(() => {
+    if (timeoutId) {
+      window.clearTimeout(timeoutId);
+    }
+  });
+}
+
+function morpionTrace(event, payload = {}) {
   try {
-    console.log("[MORPION_DEBUG]", event, {
-      ts: new Date().toISOString(),
-      roomId: currentRoomId || "",
-      seat: currentSeatIndex,
-      ...payload,
-    });
+    console.log("[MORPION_TRACE]", event, buildMorpionLogPayload(payload));
+  } catch (_) {
+  }
+}
+
+function morpionIncident(event, payload = {}) {
+  try {
+    console.warn("[MORPION_INCIDENT]", event, buildMorpionLogPayload(payload));
   } catch (_) {
   }
 }
@@ -517,7 +650,12 @@ async function touchClientSitePresence() {
       morpionLastInterestAtMs: nowMs,
     }, { merge: true });
   } catch (error) {
-    console.warn("[MORPION] site presence update failed", error);
+    if (!sitePresenceWarned) {
+      sitePresenceWarned = true;
+      morpionTrace("sitePresenceUnavailable", {
+        message: error?.message || String(error),
+      });
+    }
   } finally {
     sitePresencePingInFlight = false;
   }
@@ -526,6 +664,107 @@ async function touchClientSitePresence() {
 function currentBoard() {
   const board = Array.isArray(currentGameState?.board) ? currentGameState.board : [];
   return board.length === 225 ? board : Array.from({ length: 225 }, () => -1);
+}
+
+function resetBotTurnStallObservation() {
+  botTurnStallKey = "";
+  botTurnStallSinceMs = 0;
+  botTurnStallLastReportedMs = 0;
+}
+
+function observeBotTurnStall(source = "") {
+  const status = String(currentRoomData?.status || "");
+  const activeSeat = safeInt(currentRoomData?.currentPlayer, -1);
+  const revealPending = currentRoomData?.startRevealPending === true;
+  if (!currentRoomId || status !== "playing" || revealPending || activeSeat < 0 || activeSeat === currentSeatIndex) {
+    resetBotTurnStallObservation();
+    return;
+  }
+
+  const key = [
+    currentRoomId,
+    activeSeat,
+    safeInt(currentRoomData?.lastActionSeq, 0),
+    safeInt(currentRoomData?.turnLockedUntilMs, 0),
+    safeInt(currentRoomData?.turnDeadlineMs, 0),
+    safeInt(currentGameState?.moveCount, 0),
+  ].join(":");
+  const nowMs = Date.now();
+  if (key !== botTurnStallKey) {
+    botTurnStallKey = key;
+    botTurnStallSinceMs = nowMs;
+    botTurnStallLastReportedMs = 0;
+    return;
+  }
+
+  const lockedUntilMs = safeInt(currentRoomData?.turnLockedUntilMs, 0);
+  const thresholdMs = lockedUntilMs > nowMs
+    ? Math.max(3500, (lockedUntilMs - nowMs) + 1500)
+    : 3500;
+  const ageMs = nowMs - botTurnStallSinceMs;
+  if (ageMs < thresholdMs || (nowMs - botTurnStallLastReportedMs) < 5000) return;
+
+  botTurnStallLastReportedMs = nowMs;
+  morpionIncident("botTurnStalled", {
+    source,
+    activeSeat,
+    lastActionSeq: safeInt(currentRoomData?.lastActionSeq, 0),
+    moveCount: safeInt(currentGameState?.moveCount, 0),
+    turnLockedUntilMs: lockedUntilMs,
+    turnDeadlineMs: safeInt(currentRoomData?.turnDeadlineMs, 0),
+    stallAgeMs: ageMs,
+    humanCount: safeInt(currentRoomData?.humanCount, 0),
+    botCount: safeInt(currentRoomData?.botCount, 0),
+  });
+}
+
+function traceRoomTransition(source = "room") {
+  const traceKey = [
+    String(currentRoomData?.status || ""),
+    currentRoomData?.startRevealPending === true ? 1 : 0,
+    safeInt(currentRoomData?.currentPlayer, -1),
+    safeInt(currentRoomData?.lastActionSeq, 0),
+    safeInt(currentRoomData?.turnLockedUntilMs, 0),
+    safeInt(currentRoomData?.turnDeadlineMs, 0),
+    safeInt(currentRoomData?.humanCount, 0),
+    safeInt(currentRoomData?.botCount, 0),
+  ].join(":");
+  if (traceKey !== lastRoomTraceKey) {
+    lastRoomTraceKey = traceKey;
+    morpionTrace("roomTransition", {
+      source,
+      status: String(currentRoomData?.status || ""),
+      startRevealPending: currentRoomData?.startRevealPending === true,
+      currentPlayer: safeInt(currentRoomData?.currentPlayer, -1),
+      lastActionSeq: safeInt(currentRoomData?.lastActionSeq, 0),
+      turnLockedUntilMs: safeInt(currentRoomData?.turnLockedUntilMs, 0),
+      turnDeadlineMs: safeInt(currentRoomData?.turnDeadlineMs, 0),
+      humanCount: safeInt(currentRoomData?.humanCount, 0),
+      botCount: safeInt(currentRoomData?.botCount, 0),
+    });
+  }
+  observeBotTurnStall(source);
+}
+
+function traceStateTransition(source = "state") {
+  const traceKey = [
+    currentGameState ? 1 : 0,
+    safeInt(currentGameState?.currentPlayer, -1),
+    safeInt(currentGameState?.moveCount, 0),
+    safeInt(currentGameState?.winnerSeat, -1),
+    String(currentGameState?.endedReason || ""),
+  ].join(":");
+  if (traceKey !== lastStateTraceKey) {
+    lastStateTraceKey = traceKey;
+    morpionTrace("stateTransition", {
+      source,
+      currentPlayer: safeInt(currentGameState?.currentPlayer, -1),
+      moveCount: safeInt(currentGameState?.moveCount, 0),
+      winnerSeat: safeInt(currentGameState?.winnerSeat, -1),
+      endedReason: String(currentGameState?.endedReason || ""),
+    });
+  }
+  observeBotTurnStall(source);
 }
 
 function isMyTurn() {
@@ -613,6 +852,21 @@ function setWaitingActionsVisibility({
 function renderMatchmakingWaitingModal() {
   if (String(currentRoomData?.status || "") !== "waiting") {
     resetMatchmakingWaitState();
+    return;
+  }
+
+  if (isFriendMorpionRoomFlow()) {
+    const humans = safeInt(currentRoomData?.humanCount, 0);
+    if (humans >= 2) {
+      openWaitingModal("Adversaire trouve", "La partie privee demarre...");
+    } else {
+      openWaitingModal(
+        "En attente de ton ami...",
+        "La salle privee reste ouverte sans limite de temps tant que vous n'avez pas quitte la salle."
+      );
+    }
+    if (dom.waitingTimerWrap) dom.waitingTimerWrap.classList.add("hidden");
+    if (dom.waitingActions) dom.waitingActions.classList.add("hidden");
     return;
   }
 
@@ -773,6 +1027,23 @@ function closeResultModal() {
   dom.resultModal?.classList.add("hidden");
 }
 
+function syncFriendRematchActionState() {
+  const waitingForOpponent = isFriendMorpionRoomFlow()
+    && String(currentRoomData?.status || "") === "ended"
+    && hasCurrentUserRequestedFriendRematch();
+  const disabled = waitingForOpponent || rematchRequestInFlight;
+  if (dom.resultReplayBtn) {
+    dom.resultReplayBtn.disabled = disabled;
+    dom.resultReplayBtn.classList.toggle("opacity-60", disabled);
+    dom.resultReplayBtn.classList.toggle("cursor-not-allowed", disabled);
+  }
+  if (dom.quitReplayBtn) {
+    dom.quitReplayBtn.disabled = disabled;
+    dom.quitReplayBtn.classList.toggle("opacity-60", disabled);
+    dom.quitReplayBtn.classList.toggle("cursor-not-allowed", disabled);
+  }
+}
+
 function openQuitModal() {
   syncReplayActionLabels();
   dom.quitModal?.classList.remove("hidden");
@@ -780,6 +1051,14 @@ function openQuitModal() {
 
 function closeQuitModal() {
   dom.quitModal?.classList.add("hidden");
+}
+
+function formatResultErrorCopy(error, fallback = "Reessaie dans un instant.") {
+  const message = String(error?.message || fallback || "").trim();
+  const code = String(error?.code || "").trim();
+  if (!code) return message;
+  if (message.toLowerCase().includes(code.toLowerCase())) return message;
+  return `${message} (code: ${code})`;
 }
 
 function renderPlayerCards() {
@@ -850,6 +1129,21 @@ function getLastMoveCellIndex() {
   return cellIndex >= 0 && cellIndex < 225 ? cellIndex : -1;
 }
 
+function isFriendMorpionRoomFlow() {
+  return isFriendMorpionFlowFromUrl() || String(currentRoomData?.roomMode || "").trim() === "morpion_friends";
+}
+
+function getFriendMorpionRematchRequestUids() {
+  return Array.isArray(currentRoomData?.rematchRequestUids)
+    ? currentRoomData.rematchRequestUids.map((item) => String(item || "").trim()).filter(Boolean)
+    : [];
+}
+
+function hasCurrentUserRequestedFriendRematch() {
+  const uid = String(currentUser?.uid || "").trim();
+  return uid ? getFriendMorpionRematchRequestUids().includes(uid) : false;
+}
+
 function hideRevealResultButton() {
   dom.revealResultBtn?.classList.add("hidden");
 }
@@ -880,11 +1174,21 @@ function clearEndStateDecorations() {
 function buildEndModalPayload() {
   const winnerSeat = safeInt(currentRoomData?.winnerSeat, -1);
   const endedReason = String(currentRoomData?.endedReason || currentGameState?.endedReason || "").trim();
+  const isFriendRoom = isFriendMorpionRoomFlow();
+  const rematchRequestUids = getFriendMorpionRematchRequestUids();
+  const currentUid = String(currentUser?.uid || "").trim();
+  const requestedByMe = currentUid ? rematchRequestUids.includes(currentUid) : false;
+  const requestedByOpponent = rematchRequestUids.length > 0 && requestedByMe !== true;
+  const rematchLine = isFriendRoom
+    ? (requestedByMe
+      ? " Revanche demandee. En attente de l'autre joueur."
+      : (requestedByOpponent ? " L'autre joueur veut rejouer. Clique sur Rejouer pour accepter." : ""))
+    : "";
   if (endedReason === "draw") {
     return {
       eyebrow: "Match nul",
       title: "Partie nulle",
-      copy: "Le plateau est complet et aucun alignement de 5 n'a ete forme.",
+      copy: `Le plateau est complet et aucun alignement de 5 n'a ete forme.${rematchLine}`,
     };
   }
   if (winnerSeat === currentSeatIndex) {
@@ -894,16 +1198,16 @@ function buildEndModalPayload() {
       eyebrow: endedReason === "timeout" ? "Temps ecoule" : "Victoire",
       title: "Tu as gagne",
       copy: endedReason === "timeout"
-        ? `Ton adversaire a laisse son chrono tomber a zero.${rewardLine}`
-        : `Tu as aligne 5 symboles.${rewardLine}`,
+        ? `Ton adversaire a laisse son chrono tomber a zero.${rewardLine}${rematchLine}`
+        : `Tu as aligne 5 symboles.${rewardLine}${rematchLine}`,
     };
   }
   return {
     eyebrow: endedReason === "timeout" ? "Temps ecoule" : "Defaite",
     title: endedReason === "timeout" ? "Tu as perdu au temps" : "Tu as perdu",
     copy: endedReason === "timeout"
-      ? "Ton chrono est arrive a zero."
-      : "L'adversaire a aligne 5 symboles.",
+      ? `Ton chrono est arrive a zero.${rematchLine}`
+      : `L'adversaire a aligne 5 symboles.${rematchLine}`,
   };
 }
 
@@ -1021,6 +1325,10 @@ function stopRoomSubscriptions() {
   try { stateUnsub?.(); } catch (_) {}
   roomUnsub = null;
   stateUnsub = null;
+  lastRoomTraceKey = "";
+  lastStateTraceKey = "";
+  resetBotTurnStallObservation();
+  resetTurnNudgeTracking();
 }
 
 function stopClientSubscription() {
@@ -1084,18 +1392,66 @@ function stopTurnTimeoutNudgeTimer() {
   }
 }
 
-async function pingPresence() {
-  if (!currentRoomId || leavingRoom || presencePingInFlight) return;
+async function pingPresence(reason = "presence") {
+  if (!currentRoomId || leavingRoom) return false;
+  const safeReason = String(reason || "presence");
+  if (presencePingInFlight) {
+    if (safeReason !== "presence") {
+      queuePresenceReason(safeReason);
+      morpionTrace("presencePing:queued", {
+        reason: safeReason,
+        queuedReason: queuedPresenceReason,
+        inFlightForMs: Math.max(0, Date.now() - presencePingStartedAtMs),
+        currentPlayer: safeInt(currentRoomData?.currentPlayer, -1),
+        lastActionSeq: safeInt(currentRoomData?.lastActionSeq, 0),
+      });
+    }
+    return false;
+  }
   presencePingInFlight = true;
+  presencePingStartedAtMs = Date.now();
   try {
-    morpionDebug("pingPresence:start");
-    await touchRoomPresenceMorpionSecure({ roomId: currentRoomId });
-    morpionDebug("pingPresence:done");
+    if (safeReason !== "presence") {
+      morpionTrace("presencePing:start", {
+        reason: safeReason,
+        currentPlayer: safeInt(currentRoomData?.currentPlayer, -1),
+        lastActionSeq: safeInt(currentRoomData?.lastActionSeq, 0),
+        turnLockedUntilMs: safeInt(currentRoomData?.turnLockedUntilMs, 0),
+        turnDeadlineMs: safeInt(currentRoomData?.turnDeadlineMs, 0),
+      });
+    }
+    await withTimeout(
+      touchRoomPresenceMorpionSecure({ roomId: currentRoomId }),
+      8000,
+      "presence-ping-timeout"
+    );
+    if (safeReason !== "presence") {
+      morpionTrace("presencePing:done", {
+        reason: safeReason,
+        currentPlayer: safeInt(currentRoomData?.currentPlayer, -1),
+        lastActionSeq: safeInt(currentRoomData?.lastActionSeq, 0),
+      });
+    }
+    return true;
   } catch (error) {
-    console.warn("[MORPION] touchRoomPresence failed", error);
-    morpionDebug("pingPresence:error", { message: error?.message || String(error) });
+    morpionIncident("presencePingFailed", {
+      reason: safeReason,
+      message: error?.message || String(error),
+      currentPlayer: safeInt(currentRoomData?.currentPlayer, -1),
+      lastActionSeq: safeInt(currentRoomData?.lastActionSeq, 0),
+      inFlightForMs: Math.max(0, Date.now() - presencePingStartedAtMs),
+    });
+    return false;
   } finally {
     presencePingInFlight = false;
+    presencePingStartedAtMs = 0;
+    const nextReason = queuedPresenceReason;
+    queuedPresenceReason = "";
+    if (nextReason && currentRoomId && !leavingRoom) {
+      window.setTimeout(() => {
+        void pingPresence(nextReason);
+      }, 0);
+    }
   }
 }
 
@@ -1172,19 +1528,30 @@ async function respondInvite(action = "refuse") {
 async function maybeRequestTurnTimeoutResolution() {
   if (!currentRoomId || turnTimeoutRequestInFlight) return;
   const activeSeat = safeInt(currentRoomData?.currentPlayer, -1);
-  const activeSeatUid = activeSeat >= 0 ? String((currentRoomData?.playerUids || [])[activeSeat] || "").trim() : "";
-  if (!activeSeatUid) return;
+  if (activeSeat < 0) return;
+  const throttleState = shouldThrottleTurnNudge("timeout");
+  if (throttleState.throttled) return;
   turnTimeoutRequestInFlight = true;
   try {
-    morpionDebug("timeoutNudge:start", {
+    morpionTrace("timeoutNudge:start", {
       deadlineMs: safeInt(currentRoomData?.turnDeadlineMs, 0),
-      currentPlayer: safeInt(currentRoomData?.currentPlayer, -1),
+      currentPlayer: activeSeat,
+      lastActionSeq: safeInt(currentRoomData?.lastActionSeq, 0),
+      activeSeatIsBot: activeSeat !== currentSeatIndex,
+      nudgeKey: throttleState.key,
     });
-    await touchRoomPresenceMorpionSecure({ roomId: currentRoomId });
-    morpionDebug("timeoutNudge:done");
+    const sent = await pingPresence("timeoutNudge");
+    morpionTrace(sent ? "timeoutNudge:done" : "timeoutNudge:queued", {
+      currentPlayer: safeInt(currentRoomData?.currentPlayer, -1),
+      lastActionSeq: safeInt(currentRoomData?.lastActionSeq, 0),
+    });
   } catch (error) {
-    console.warn("[MORPION] timeout nudge failed", error);
-    morpionDebug("timeoutNudge:error", { message: error?.message || String(error) });
+    morpionIncident("timeoutNudgeFailed", {
+      message: error?.message || String(error),
+      currentPlayer: safeInt(currentRoomData?.currentPlayer, -1),
+      lastActionSeq: safeInt(currentRoomData?.lastActionSeq, 0),
+      deadlineMs: safeInt(currentRoomData?.turnDeadlineMs, 0),
+    });
   } finally {
     turnTimeoutRequestInFlight = false;
   }
@@ -1197,23 +1564,24 @@ function scheduleTurnTimeoutNudge() {
   if (currentRoomData.startRevealPending === true) return;
 
   const activeSeat = safeInt(currentRoomData?.currentPlayer, -1);
-  const activeSeatUid = activeSeat >= 0 ? String((currentRoomData?.playerUids || [])[activeSeat] || "").trim() : "";
-  if (!activeSeatUid) return;
+  if (activeSeat < 0) return;
 
   const deadlineMs = safeInt(currentRoomData?.turnDeadlineMs, 0);
   if (deadlineMs <= 0) return;
 
   const delayMs = Math.max(50, deadlineMs - Date.now() + 40);
-  morpionDebug("scheduleTurnTimeoutNudge", {
+  morpionTrace("timeoutWatchScheduled", {
     activeSeat,
     deadlineMs,
+    lastActionSeq: safeInt(currentRoomData?.lastActionSeq, 0),
     delayMs,
   });
 
   turnTimeoutNudgeTimer = window.setTimeout(() => {
-    morpionDebug("scheduleTurnTimeoutNudge:fire", {
+    morpionTrace("timeoutWatchFired", {
       activeSeat,
       deadlineMs,
+      lastActionSeq: safeInt(currentRoomData?.lastActionSeq, 0),
     });
     void maybeRequestTurnTimeoutResolution();
   }, delayMs);
@@ -1233,16 +1601,24 @@ function scheduleBotTurnNudge() {
     ? Math.max(80, Math.min(5000, lockedUntilMs - Date.now() + 50))
     : 120;
 
-  morpionDebug("scheduleBotTurnNudge", {
+  morpionTrace("botTurnWatchScheduled", {
     activeSeat,
     lockedUntilMs,
     delayMs,
     currentPlayer: safeInt(currentRoomData?.currentPlayer, -1),
+    lastActionSeq: safeInt(currentRoomData?.lastActionSeq, 0),
   });
 
   botTurnNudgeTimer = window.setTimeout(() => {
-    morpionDebug("scheduleBotTurnNudge:fire");
-    void pingPresence();
+    const throttleState = shouldThrottleTurnNudge("bot");
+    if (throttleState.throttled) return;
+    morpionTrace("botTurnWatchFired", {
+      activeSeat,
+      lastActionSeq: safeInt(currentRoomData?.lastActionSeq, 0),
+      turnLockedUntilMs: safeInt(currentRoomData?.turnLockedUntilMs, 0),
+      nudgeKey: throttleState.key,
+    });
+    void pingPresence("botTurnNudge");
   }, delayMs);
 }
 
@@ -1250,13 +1626,14 @@ async function maybeAckStartReveal() {
   if (!currentRoomId || startRevealAcked || currentRoomData?.startRevealPending !== true || currentRoomData?.status !== "playing") return;
   startRevealAcked = true;
   try {
-    morpionDebug("ackStartReveal:start");
     await ackRoomStartSeenMorpionSecure({ roomId: currentRoomId });
-    morpionDebug("ackStartReveal:done");
   } catch (error) {
     startRevealAcked = false;
-    console.warn("[MORPION] ackRoomStartSeen failed", error);
-    morpionDebug("ackStartReveal:error", { message: error?.message || String(error) });
+    morpionIncident("ackStartRevealFailed", {
+      message: error?.message || String(error),
+      currentPlayer: safeInt(currentRoomData?.currentPlayer, -1),
+      lastActionSeq: safeInt(currentRoomData?.lastActionSeq, 0),
+    });
   }
 }
 
@@ -1264,16 +1641,14 @@ async function ensureRoomReady() {
   if (!currentRoomId || ensuringRoom || currentRoomData?.status !== "waiting") return;
   ensuringRoom = true;
   try {
-    morpionDebug("ensureRoomReady:start", {
+    await ensureRoomReadyMorpionSecure({ roomId: currentRoomId });
+  } catch (error) {
+    morpionIncident("ensureRoomReadyFailed", {
+      message: error?.message || String(error),
       waitingDeadlineMs: safeInt(currentRoomData?.waitingDeadlineMs, 0),
       humanCount: safeInt(currentRoomData?.humanCount, 0),
       botCount: safeInt(currentRoomData?.botCount, 0),
     });
-    await ensureRoomReadyMorpionSecure({ roomId: currentRoomId });
-    morpionDebug("ensureRoomReady:done");
-  } catch (error) {
-    console.warn("[MORPION] ensureRoomReady failed", error);
-    morpionDebug("ensureRoomReady:error", { message: error?.message || String(error) });
   } finally {
     ensuringRoom = false;
     if (currentRoomId && currentRoomData?.status === "waiting") {
@@ -1289,14 +1664,7 @@ function scheduleEnsureRoomReady() {
   const delayMs = waitingDeadlineMs > 0
     ? Math.max(350, Math.min(30000, waitingDeadlineMs - Date.now() + 80))
     : 800;
-  morpionDebug("scheduleEnsureRoomReady", {
-    waitingDeadlineMs,
-    delayMs,
-    humanCount: safeInt(currentRoomData?.humanCount, 0),
-    botCount: safeInt(currentRoomData?.botCount, 0),
-  });
   waitingEnsureTimer = window.setTimeout(() => {
-    morpionDebug("scheduleEnsureRoomReady:fire");
     void ensureRoomReady();
   }, delayMs);
 }
@@ -1324,6 +1692,7 @@ function handleEndedState() {
     safeInt(currentRoomData?.lastActionSeq, 0),
     String(currentRoomData?.endedReason || currentGameState?.endedReason || "").trim(),
     safeInt(currentRoomData?.winnerSeat, -1),
+    getFriendMorpionRematchRequestUids().slice().sort().join(","),
   ].join(":");
   if (lastHandledEndKey === endKey) return;
   lastHandledEndKey = endKey;
@@ -1416,43 +1785,46 @@ function subscribeToRoom(roomId) {
 
   roomUnsub = onSnapshot(doc(db, MORPION_ROOMS, roomId), (roomSnap) => {
     if (!roomSnap.exists()) {
-      morpionDebug("roomSnapshot:missing");
+      morpionIncident("roomSnapshotMissing", { source: "roomSub" });
       return;
     }
+    const previousRoomData = currentRoomData;
     currentRoomData = roomSnap.data() || {};
     currentRoomId = roomId;
     currentSeatIndex = safeInt(currentRoomData?.seats?.[currentUser?.uid], currentSeatIndex);
-    morpionDebug("roomSnapshot", {
-      status: String(currentRoomData?.status || ""),
-      startRevealPending: currentRoomData?.startRevealPending === true,
-      currentPlayer: safeInt(currentRoomData?.currentPlayer, -1),
-      humanCount: safeInt(currentRoomData?.humanCount, 0),
-      botCount: safeInt(currentRoomData?.botCount, 0),
-      turnLockedUntilMs: safeInt(currentRoomData?.turnLockedUntilMs, 0),
-      turnDeadlineMs: safeInt(currentRoomData?.turnDeadlineMs, 0),
-      playerUids: Array.isArray(currentRoomData?.playerUids) ? currentRoomData.playerUids : [],
-      seats: currentRoomData?.seats || {},
-    });
+    const previousStatus = String(previousRoomData?.status || "").trim();
+    const nextStatus = String(currentRoomData?.status || "").trim();
+    const previousStartedAtMs = safeInt(previousRoomData?.startedAtMs, 0);
+    const nextStartedAtMs = safeInt(currentRoomData?.startedAtMs, 0);
+    if (
+      nextStatus === "playing"
+      && (
+        previousStatus === "ended"
+        || previousStartedAtMs !== nextStartedAtMs
+      )
+    ) {
+      rewardClaimed = false;
+      rewardClaiming = false;
+      rematchRequestInFlight = false;
+      startRevealAcked = false;
+      lastHandledEndKey = "";
+      clearEndStateDecorations();
+    }
+    traceRoomTransition("roomSub");
     renderFromRoom();
   }, (error) => {
     console.error("[MORPION] room snapshot failed", error);
-    morpionDebug("roomSnapshot:error", { message: error?.message || String(error) });
+    morpionIncident("roomSnapshotFailed", { message: error?.message || String(error) });
   });
 
   stateUnsub = onSnapshot(doc(db, MORPION_GAME_STATES, roomId), (stateSnap) => {
     currentGameState = stateSnap.exists() ? (stateSnap.data() || {}) : null;
-    morpionDebug("stateSnapshot", {
-      exists: stateSnap.exists(),
-      currentPlayer: safeInt(currentGameState?.currentPlayer, -1),
-      moveCount: safeInt(currentGameState?.moveCount, 0),
-      endedReason: String(currentGameState?.endedReason || ""),
-      winnerSeat: safeInt(currentGameState?.winnerSeat, -1),
-    });
+    traceStateTransition("stateSub");
     renderBoard();
     renderFromRoom();
   }, (error) => {
     console.error("[MORPION] state snapshot failed", error);
-    morpionDebug("stateSnapshot:error", { message: error?.message || String(error) });
+    morpionIncident("stateSnapshotFailed", { message: error?.message || String(error) });
   });
 }
 
@@ -1460,13 +1832,29 @@ async function submitCell(cellIndex) {
   if (!currentRoomId || actionSending || !isMyTurn()) return;
   actionSending = true;
   try {
+    const clientActionId = `morpion_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
+    morpionTrace("submitMove:start", {
+      cellIndex,
+      clientActionId,
+      lastActionSeq: safeInt(currentRoomData?.lastActionSeq, 0),
+      moveCount: safeInt(currentGameState?.moveCount, 0),
+    });
     await submitActionMorpionSecure({
       roomId: currentRoomId,
-      clientActionId: `morpion_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`,
+      clientActionId,
       action: { cellIndex },
     });
+    morpionTrace("submitMove:done", {
+      cellIndex,
+      clientActionId,
+    });
   } catch (error) {
-    console.warn("[MORPION] submit move failed", error);
+    morpionIncident("submitMoveFailed", {
+      cellIndex,
+      message: error?.message || String(error),
+      lastActionSeq: safeInt(currentRoomData?.lastActionSeq, 0),
+      moveCount: safeInt(currentGameState?.moveCount, 0),
+    });
   } finally {
     actionSending = false;
   }
@@ -1489,7 +1877,13 @@ async function abandonAndNavigate(destination = "home") {
   }
   await leaveCurrentRoom();
   if (destination === "replay") {
-    if (isFriendMorpionFlowFromUrl() || String(currentRoomData?.roomMode || "").trim() === "morpion_friends") {
+    const roomMode = String(currentRoomData?.roomMode || "").trim();
+    if (
+      isFriendMorpionFlowFromUrl()
+      || isBotTestMorpionFlowFromUrl()
+      || roomMode === "morpion_friends"
+      || roomMode === "morpion_bot_test"
+    ) {
       window.location.href = "./index.html";
       return;
     }
@@ -1515,7 +1909,6 @@ async function joinOrResumeRoom() {
       stakeDoes: selectedStakeDoes,
       excludeRoomIds: readAbandonedRoomIds(),
     });
-    morpionDebug("joinResult", result || {});
     currentRoomId = String(result?.roomId || "").trim();
     currentSeatIndex = safeInt(result?.seatIndex, 0);
     clearRoomAbandoned(currentRoomId);
@@ -1565,9 +1958,6 @@ async function resumeFriendMorpionFromUrl() {
     startPresencePing();
     startTurnTicker();
     void pingPresence();
-    if (String(result?.status || "").trim().toLowerCase() === "waiting") {
-      startMatchmakingWaitCycle();
-    }
   } catch (error) {
     console.error("[MORPION] resumeFriendMorpionFromUrl failed", error);
     openResultModal("Connexion impossible", "Impossible de rejoindre cette salle privee", error?.message || "Reessaie dans un instant.");
@@ -1576,15 +1966,152 @@ async function resumeFriendMorpionFromUrl() {
   }
 }
 
+async function requestFriendMorpionRematch() {
+  if (!currentRoomId || rematchRequestInFlight) return;
+  rematchRequestInFlight = true;
+  syncReplayActionLabels();
+  try {
+    const result = await requestFriendMorpionRematchSecure({ roomId: currentRoomId });
+    if (result?.started === true) {
+      closeResultModal();
+      openWaitingModal("Nouvelle manche", "Les deux joueurs ont accepte. Redemarrage de la partie...");
+      if (dom.waitingTimerWrap) dom.waitingTimerWrap.classList.add("hidden");
+      if (dom.waitingActions) dom.waitingActions.classList.add("hidden");
+      return;
+    }
+    closeResultModal();
+    openWaitingModal("Revanche demandee", "En attente de l'autre joueur pour recommencer la partie.");
+    if (dom.waitingTimerWrap) dom.waitingTimerWrap.classList.add("hidden");
+    if (dom.waitingActions) dom.waitingActions.classList.add("hidden");
+  } catch (error) {
+    openResultModal("Connexion impossible", "Impossible de demander la revanche", formatResultErrorCopy(error, "Reessaie dans un instant."));
+  } finally {
+    rematchRequestInFlight = false;
+    syncReplayActionLabels();
+  }
+}
+
+async function resumeMorpionBotTestFromUrl() {
+  const botTestRoomId = getBotTestMorpionRoomIdFromUrl();
+  if (!currentUser?.uid || joining || currentRoomId || !botTestRoomId) return;
+  joining = true;
+  rewardClaimed = false;
+  startRevealAcked = false;
+  lastHandledEndKey = "";
+  clearEndStateDecorations();
+  closeResultModal();
+  closeQuitModal();
+  openWaitingModal("Connexion en cours...", "Nous preparons ta salle de test contre le bot.");
+
+  try {
+    const result = await resumeMorpionBotTestRoomSecure({ roomId: botTestRoomId });
+    subscribeToClient(currentUser.uid);
+    currentRoomId = String(result?.roomId || botTestRoomId).trim();
+    currentSeatIndex = safeInt(result?.seatIndex, 0);
+    clearRoomAbandoned(currentRoomId);
+    subscribeToRoom(currentRoomId);
+    startPresencePing();
+    startTurnTicker();
+    void pingPresence();
+  } catch (error) {
+    console.error("[MORPION] resumeMorpionBotTestFromUrl failed", error);
+    openResultModal("Connexion impossible", "Impossible de rejoindre cette salle de test", formatResultErrorCopy(error, "Reessaie dans un instant."));
+  } finally {
+    joining = false;
+  }
+}
+
+async function startMorpionBotTestFromUrl() {
+  if (!currentUser?.uid || joining || currentRoomId) return;
+  joining = true;
+  rewardClaimed = false;
+  startRevealAcked = false;
+  lastHandledEndKey = "";
+  clearEndStateDecorations();
+  closeResultModal();
+  closeQuitModal();
+  openWaitingModal("Connexion en cours...", "Nous preparons ta salle de test contre le bot.");
+
+  let didForceLeave = false;
+  try {
+    const result = await createMorpionBotTestRoomSecure({});
+    subscribeToClient(currentUser.uid);
+    currentRoomId = String(result?.roomId || "").trim();
+    currentSeatIndex = safeInt(result?.seatIndex, 0);
+    if (!currentRoomId) {
+      throw new Error("Salle de test morpion introuvable.");
+    }
+    clearRoomAbandoned(currentRoomId);
+    subscribeToRoom(currentRoomId);
+    startPresencePing();
+    startTurnTicker();
+    void pingPresence();
+  } catch (error) {
+    const reasonCode = String(error?.code || "").trim().toLowerCase();
+    if (reasonCode === "active-room-exists" && error?.roomId) {
+      const roomMode = String(error?.roomMode || "").trim();
+      if (roomMode === "morpion_bot_test") {
+        window.location.href = buildMorpionBotTestGameUrl(String(error.roomId || "").trim(), Number.parseInt(String(error?.seatIndex || 0), 10) || 0);
+        return;
+      }
+      if (!didForceLeave) {
+        didForceLeave = true;
+        try {
+          await leaveRoomMorpionSecure({ roomId: String(error.roomId || "").trim() });
+        } catch (_) {
+        }
+        try {
+          const retry = await createMorpionBotTestRoomSecure({});
+          subscribeToClient(currentUser.uid);
+          currentRoomId = String(retry?.roomId || "").trim();
+          currentSeatIndex = safeInt(retry?.seatIndex, 0);
+          if (!currentRoomId) {
+            throw new Error("Salle de test morpion introuvable.");
+          }
+          clearRoomAbandoned(currentRoomId);
+          subscribeToRoom(currentRoomId);
+          startPresencePing();
+          startTurnTicker();
+          void pingPresence();
+          return;
+        } catch (retryError) {
+          console.error("[MORPION] startMorpionBotTestFromUrl retry failed", retryError);
+        }
+      }
+    }
+    console.error("[MORPION] startMorpionBotTestFromUrl failed", error);
+    openResultModal("Connexion impossible", "Impossible de creer la salle de test", formatResultErrorCopy(error, "Reessaie dans un instant."));
+  } finally {
+    joining = false;
+  }
+}
+
 function syncReplayActionLabels() {
-  const replayLabel = isFriendMorpionFlowFromUrl() || String(currentRoomData?.roomMode || "").trim() === "morpion_friends"
-    ? "Nouvelle salle privee"
-    : "Rejouer";
+  const roomMode = String(currentRoomData?.roomMode || "").trim();
+  const isFriendReplayWaiting = isFriendMorpionRoomFlow()
+    && String(currentRoomData?.status || "") === "ended"
+    && hasCurrentUserRequestedFriendRematch();
+  const replayLabel = isFriendReplayWaiting
+    ? "En attente..."
+    : (isBotTestMorpionFlowFromUrl() || roomMode === "morpion_bot_test"
+    ? "Nouveau test bot"
+    : ((isFriendMorpionFlowFromUrl() || roomMode === "morpion_friends")
+      ? "Nouvelle salle privee"
+      : "Rejouer"));
   if (dom.resultReplayBtn) dom.resultReplayBtn.textContent = replayLabel;
   if (dom.quitReplayBtn) dom.quitReplayBtn.textContent = replayLabel;
+  syncFriendRematchActionState();
 }
 
 function joinOrResumeCurrentFlow() {
+  if (isBotTestMorpionFlowFromUrl()) {
+    if (getBotTestMorpionRoomIdFromUrl().length > 0) {
+      void resumeMorpionBotTestFromUrl();
+    } else {
+      void startMorpionBotTestFromUrl();
+    }
+    return;
+  }
   if (isFriendMorpionFlowFromUrl()) {
     void resumeFriendMorpionFromUrl();
     return;
@@ -1602,11 +2129,23 @@ function bindEvents() {
   });
 
   dom.quitBtn?.addEventListener("click", openQuitModal);
-  dom.quitReplayBtn?.addEventListener("click", () => { void abandonAndNavigate("replay"); });
+  dom.quitReplayBtn?.addEventListener("click", () => {
+    if (isFriendMorpionRoomFlow() && String(currentRoomData?.status || "") === "ended") {
+      void requestFriendMorpionRematch();
+      return;
+    }
+    void abandonAndNavigate("replay");
+  });
   dom.quitHomeBtn?.addEventListener("click", () => { void abandonAndNavigate("home"); });
   dom.quitCloseTargets.forEach((target) => target.addEventListener("click", closeQuitModal));
   dom.revealResultBtn?.addEventListener("click", openPendingEndModal);
-  dom.resultReplayBtn?.addEventListener("click", () => { void abandonAndNavigate("replay"); });
+  dom.resultReplayBtn?.addEventListener("click", () => {
+    if (isFriendMorpionRoomFlow() && String(currentRoomData?.status || "") === "ended") {
+      void requestFriendMorpionRematch();
+      return;
+    }
+    void abandonAndNavigate("replay");
+  });
   dom.resultHomeBtn?.addEventListener("click", () => { void abandonAndNavigate("home"); });
   dom.inviteAcceptBtn?.addEventListener("click", () => { void respondInvite("accept"); });
   dom.inviteRefuseBtn?.addEventListener("click", () => { void respondInvite("refuse"); });
