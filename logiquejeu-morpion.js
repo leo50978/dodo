@@ -1263,6 +1263,13 @@ function buildEndModalPayload() {
       copy: `Le plateau est complet et aucun alignement de 5 n'a ete forme.${rematchLine}`,
     };
   }
+  if (endedReason === "opponent_left") {
+    return {
+      eyebrow: "Fin de partie",
+      title: "Lot jwe a kouri li fe lach",
+      copy: "Lot jwe a kouri li fe lach.",
+    };
+  }
   if (winnerSeat === currentSeatIndex) {
     const rewardDoes = safeInt(currentRoomData?.rewardAmountDoes, 0);
     const rewardLine = rewardDoes > 0 ? ` Tu remportes ${rewardDoes} Does.` : "";
