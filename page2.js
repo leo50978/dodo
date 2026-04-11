@@ -2639,6 +2639,7 @@ export function renderPage2(user, options = {}) {
   let welcomeBonusCoachSuccessHandler = null;
   let welcomeBonusCoachRetryTimer = null;
   let welcomeBonusCoachDismissedInSession = false;
+  let page2DepositBlocked = false;
 
   const setFrozenActionState = (btn, frozen) => {
     if (!btn) return;
@@ -2715,7 +2716,7 @@ export function renderPage2(user, options = {}) {
   const maybeShowWelcomeBonusPrompt = (user = page2PresenceUser, clientData = page2ClientData) => {
     const uid = String(user?.uid || "");
     if (!uid) return;
-    if (page2AccountFrozen) return;
+    if (page2AccountFrozen || page2DepositBlocked) return;
     if (isWelcomeBonusFlowFinished(clientData, page2WelcomeBonusFundingCache)) return;
     const currentPromptStatus = getCurrentWelcomeBonusPromptStatus(clientData, page2WelcomeBonusFundingCache);
     if (currentPromptStatus === "accepted" || currentPromptStatus === "declined") return;
@@ -2724,7 +2725,7 @@ export function renderPage2(user, options = {}) {
     clearPage2WelcomeBonusPromptTimer();
     const tryOpen = async () => {
       if (uid !== String(auth.currentUser?.uid || "")) return;
-      if (page2AccountFrozen) return;
+      if (page2AccountFrozen || page2DepositBlocked) return;
       if (isWelcomeBonusFlowFinished(page2ClientData, page2WelcomeBonusFundingCache)) return;
       if (getCurrentWelcomeBonusPromptStatus(page2ClientData, page2WelcomeBonusFundingCache) === "accepted") return;
       if (getCurrentWelcomeBonusPromptStatus(page2ClientData, page2WelcomeBonusFundingCache) === "declined") return;
@@ -3073,18 +3074,19 @@ export function renderPage2(user, options = {}) {
   applyPage2AccountState = (clientData = {}) => {
     page2ClientData = clientData && typeof clientData === "object" ? { ...clientData } : {};
     page2AccountFrozen = clientData?.accountFrozen === true;
-    const frozenMessage = page2AccountFrozen
-      ? "Ton compte a été temporairement gelé après plusieurs dépôts refusés. Dépôt, parties, tournois et bonus sont bloqués jusqu'au dégel."
+    page2DepositBlocked = clientData?.accountFrozen === true || clientData?.withdrawalHold === true;
+    const frozenMessage = page2DepositBlocked
+      ? "Ton compte a ete temporairement gele apres plusieurs depots refuses. Les depots et retraits sont bloques jusqu'au degel."
       : "";
 
     if (page2FrozenBanner) {
-      page2FrozenBanner.classList.toggle("hidden", page2AccountFrozen !== true);
+      page2FrozenBanner.classList.toggle("hidden", page2DepositBlocked !== true);
     }
     if (page2FrozenBannerText) {
       page2FrozenBannerText.textContent = frozenMessage;
     }
 
-    setFrozenActionState(soldBadgeBtn, page2AccountFrozen);
+    setFrozenActionState(soldBadgeBtn, page2DepositBlocked);
     setFrozenActionState(startGameBtn, page2AccountFrozen);
     setFrozenActionState(tournamentBtn, page2AccountFrozen);
     setFrozenActionState(sharePromoBtn, page2AccountFrozen);

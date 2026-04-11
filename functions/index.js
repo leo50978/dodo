@@ -996,11 +996,11 @@ function buildFundingWalletPatch(snapshot = {}) {
 function buildFrozenAccountError(walletData = {}) {
   return new HttpsError(
     "failed-precondition",
-    "Ton compte a été temporairement gelé après plusieurs dépôts refusés. Contacte l'assistance.",
+    "Ton compte a été temporairement gelé après plusieurs dépôts refusés. Les depots et retraits sont bloques. Contacte l'assistance.",
     {
       code: "account-frozen",
       accountFrozen: true,
-      freezeReason: String(walletData.freezeReason || "3_rejected_deposits"),
+      freezeReason: String(walletData.freezeReason || walletData.withdrawalHoldReason || "3_rejected_deposits"),
       rejectedDepositStrikeCount: safeInt(walletData.rejectedDepositStrikeCount),
     }
   );
@@ -1020,7 +1020,7 @@ function buildWithdrawalHoldError(walletData = {}) {
 }
 
 function assertWalletNotFrozen(walletData = {}) {
-  if (walletData?.accountFrozen === true) {
+  if (walletData?.accountFrozen === true || walletData?.withdrawalHold === true) {
     throw buildFrozenAccountError(walletData);
   }
 }
@@ -16788,7 +16788,7 @@ exports.requestFriendMorpionRematch = publicOnCall("requestFriendMorpionRematch"
       ? room.playerUids.map((item) => String(item || "").trim()).filter(Boolean)
       : [];
     if (playerUids.length !== 2) {
-      throw new HttpsError("failed-precondition", "Il faut encore deux joueurs dans la salle pour relancer une partie.");
+      throw new HttpsError("failed-precondition", "Lot jwe a fe lach li kouri.");
     }
 
     const nextRequestedUids = Array.from(new Set([
@@ -18976,7 +18976,7 @@ exports.getShareSitePromoStatus = publicOnCall("getShareSitePromoStatus", async 
   const response = buildShareSitePromoResponse(snap.exists ? (snap.data() || {}) : {}, Date.now());
   return {
     ...response,
-    accountFrozen: walletData.accountFrozen === true,
+    accountFrozen: walletData.accountFrozen === true || walletData.withdrawalHold === true,
     freezeReason: String(walletData.freezeReason || ""),
   };
 }, { minInstances: 1 });

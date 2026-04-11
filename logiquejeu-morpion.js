@@ -2067,6 +2067,11 @@ async function requestFriendMorpionRematch() {
     if (dom.waitingActions) dom.waitingActions.classList.add("hidden");
     startFriendRematchSync();
   } catch (error) {
+    const errorMessage = String(error?.message || "").trim().toLowerCase();
+    if (errorMessage.includes("lot jwe a fe lach li kouri")) {
+      openResultModal("Fin de partie", "Lot jwe a fe lach li kouri", "Lot jwe a fe lach li kouri.");
+      return;
+    }
     openResultModal("Connexion impossible", "Impossible de demander la revanche", formatResultErrorCopy(error, "Reessaie dans un instant."));
   } finally {
     rematchRequestInFlight = false;
