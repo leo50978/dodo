@@ -2,6 +2,7 @@ import {
   auth,
   db,
   doc,
+  getDoc,
   setDoc,
   serverTimestamp,
   onSnapshot,
@@ -185,6 +186,7 @@ let turnRuleAccepted = false;
 let invitePollTimer = null;
 let invitePollInFlight = false;
 let activeInviteId = "";
+let friendRematchSyncTimer = null;
 let matchmakingWaitDeadlineMs = 0;
 let matchmakingWaitRoomId = "";
 let matchmakingWaitExpired = false;
@@ -1027,6 +1029,76 @@ function closeResultModal() {
   dom.resultModal?.classList.add("hidden");
 }
 
+function stopFriendRematchSync() {
+  if (friendRematchSyncTimer) {
+    window.clearInterval(friendRematchSyncTimer);
+    friendRematchSyncTimer = null;
+  }
+}
+
+function resetForStartedFriendRematch() {
+  rewardClaimed = false;
+  rewardClaiming = false;
+  rematchRequestInFlight = false;
+  startRevealAcked = false;
+  lastHandledEndKey = "";
+  clearEndStateDecorations();
+  resetMatchmakingWaitState();
+  closeResultModal();
+  closeQuitModal();
+  closeWaitingModal();
+  stopFriendRematchSync();
+}
+
+async function refreshFriendRematchRoomState() {
+  if (!currentRoomId || !isFriendMorpionRoomFlow()) return;
+  try {
+    const roomSnap = await getDoc(doc(db, MORPION_ROOMS, currentRoomId));
+    if (!roomSnap.exists()) return;
+
+    const previousRoomData = currentRoomData;
+    const nextRoomData = roomSnap.data() || {};
+    const previousStatus = String(previousRoomData?.status || "").trim();
+    const nextStatus = String(nextRoomData?.status || "").trim();
+    const previousStartedAtMs = safeInt(previousRoomData?.startedAtMs, 0);
+    const nextStartedAtMs = safeInt(nextRoomData?.startedAtMs, 0);
+
+    currentRoomData = nextRoomData;
+    currentSeatIndex = safeInt(currentRoomData?.seats?.[currentUser?.uid], currentSeatIndex);
+
+    if (
+      nextStatus === "playing"
+      && (
+        previousStatus === "ended"
+        || previousStartedAtMs !== nextStartedAtMs
+      )
+    ) {
+      resetForStartedFriendRematch();
+    }
+
+    renderFromRoom();
+  } catch (_) {
+  }
+}
+
+function startFriendRematchSync() {
+  stopFriendRematchSync();
+  if (!currentRoomId || !isFriendMorpionRoomFlow()) return;
+
+  friendRematchSyncTimer = window.setInterval(() => {
+    if (
+      !currentRoomId
+      || !isFriendMorpionRoomFlow()
+      || String(currentRoomData?.status || "").trim() !== "ended"
+      || !hasCurrentUserRequestedFriendRematch()
+    ) {
+      stopFriendRematchSync();
+      return;
+    }
+    void refreshFriendRematchRoomState();
+  }, 900);
+}
+
 function syncFriendRematchActionState() {
   const waitingForOpponent = isFriendMorpionRoomFlow()
     && String(currentRoomData?.status || "") === "ended"
@@ -1325,6 +1397,7 @@ function stopRoomSubscriptions() {
   try { stateUnsub?.(); } catch (_) {}
   roomUnsub = null;
   stateUnsub = null;
+  stopFriendRematchSync();
   lastRoomTraceKey = "";
   lastStateTraceKey = "";
   resetBotTurnStallObservation();
@@ -1742,7 +1815,10 @@ function renderFromRoom() {
 
   if (currentRoomData.status === "playing" && currentRoomData.startRevealPending === true) {
     clearEndStateDecorations();
+    closeResultModal();
+    closeQuitModal();
     closeWaitingModal();
+    stopFriendRematchSync();
     void maybeAckStartReveal();
     return;
   }
@@ -1750,7 +1826,10 @@ function renderFromRoom() {
   if (currentRoomData.status === "playing") {
     resetMatchmakingWaitState();
     clearEndStateDecorations();
+    closeResultModal();
+    closeQuitModal();
     closeWaitingModal();
+    stopFriendRematchSync();
     return;
   }
 
@@ -1803,12 +1882,7 @@ function subscribeToRoom(roomId) {
         || previousStartedAtMs !== nextStartedAtMs
       )
     ) {
-      rewardClaimed = false;
-      rewardClaiming = false;
-      rematchRequestInFlight = false;
-      startRevealAcked = false;
-      lastHandledEndKey = "";
-      clearEndStateDecorations();
+      resetForStartedFriendRematch();
     }
     traceRoomTransition("roomSub");
     renderFromRoom();
@@ -1977,12 +2051,14 @@ async function requestFriendMorpionRematch() {
       openWaitingModal("Nouvelle manche", "Les deux joueurs ont accepte. Redemarrage de la partie...");
       if (dom.waitingTimerWrap) dom.waitingTimerWrap.classList.add("hidden");
       if (dom.waitingActions) dom.waitingActions.classList.add("hidden");
+      startFriendRematchSync();
       return;
     }
     closeResultModal();
     openWaitingModal("Revanche demandee", "En attente de l'autre joueur pour recommencer la partie.");
     if (dom.waitingTimerWrap) dom.waitingTimerWrap.classList.add("hidden");
     if (dom.waitingActions) dom.waitingActions.classList.add("hidden");
+    startFriendRematchSync();
   } catch (error) {
     openResultModal("Connexion impossible", "Impossible de demander la revanche", formatResultErrorCopy(error, "Reessaie dans un instant."));
   } finally {

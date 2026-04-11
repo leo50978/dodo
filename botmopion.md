@@ -101,6 +101,10 @@ Sans cette cle, la presence echoue et log `Missing or insufficient permissions`.
 - Invalidation du cache Service Worker (`CACHE_VERSION`) pour forcer le rechargement des scripts du morpion
 - Bot test: le joueur humain commence toujours (currentPlayer force a 0 lors de l'initialisation)
 - Bot test: detection durcie via `stakeConfigId=morpion_bot_test_0` si `roomMode` n'est pas present
+- Salles privees Morpion: durcissement du flow `Rejouer`
+  - fermeture forcee des modales de fin et d'attente quand une nouvelle manche demarre
+  - ajout d'une resynchronisation client de la room pendant l'attente de revanche
+  - objectif: eviter qu'un premier joueur reste bloque sur la modal pendant que l'autre est deja reparti
 
 ## A faire quand on modifie ce flow
 
