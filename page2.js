@@ -26,6 +26,7 @@ import {
 } from "./secure-functions.js";
 import { auth, db, collection, query, orderBy, limit, doc, getDoc, getDocs, setDoc, serverTimestamp, onSnapshot } from "./firebase-init.js";
 import { startMorpionLiveNotice } from "./morpion-live-notice.js";
+import { SUPPORT_WHATSAPP_PHONE, buildSupportWhatsAppUrl } from "./support-contact.js";
 
 const CHAT_COLLECTION = "globalChannelMessages";
 const SUPPORT_THREADS_COLLECTION = "supportThreads";
@@ -37,10 +38,9 @@ const TOURNAMENT_INTRO_SEEN_STORAGE_KEY = "domino_tournament_intro_seen_v1";
 const DUEL_INTRO_SEEN_STORAGE_KEY = "domino_duel_intro_seen_v1";
 const SUPPORT_MIGRATION_NOTICE_STORAGE_KEY = "domino_support_migration_notice_seen_v1";
 const SUPPORT_MIGRATION_CUTOFF_MS = Date.parse("2026-03-23T18:15:00Z");
-const SUPPORT_MIGRATION_PHONE = "50940507232";
-const SUPPORT_MIGRATION_WHATSAPP_LINK = `https://wa.me/${SUPPORT_MIGRATION_PHONE}?text=${encodeURIComponent("Bonjour, j'avais ecrit a l'ancien numero d'assistance. Je vous recontacte ici sur le nouveau numero.")}`;
-const USER_IMPORTANCE_WHATSAPP_PHONE = "50935601379";
-const USER_IMPORTANCE_WHATSAPP_LINK = `https://wa.me/${USER_IMPORTANCE_WHATSAPP_PHONE}?text=${encodeURIComponent("Bonjou, mwen bezwen asistans sou kont mwen. Mwen vle mande ranbousman ak dedomajman.")}`;
+const SUPPORT_MIGRATION_PHONE = SUPPORT_WHATSAPP_PHONE;
+const SUPPORT_MIGRATION_WHATSAPP_LINK = buildSupportWhatsAppUrl("Bonjour, j'avais ecrit a l'ancien numero d'assistance. Je vous recontacte ici sur le nouveau numero.");
+const USER_IMPORTANCE_WHATSAPP_LINK = buildSupportWhatsAppUrl("Bonjou, mwen bezwen asistans sou kont mwen. Mwen vle mande ranbousman ak dedomajman.");
 const WELCOME_BONUS_PROMPT_OFFER_LABEL = "Cette offre se termine le 1 avril 2026 à 23:59:59.";
 const WELCOME_BONUS_PROMPT_RETRY_MS = 1200;
 const DEFAULT_STAKE_REWARD_MULTIPLIER = 3;

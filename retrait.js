@@ -15,10 +15,10 @@ import {
 } from "./secure-functions.js";
 import { waitForBalanceHydration } from "./solde.js";
 import { getXchangeState } from "./xchange.js";
+import { SUPPORT_WHATSAPP_PHONE, buildSupportWhatsAppUrl } from "./support-contact.js";
 const MIN_WITHDRAWAL_HTG = 50;
 const BALANCE_DEBUG = true;
-const ASSISTANCE_PHONE = "50940507232";
-const WITHDRAWAL_AGENT_PHONES = ["50940507232", "50941752992"];
+const ASSISTANCE_PHONE = SUPPORT_WHATSAPP_PHONE;
 
 function createClientRequestId(prefix = "wd") {
   const safePrefix = String(prefix || "req").replace(/[^a-zA-Z0-9_-]/g, "").slice(0, 12) || "req";
@@ -281,7 +281,7 @@ function ensureRetraitRuleModal() {
   if (closeBtn) closeBtn.addEventListener("click", close);
   if (contactBtn) {
     contactBtn.addEventListener("click", () => {
-      window.open(`https://wa.me/${ASSISTANCE_PHONE}`, "_blank", "noopener,noreferrer");
+      window.open(buildSupportWhatsAppUrl(), "_blank", "noopener,noreferrer");
     });
   }
   overlay.addEventListener("click", (ev) => {
@@ -321,12 +321,10 @@ function hasPendingExamWithdrawalLock(ruleStatus = {}) {
 }
 
 function openWhatsappForWithdrawal(phone, amount = 0) {
-  const digits = String(phone || "").replace(/[^\d]/g, "");
-  if (!digits) return;
   const text = amount > 0
     ? `Bonjour, je viens de soumettre un retrait de ${amount} HTG et je veux un traitement rapide.`
     : "Bonjour, je viens de soumettre un retrait et je veux un traitement rapide.";
-  window.open(`https://wa.me/${digits}?text=${encodeURIComponent(text)}`, "_blank", "noopener,noreferrer");
+  window.open(buildSupportWhatsAppUrl(text), "_blank", "noopener,noreferrer");
 }
 
 function ensureRetraitSuccessModal() {
@@ -357,10 +355,7 @@ function ensureRetraitSuccessModal() {
           </p>
           <div class="mt-4 grid gap-2">
             <button id="retraitSuccessWhatsapp1" type="button" class="min-h-[48px] w-full rounded-2xl border border-emerald-300/20 bg-emerald-500/15 px-4 text-sm font-semibold text-emerald-50">
-              Ecrire sur WhatsApp 50940507232
-            </button>
-            <button id="retraitSuccessWhatsapp2" type="button" class="min-h-[48px] w-full rounded-2xl border border-emerald-300/20 bg-emerald-500/10 px-4 text-sm font-semibold text-emerald-50">
-              Ecrire sur WhatsApp 50941752992
+              Ecrire sur WhatsApp ${ASSISTANCE_PHONE}
             </button>
           </div>
         </div>
@@ -392,7 +387,6 @@ function ensureRetraitSuccessModal() {
   const closeBtn = overlay.querySelector("#retraitSuccessClose");
   const laterBtn = overlay.querySelector("#retraitSuccessPending");
   const whatsappBtn1 = overlay.querySelector("#retraitSuccessWhatsapp1");
-  const whatsappBtn2 = overlay.querySelector("#retraitSuccessWhatsapp2");
   const close = () => {
     overlay.classList.add("hidden");
     overlay.classList.remove("flex");
@@ -402,12 +396,7 @@ function ensureRetraitSuccessModal() {
   if (laterBtn) laterBtn.addEventListener("click", close);
   if (whatsappBtn1) {
     whatsappBtn1.addEventListener("click", () => {
-      openWhatsappForWithdrawal(WITHDRAWAL_AGENT_PHONES[0], safeInt(overlay.dataset.amount || 0));
-    });
-  }
-  if (whatsappBtn2) {
-    whatsappBtn2.addEventListener("click", () => {
-      openWhatsappForWithdrawal(WITHDRAWAL_AGENT_PHONES[1], safeInt(overlay.dataset.amount || 0));
+      openWhatsappForWithdrawal(ASSISTANCE_PHONE, safeInt(overlay.dataset.amount || 0));
     });
   }
   overlay.addEventListener("click", (ev) => {

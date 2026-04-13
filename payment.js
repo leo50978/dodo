@@ -5,6 +5,7 @@ import {
   getDepositFundingStatusSecure,
   getPublicPaymentOptionsSecure,
 } from './secure-functions.js';
+import { SUPPORT_WHATSAPP_PHONE, SUPPORT_WHATSAPP_LABEL, buildSupportWhatsAppUrl } from './support-contact.js';
 
 const OCR_LANGUAGE = 'fra+eng';
 const DEPOSIT_BONUS_MIN_HTG = 100;
@@ -15,10 +16,9 @@ const DEPOSIT_PROOF_TIMER_STORAGE_PREFIX = 'deposit_proof_started_at';
 const DEPOSIT_RAPID_WARNING_STORAGE_PREFIX = 'deposit_rapid_warning_guard';
 const DEPOSIT_RAPID_WARNING_DELAY_MS = 6 * 60 * 1000;
 const DEPOSIT_RAPID_WARNING_THRESHOLD = 2;
-const AGENT_DEPOSIT_WHATSAPP_DIGITS = '50941752992';
-const AGENT_DEPOSIT_WHATSAPP_LABEL = '50941752992';
-const SUPPORT_WHATSAPP_DIGITS = '50940507232';
-const SUPPORT_WHATSAPP_LABEL = '40507232';
+const AGENT_DEPOSIT_WHATSAPP_DIGITS = SUPPORT_WHATSAPP_PHONE;
+const AGENT_DEPOSIT_WHATSAPP_LABEL = SUPPORT_WHATSAPP_LABEL;
+const SUPPORT_WHATSAPP_DIGITS = SUPPORT_WHATSAPP_PHONE;
 let tesseractRuntimePromise = null;
 
 async function loadTesseractRuntime() {
@@ -424,7 +424,7 @@ class PaymentModal {
             cursor:pointer;
             padding:0.85rem 1rem;
           ">Annuler</button>
-          <a href="https://wa.me/${SUPPORT_WHATSAPP_DIGITS}" target="_blank" rel="noopener noreferrer" data-rapid-confirm="support" style="
+          <a href="${buildSupportWhatsAppUrl()}" target="_blank" rel="noopener noreferrer" data-rapid-confirm="support" style="
             flex:1 1 160px;
             min-height:46px;
             border-radius:14px;
@@ -537,7 +537,7 @@ class PaymentModal {
             cursor:pointer;
             padding:0.85rem 1rem;
           ">Fermer</button>
-          <a href="https://wa.me/${AGENT_DEPOSIT_WHATSAPP_DIGITS}" target="_blank" rel="noopener noreferrer" data-agent-deposit="continue" style="
+          <a href="${buildSupportWhatsAppUrl()}" target="_blank" rel="noopener noreferrer" data-agent-deposit="continue" style="
             flex:1 1 200px;
             min-height:46px;
             border-radius:14px;
@@ -639,7 +639,7 @@ class PaymentModal {
             cursor:pointer;
             padding:0.85rem 1rem;
           ">Fermer</button>
-          <a href="https://wa.me/${SUPPORT_WHATSAPP_DIGITS}" target="_blank" rel="noopener noreferrer" data-missing-id="support" style="
+          <a href="${buildSupportWhatsAppUrl()}" target="_blank" rel="noopener noreferrer" data-missing-id="support" style="
             flex:1 1 200px;
             min-height:46px;
             border-radius:14px;

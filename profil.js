@@ -10,10 +10,11 @@ import {
 } from "./solde.js";
 import { db, doc, getDoc } from "./firebase-init.js";
 import { getDepositFundingStatusSecure } from "./secure-functions.js";
+import { SUPPORT_WHATSAPP_PHONE, buildSupportWhatsAppUrl } from "./support-contact.js";
 const BALANCE_DEBUG = false;
 const WELCOME_PROGRESS_DEBUG = true;
 const WITHDRAWAL_CANCEL_DEBUG = true;
-const ASSISTANCE_PHONE = "50940507232";
+const ASSISTANCE_PHONE = SUPPORT_WHATSAPP_PHONE;
 const RATE_HTG_TO_DOES = 20;
 const AUTH_PROFILE_HINT_STORAGE_KEY = "domino_auth_profile_hint_v1";
 const WELCOME_LOCKED_SELL_STORAGE_KEY = "domino_welcome_locked_sell_attempt_v1";
@@ -173,12 +174,6 @@ function bindHideOnErrorImages(root) {
   });
 }
 
-function buildAssistanceUrl(message = "") {
-  const base = `https://wa.me/${ASSISTANCE_PHONE}`;
-  const text = String(message || "").trim();
-  return text ? `${base}?text=${encodeURIComponent(text)}` : base;
-}
-
 function ensureWithdrawalHoldModal() {
   const existing = document.getElementById("profileWithdrawalHoldOverlay");
   if (existing) return existing;
@@ -210,7 +205,7 @@ function ensureWithdrawalHoldModal() {
   };
   overlay.querySelector("#profileWithdrawalHoldClose")?.addEventListener("click", close);
   overlay.querySelector("#profileWithdrawalHoldContact")?.addEventListener("click", () => {
-    window.open(buildAssistanceUrl("Bonjour, je veux plaider ma cause concernant le gel de mon compte pour retrait."), "_blank", "noopener,noreferrer");
+    window.open(buildSupportWhatsAppUrl("Bonjour, je veux plaider ma cause concernant le gel de mon compte pour retrait."), "_blank", "noopener,noreferrer");
   });
   overlay.addEventListener("click", (ev) => {
     if (ev.target === overlay) close();
