@@ -2237,13 +2237,7 @@ function bindEvents() {
   });
 
   dom.quitBtn?.addEventListener("click", openQuitModal);
-  dom.quitReplayBtn?.addEventListener("click", () => {
-    if (isFriendMorpionRoomFlow() && String(currentRoomData?.status || "") === "ended") {
-      void requestFriendMorpionRematch();
-      return;
-    }
-    void abandonAndNavigate("replay");
-  });
+  dom.quitReplayBtn?.addEventListener("click", () => { closeQuitModal(); });
   dom.quitHomeBtn?.addEventListener("click", () => { void abandonAndNavigate("home"); });
   dom.quitCloseTargets.forEach((target) => target.addEventListener("click", closeQuitModal));
   dom.revealResultBtn?.addEventListener("click", openPendingEndModal);
