@@ -14801,8 +14801,8 @@ async function refundMorpionEntriesForNoPlayTimeoutTx(tx, roomRefDoc, room = {})
       : {};
     const approvedDoes = safeInt(entryFunding.approvedDoes);
     const provisionalDoes = safeInt(entryFunding.provisionalDoes);
-    const welcomeDoes = Math.max(0, Math.min(approvedDoes, safeInt(entryFunding.welcomeDoes)));
-    const refundAmountDoes = Math.max(0, approvedDoes + provisionalDoes);
+    const welcomeDoes = Math.max(0, safeInt(entryFunding.welcomeDoes));
+    const refundAmountDoes = Math.max(0, approvedDoes + provisionalDoes + welcomeDoes);
     const preloaded = preloadedByUid.get(playerUid) || {};
 
     if (refundAmountDoes > 0) {
