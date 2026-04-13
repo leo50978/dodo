@@ -106,6 +106,20 @@ Sans cette cle, la presence echoue et log `Missing or insufficient permissions`.
   - ajout d'une resynchronisation client de la room pendant l'attente de revanche
   - objectif: eviter qu'un premier joueur reste bloque sur la modal pendant que l'autre est deja reparti
 
+### 2026-04-12
+- Morpion humain: ajout d'une protection "pas de perte sans premier coup"
+  - si un joueur humain laisse son chrono tomber a zero sans avoir place le moindre symbole
+  - la fin de partie ne passe plus par `timeout`
+  - la partie se termine avec `endedReason=no_play_refund`
+  - aucun gagnant n'est designe
+  - les deux joueurs sont rembourses automatiquement cote serveur a partir de `entryFundingByUid`
+- Cette regle s'applique:
+  - au matchmaking Morpion entre humains
+  - aux salles privees Morpion / invitation entre amis
+- Cette regle ne s'applique pas:
+  - au flow `morpion_bot_test`
+  - au bot, qui reste desactive dans le projet actuel
+
 ## A faire quand on modifie ce flow
 
 1. Decrire clairement la modification ici, dans "Journal des modifications".

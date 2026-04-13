@@ -1256,6 +1256,26 @@ function buildEndModalPayload() {
       ? " Revanche demandee. En attente de l'autre joueur."
       : (requestedByOpponent ? " L'autre joueur veut rejouer. Clique sur Rejouer pour accepter." : ""))
     : "";
+  if (endedReason === "no_play_refund") {
+    const placedCountBySeat = Array.isArray(currentGameState?.placedCountBySeat)
+      ? currentGameState.placedCountBySeat
+      : [];
+    const myPlacedCount = Math.max(0, safeInt(placedCountBySeat[currentSeatIndex], 0));
+    const timedOutSeat = safeInt(currentRoomData?.currentPlayer, -1);
+    const iTimedOutWithoutPlaying = timedOutSeat === currentSeatIndex || (timedOutSeat < 0 && myPlacedCount <= 0);
+    if (iTimedOutWithoutPlaying) {
+      return {
+        eyebrow: "Partie annulee",
+        title: "Ou pa t pedi",
+        copy: `Ou pa t mete okenn senbol avan tan an fini. Kont ou ap ranbouse pou ou ka rekomanse jwe.${rematchLine}`,
+      };
+    }
+    return {
+      eyebrow: "Partie annulee",
+      title: "Kont ou ap ranbouse",
+      copy: `Advese w la pa t pedi, li te deside pa jwe. Kont ou ap ranbouse pou ou ka kontinye jwe.${rematchLine}`,
+    };
+  }
   if (endedReason === "draw") {
     return {
       eyebrow: "Match nul",

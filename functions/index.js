@@ -2543,6 +2543,198 @@ function assertAdmin(request) {
   return authData;
 }
 
+function normalizeDashboardClientSearchText(value) {
+  return String(value || "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .trim();
+}
+
+function getDashboardClientDisplayName(client = {}) {
+  return sanitizeText(
+    client.name || client.displayName || client.email || client.uid || client.id || "Client",
+    160
+  );
+}
+
+function getDashboardClientPhone(client = {}) {
+  return sanitizePhone(client.phone || client.customerPhone || "");
+}
+
+function getDashboardClientFreezeMode(client = {}) {
+  if (client.accountFrozen === true) return "global";
+  if (client.withdrawalHold === true) return "withdrawal";
+  return "none";
+}
+
+function getDashboardClientVisibleHtg(client = {}) {
+  return safeInt(client.approvedHtgAvailable) + safeInt(client.provisionalHtgAvailable);
+}
+
+function getDashboardClientVisibleDoes(client = {}) {
+  return safeInt(client.doesBalance || (safeInt(client.doesApprovedBalance) + safeInt(client.doesProvisionalBalance)));
+}
+
+function getDashboardClientCreatedAtMs(client = {}) {
+  return safeInt(client.createdAtMs) || toMillis(client.createdAt);
+}
+
+function getDashboardClientUpdatedAtMs(client = {}) {
+  return safeInt(client.updatedAtMs) || toMillis(client.updatedAt);
+}
+
+function sortDashboardClientRows(rows = [], scope = "all") {
+  const list = Array.isArray(rows) ? [...rows] : [];
+  if (scope === "frozen") {
+    return list.sort((left, right) =>
+      safeInt(right.rejectedDepositStrikeCount) - safeInt(left.rejectedDepositStrikeCount)
+      || safeInt(right.updatedAtMs) - safeInt(left.updatedAtMs)
+      || String(left.displayName || "").localeCompare(String(right.displayName || ""), "fr")
+    );
+  }
+  if (scope === "gain") {
+    return list.sort((left, right) =>
+      safeSignedInt(right.netGameDoes) - safeSignedInt(left.netGameDoes)
+      || safeInt(right.lastOrderAtMs) - safeInt(left.lastOrderAtMs)
+      || String(left.displayName || "").localeCompare(String(right.displayName || ""), "fr")
+    );
+  }
+  if (scope === "loss") {
+    return list.sort((left, right) =>
+      safeSignedInt(left.netGameDoes) - safeSignedInt(right.netGameDoes)
+      || safeInt(right.lastOrderAtMs) - safeInt(left.lastOrderAtMs)
+      || String(left.displayName || "").localeCompare(String(right.displayName || ""), "fr")
+    );
+  }
+  return list.sort((left, right) =>
+    safeInt(right.lastOrderAtMs) - safeInt(left.lastOrderAtMs)
+    || safeInt(right.createdAtMs) - safeInt(left.createdAtMs)
+    || String(left.displayName || "").localeCompare(String(right.displayName || ""), "fr")
+  );
+}
+
+async function buildDashboardClientScopeSnapshot(options = {}) {
+  const scope = sanitizeText(options.scope || "active", 24).toLowerCase() || "active";
+  const queryText = sanitizeText(options.query || "", 160);
+  const normalizedQuery = normalizeDashboardClientSearchText(queryText);
+  const pageSize = Math.min(50, Math.max(1, safeInt(options.pageSize) || 10));
+  const offset = Math.max(0, safeInt(options.offset));
+
+  const [clientsSnap, ordersSnap, xchangesSnap] = await Promise.all([
+    db.collection(CLIENTS_COLLECTION).get(),
+    db.collectionGroup("orders").get(),
+    db.collectionGroup("xchanges").get(),
+  ]);
+
+  const orderStatsByClient = new Map();
+  ordersSnap.forEach((docSnap) => {
+    const clientId = String(docSnap.ref.parent?.parent?.id || "").trim();
+    if (!clientId) return;
+    const data = docSnap.data() || {};
+    const createdAtMs = safeInt(data.createdAtMs) || toMillis(data.createdAt);
+    const current = orderStatsByClient.get(clientId) || {
+      orderCount: 0,
+      lastOrderAtMs: 0,
+    };
+    current.orderCount += 1;
+    current.lastOrderAtMs = Math.max(current.lastOrderAtMs, createdAtMs);
+    orderStatsByClient.set(clientId, current);
+  });
+
+  const gameStatsByClient = new Map();
+  xchangesSnap.forEach((docSnap) => {
+    const clientId = String(docSnap.ref.parent?.parent?.id || "").trim();
+    if (!clientId) return;
+    const data = docSnap.data() || {};
+    const current = gameStatsByClient.get(clientId) || {
+      totalBetDoes: 0,
+      totalRewardDoes: 0,
+    };
+    const type = String(data.type || "").trim().toLowerCase();
+    const amountDoes = safeInt(data.amountDoes);
+    if (type === "game_entry" || type === "game_cost" || type === "entry") {
+      current.totalBetDoes += amountDoes;
+    } else if (type === "game_reward") {
+      current.totalRewardDoes += amountDoes;
+    }
+    gameStatsByClient.set(clientId, current);
+  });
+
+  const allRows = clientsSnap.docs.map((docSnap) => {
+    const client = docSnap.data() || {};
+    const clientId = String(docSnap.id || "").trim();
+    const orderStats = orderStatsByClient.get(clientId) || { orderCount: 0, lastOrderAtMs: 0 };
+    const gameStats = gameStatsByClient.get(clientId) || { totalBetDoes: 0, totalRewardDoes: 0 };
+    const netGameDoes = safeSignedInt(gameStats.totalRewardDoes - gameStats.totalBetDoes);
+    const freezeMode = getDashboardClientFreezeMode(client);
+    return {
+      id: clientId,
+      displayName: getDashboardClientDisplayName(client),
+      email: sanitizeEmail(client.email || "", 160),
+      phone: getDashboardClientPhone(client),
+      createdAtMs: getDashboardClientCreatedAtMs(client),
+      updatedAtMs: getDashboardClientUpdatedAtMs(client),
+      rejectedDepositStrikeCount: safeInt(client.rejectedDepositStrikeCount),
+      htgBalance: getDashboardClientVisibleHtg(client),
+      doesBalanceCurrent: getDashboardClientVisibleDoes(client),
+      freezeMode,
+      isFrozen: freezeMode !== "none",
+      orderCount: safeInt(orderStats.orderCount),
+      lastOrderAtMs: safeInt(orderStats.lastOrderAtMs),
+      totalBetDoes: safeInt(gameStats.totalBetDoes),
+      totalRewardDoes: safeInt(gameStats.totalRewardDoes),
+      netGameDoes,
+      gamePerformance: netGameDoes > 0 ? "gain" : netGameDoes < 0 ? "perte" : "neutre",
+    };
+  });
+
+  const scopedRows = sortDashboardClientRows(
+    allRows.filter((row) => {
+      if (scope === "active") return safeInt(row.orderCount) > 0;
+      if (scope === "frozen") return row.isFrozen === true;
+      if (scope === "gain") return safeSignedInt(row.netGameDoes) > 0;
+      if (scope === "loss") return safeSignedInt(row.netGameDoes) < 0;
+      return true;
+    }),
+    scope
+  );
+
+  const stats = {
+    total: scopedRows.length,
+    totalOrders: scopedRows.reduce((sum, row) => sum + safeInt(row.orderCount), 0),
+    totalHtgBalance: scopedRows.reduce((sum, row) => sum + safeInt(row.htgBalance), 0),
+    totalDoesBalance: scopedRows.reduce((sum, row) => sum + safeInt(row.doesBalanceCurrent), 0),
+  };
+
+  const filteredRows = normalizedQuery
+    ? scopedRows.filter((row) => normalizeDashboardClientSearchText([
+      row.displayName,
+      row.email,
+      row.phone,
+      row.id,
+      row.freezeMode,
+      row.gamePerformance,
+    ].join(" ")).includes(normalizedQuery))
+    : scopedRows;
+
+  const slice = filteredRows.slice(offset, offset + pageSize);
+  const nextOffset = offset + slice.length;
+
+  return {
+    ok: true,
+    scope,
+    query: queryText,
+    stats,
+    totalMatches: filteredRows.length,
+    rows: slice,
+    pageSize,
+    offset,
+    nextOffset,
+    hasMore: nextOffset < filteredRows.length,
+  };
+}
+
 function dashboardPushSubscriptionsCollection() {
   return db.collection(DASHBOARD_PUSH_SUBSCRIPTIONS_COLLECTION);
 }
@@ -11984,6 +12176,7 @@ function createInitialMorpionGameState(room = {}) {
     board: buildEmptyMorpionBoard(),
     currentPlayer: initialCurrentPlayer,
     moveCount: 0,
+    placedCountBySeat: [0, 0],
     winnerSeat: -1,
     winnerUid: "",
     endedReason: "",
@@ -11996,10 +12189,12 @@ function createInitialMorpionGameState(room = {}) {
 function normalizeMorpionGameState(raw = {}, room = {}) {
   const winnerSeat = safeSignedInt(raw.winnerSeat);
   const board = normalizeMorpionBoard(raw.board);
+  const placedCountBySeatRaw = Array.isArray(raw.placedCountBySeat) ? raw.placedCountBySeat : [];
   return {
     board,
     currentPlayer: safeSignedInt(raw.currentPlayer, 0),
     moveCount: safeInt(raw.moveCount),
+    placedCountBySeat: [0, 1].map((seat) => Math.max(0, safeInt(placedCountBySeatRaw[seat]))),
     winnerSeat: winnerSeat >= 0 ? winnerSeat : -1,
     winnerUid: String(raw.winnerUid || "").trim(),
     endedReason: String(raw.endedReason || "").trim(),
@@ -12015,6 +12210,7 @@ function buildMorpionGameStateWrite(nextState) {
     board: Array.isArray(nextState.board) ? nextState.board.slice(0, 225) : buildEmptyMorpionBoard(),
     currentPlayer: safeSignedInt(nextState.currentPlayer),
     moveCount: safeInt(nextState.moveCount),
+    placedCountBySeat: [0, 1].map((seat) => Math.max(0, safeInt((nextState.placedCountBySeat || [])[seat]))),
     winnerSeat: safeSignedInt(nextState.winnerSeat, -1),
     winnerUid: String(nextState.winnerUid || "").trim(),
     endedReason: String(nextState.endedReason || "").trim(),
@@ -13933,9 +14129,34 @@ function chooseUltraMorpionBotMove(state = {}, botSeat = 0) {
 }
 
 function buildMorpionTimeoutState(state = {}, room = {}) {
+  const timedOutSeat = safeSignedInt(state.currentPlayer, -1);
+  const placedCountBySeat = [0, 1].map((seat) => Math.max(0, safeInt((state.placedCountBySeat || [])[seat])));
+  const timedOutSeatHasPlayed = timedOutSeat >= 0 && timedOutSeat <= 1
+    ? placedCountBySeat[timedOutSeat] > 0
+    : true;
+  if (
+    timedOutSeat >= 0
+    && timedOutSeat <= 1
+    && timedOutSeatHasPlayed !== true
+    && isMorpionSeatHuman(room, timedOutSeat)
+    && isMorpionBotTestRoom(room) !== true
+  ) {
+    return {
+      ...state,
+      placedCountBySeat,
+      winnerSeat: -1,
+      winnerUid: "",
+      endedReason: "no_play_refund",
+      currentPlayer: timedOutSeat,
+      winningLine: [],
+      appliedActionSeq: safeInt(state.appliedActionSeq) + 1,
+    };
+  }
+
   const winnerSeat = state.currentPlayer === 0 ? 1 : 0;
   return {
     ...state,
+    placedCountBySeat,
     winnerSeat,
     winnerUid: isMorpionSeatHuman(room, winnerSeat) ? String((room.playerUids || [])[winnerSeat] || "").trim() : "",
     endedReason: "timeout",
@@ -13968,12 +14189,15 @@ function applyMorpionMove(state = {}, room = {}, move = {}, actorUid = "") {
   const winnerSeat = winningLine.length >= 5 ? seat : -1;
   const nextPlayer = winnerSeat >= 0 ? seat : (seat === 0 ? 1 : 0);
   const nextMoveCount = safeInt(state.moveCount) + 1;
+  const placedCountBySeat = [0, 1].map((currentSeat) => Math.max(0, safeInt((state.placedCountBySeat || [])[currentSeat])));
+  placedCountBySeat[seat] += 1;
   const draw = winnerSeat < 0 && isMorpionBoardFull(board);
   const nextState = {
     ...state,
     board,
     currentPlayer: nextPlayer,
     moveCount: nextMoveCount,
+    placedCountBySeat,
     winnerSeat: draw ? -1 : winnerSeat,
     winnerUid: winnerSeat >= 0 && isMorpionSeatHuman(room, winnerSeat)
       ? String((room.playerUids || [])[winnerSeat] || "").trim()
@@ -14542,6 +14766,54 @@ function cleanupMorpionRoom(roomRefDoc) {
   ]).then(() => roomRefDoc.delete());
 }
 
+async function refundMorpionEntriesForNoPlayTimeoutTx(tx, roomRefDoc, room = {}) {
+  const playerUids = Array.isArray(room.playerUids)
+    ? room.playerUids.map((item) => String(item || "").trim()).filter(Boolean)
+    : [];
+  const uniquePlayerUids = Array.from(new Set(playerUids));
+  const entryFundingByUid = room.entryFundingByUid && typeof room.entryFundingByUid === "object"
+    ? room.entryFundingByUid
+    : {};
+
+  for (const playerUid of uniquePlayerUids) {
+    const entryFunding = entryFundingByUid[playerUid] && typeof entryFundingByUid[playerUid] === "object"
+      ? entryFundingByUid[playerUid]
+      : {};
+    const approvedDoes = safeInt(entryFunding.approvedDoes);
+    const provisionalDoes = safeInt(entryFunding.provisionalDoes);
+    const welcomeDoes = Math.max(0, Math.min(approvedDoes, safeInt(entryFunding.welcomeDoes)));
+    const refundAmountDoes = Math.max(0, approvedDoes + provisionalDoes);
+
+    tx.set(roomRefDoc.collection("settlements").doc(playerUid), {
+      uid: playerUid,
+      roomId: roomRefDoc.id,
+      rewardPaid: true,
+      rewardAmountDoes: 0,
+      refundApplied: refundAmountDoes > 0,
+      refundAmountDoes,
+      reason: "no_play_refund",
+      settledAt: admin.firestore.FieldValue.serverTimestamp(),
+      updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+    }, { merge: true });
+
+    if (refundAmountDoes <= 0) continue;
+
+    await applyWalletMutationTx(tx, {
+      uid: playerUid,
+      email: "",
+      type: "game_reward",
+      note: `Remboursement morpion (${roomRefDoc.id})`,
+      amountDoes: refundAmountDoes,
+      approvedRewardDoes: approvedDoes,
+      provisionalRewardDoes: provisionalDoes,
+      welcomeRewardDoes: welcomeDoes,
+      amountGourdes: 0,
+      deltaDoes: refundAmountDoes,
+      deltaExchangedGourdes: 0,
+    });
+  }
+}
+
 function buildStartedMorpionRoomTransaction(tx, roomRefDoc, room = {}, options = {}) {
   const nowMs = safeSignedInt(options.nowMs) || Date.now();
   const humans = Array.isArray(room.playerUids) ? room.playerUids.filter(Boolean).length : safeInt(room.humanCount);
@@ -14850,7 +15122,7 @@ async function processPendingBotTurnsMorpion(roomId) {
         const nextState = buildMorpionTimeoutState(liveState, liveRoom);
         const record = {
           seq: nextState.appliedActionSeq,
-          type: "timeout",
+          type: nextState.endedReason === "no_play_refund" ? "no_play_refund" : "timeout",
           player: liveActiveSeat,
           symbol: liveActiveSeat === 0 ? "X" : "O",
           cellIndex: -1,
@@ -14860,6 +15132,9 @@ async function processPendingBotTurnsMorpion(roomId) {
         };
         tx.set(stateRef, buildMorpionGameStateWrite(nextState), { merge: true });
         const roomUpdate = buildMorpionRoomUpdateFromGameState(liveRoom, nextState, [record]);
+        if (nextState.endedReason === "no_play_refund") {
+          await refundMorpionEntriesForNoPlayTimeoutTx(tx, roomRefDoc, liveRoom);
+        }
         tx.update(roomRefDoc, roomUpdate);
         tx.set(roomRefDoc.collection("actions").doc(String(record.seq)), {
           ...record,
@@ -14871,6 +15146,7 @@ async function processPendingBotTurnsMorpion(roomId) {
           roomId: safeRoomId,
           loserSeat: liveActiveSeat,
           winnerSeat: nextState.winnerSeat,
+          endedReason: nextState.endedReason,
         });
         return { processed: true, stop: true, ended: true };
       }
@@ -22516,6 +22792,12 @@ exports.adminCheck = publicOnCall("adminCheck", async (request) => {
     manualDuelBotDifficulty: normalizeBotDifficulty(data.manualDuelBotDifficulty || data.duelBotDifficulty || DEFAULT_DUEL_BOT_DIFFICULTY),
     autoDuelBotDifficulty: normalizeBotDifficulty(data.autoDuelBotDifficulty || data.duelBotDifficulty || DEFAULT_DUEL_BOT_DIFFICULTY),
   };
+});
+
+exports.getDashboardClientScopeSnapshot = publicOnCall("getDashboardClientScopeSnapshot", async (request) => {
+  assertFinanceAdmin(request);
+  const payload = request.data && typeof request.data === "object" ? request.data : {};
+  return buildDashboardClientScopeSnapshot(payload);
 });
 
 exports.setBotDifficulty = publicOnCall("setBotDifficulty", async (request) => {
