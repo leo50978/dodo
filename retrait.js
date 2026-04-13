@@ -15,10 +15,15 @@ import {
 } from "./secure-functions.js";
 import { waitForBalanceHydration } from "./solde.js";
 import { getXchangeState } from "./xchange.js";
-import { SUPPORT_WHATSAPP_PHONE, buildSupportWhatsAppUrl } from "./support-contact.js";
+import { SUPPORT_WHATSAPP_PHONE } from "./support-contact.js";
 const MIN_WITHDRAWAL_HTG = 50;
 const BALANCE_DEBUG = true;
-const ASSISTANCE_PHONE = SUPPORT_WHATSAPP_PHONE;
+const ASSISTANCE_PHONE = "50937914996";
+const buildRetraitWhatsAppUrl = (message = "") => {
+  const base = `https://wa.me/${ASSISTANCE_PHONE}`;
+  const text = String(message || "").trim();
+  return text ? `${base}?text=${encodeURIComponent(text)}` : base;
+};
 
 function createClientRequestId(prefix = "wd") {
   const safePrefix = String(prefix || "req").replace(/[^a-zA-Z0-9_-]/g, "").slice(0, 12) || "req";
@@ -281,7 +286,7 @@ function ensureRetraitRuleModal() {
   if (closeBtn) closeBtn.addEventListener("click", close);
   if (contactBtn) {
     contactBtn.addEventListener("click", () => {
-      window.open(buildSupportWhatsAppUrl(), "_blank", "noopener,noreferrer");
+      window.open(buildRetraitWhatsAppUrl(), "_blank", "noopener,noreferrer");
     });
   }
   overlay.addEventListener("click", (ev) => {
@@ -324,7 +329,7 @@ function openWhatsappForWithdrawal(phone, amount = 0) {
   const text = amount > 0
     ? `Bonjour, je viens de soumettre un retrait de ${amount} HTG et je veux un traitement rapide.`
     : "Bonjour, je viens de soumettre un retrait et je veux un traitement rapide.";
-  window.open(buildSupportWhatsAppUrl(text), "_blank", "noopener,noreferrer");
+  window.open(buildRetraitWhatsAppUrl(text), "_blank", "noopener,noreferrer");
 }
 
 function ensureRetraitSuccessModal() {
