@@ -14802,7 +14802,17 @@ async function refundMorpionEntriesForNoPlayTimeoutTx(tx, roomRefDoc, room = {})
     const approvedDoes = safeInt(entryFunding.approvedDoes);
     const provisionalDoes = safeInt(entryFunding.provisionalDoes);
     const welcomeDoes = Math.max(0, safeInt(entryFunding.welcomeDoes));
-    const refundAmountDoes = Math.max(0, approvedDoes + provisionalDoes + welcomeDoes);
+    const stakeDoes = safeInt(room.entryCostDoes || room.stakeDoes);
+    let refundAmountDoes = Math.max(0, approvedDoes + provisionalDoes + welcomeDoes);
+    let refundApprovedDoes = approvedDoes;
+    let refundProvisionalDoes = provisionalDoes;
+    let refundWelcomeDoes = welcomeDoes;
+    if (refundAmountDoes <= 0 && stakeDoes > 0) {
+      refundAmountDoes = stakeDoes;
+      refundApprovedDoes = stakeDoes;
+      refundProvisionalDoes = 0;
+      refundWelcomeDoes = 0;
+    }
     const preloaded = preloadedByUid.get(playerUid) || {};
 
     if (refundAmountDoes > 0) {
@@ -14812,9 +14822,9 @@ async function refundMorpionEntriesForNoPlayTimeoutTx(tx, roomRefDoc, room = {})
         type: "game_reward",
         note: `Remboursement morpion (${roomRefDoc.id})`,
         amountDoes: refundAmountDoes,
-        approvedRewardDoes: approvedDoes,
-        provisionalRewardDoes: provisionalDoes,
-        welcomeRewardDoes: welcomeDoes,
+        approvedRewardDoes: refundApprovedDoes,
+        provisionalRewardDoes: refundProvisionalDoes,
+        welcomeRewardDoes: refundWelcomeDoes,
         amountGourdes: 0,
         deltaDoes: refundAmountDoes,
         deltaExchangedGourdes: 0,
