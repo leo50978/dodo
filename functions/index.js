@@ -14775,6 +14775,26 @@ async function refundMorpionEntriesForNoPlayTimeoutTx(tx, roomRefDoc, room = {})
     ? room.entryFundingByUid
     : {};
 
+  const preloadedByUid = new Map();
+  await Promise.all(uniquePlayerUids.map(async (playerUid) => {
+    const ordersRef = db.collection(CLIENTS_COLLECTION).doc(playerUid).collection("orders");
+    const [walletSnap, ordersSnap, historySnap] = await Promise.all([
+      tx.get(walletRef(playerUid)),
+      tx.get(ordersRef),
+      tx.get(walletHistoryRef(playerUid)),
+    ]);
+    preloadedByUid.set(playerUid, {
+      walletExists: walletSnap.exists,
+      walletData: walletSnap.exists ? (walletSnap.data() || {}) : {},
+      orders: ordersSnap.docs.map((item) => ({
+        id: item.id,
+        ref: item.ref,
+        data: item.data() || {},
+      })),
+      exchangeHistory: historySnap.docs.map((item) => item.data() || {}),
+    });
+  }));
+
   for (const playerUid of uniquePlayerUids) {
     const entryFunding = entryFundingByUid[playerUid] && typeof entryFundingByUid[playerUid] === "object"
       ? entryFundingByUid[playerUid]
@@ -14783,6 +14803,27 @@ async function refundMorpionEntriesForNoPlayTimeoutTx(tx, roomRefDoc, room = {})
     const provisionalDoes = safeInt(entryFunding.provisionalDoes);
     const welcomeDoes = Math.max(0, Math.min(approvedDoes, safeInt(entryFunding.welcomeDoes)));
     const refundAmountDoes = Math.max(0, approvedDoes + provisionalDoes);
+    const preloaded = preloadedByUid.get(playerUid) || {};
+
+    if (refundAmountDoes > 0) {
+      await applyWalletMutationTx(tx, {
+        uid: playerUid,
+        email: "",
+        type: "game_reward",
+        note: `Remboursement morpion (${roomRefDoc.id})`,
+        amountDoes: refundAmountDoes,
+        approvedRewardDoes: approvedDoes,
+        provisionalRewardDoes: provisionalDoes,
+        welcomeRewardDoes: welcomeDoes,
+        amountGourdes: 0,
+        deltaDoes: refundAmountDoes,
+        deltaExchangedGourdes: 0,
+        preloadedWalletData: preloaded.walletData || {},
+        preloadedWalletExists: preloaded.walletExists !== false,
+        preloadedOrders: preloaded.orders || [],
+        preloadedExchangeHistory: preloaded.exchangeHistory || [],
+      });
+    }
 
     tx.set(roomRefDoc.collection("settlements").doc(playerUid), {
       uid: playerUid,
@@ -14795,22 +14836,6 @@ async function refundMorpionEntriesForNoPlayTimeoutTx(tx, roomRefDoc, room = {})
       settledAt: admin.firestore.FieldValue.serverTimestamp(),
       updatedAt: admin.firestore.FieldValue.serverTimestamp(),
     }, { merge: true });
-
-    if (refundAmountDoes <= 0) continue;
-
-    await applyWalletMutationTx(tx, {
-      uid: playerUid,
-      email: "",
-      type: "game_reward",
-      note: `Remboursement morpion (${roomRefDoc.id})`,
-      amountDoes: refundAmountDoes,
-      approvedRewardDoes: approvedDoes,
-      provisionalRewardDoes: provisionalDoes,
-      welcomeRewardDoes: welcomeDoes,
-      amountGourdes: 0,
-      deltaDoes: refundAmountDoes,
-      deltaExchangedGourdes: 0,
-    });
   }
 }
 
@@ -15130,11 +15155,11 @@ async function processPendingBotTurnsMorpion(roomId) {
           col: -1,
           actorUid: "server:timeout",
         };
-        tx.set(stateRef, buildMorpionGameStateWrite(nextState), { merge: true });
-        const roomUpdate = buildMorpionRoomUpdateFromGameState(liveRoom, nextState, [record]);
         if (nextState.endedReason === "no_play_refund") {
           await refundMorpionEntriesForNoPlayTimeoutTx(tx, roomRefDoc, liveRoom);
         }
+        tx.set(stateRef, buildMorpionGameStateWrite(nextState), { merge: true });
+        const roomUpdate = buildMorpionRoomUpdateFromGameState(liveRoom, nextState, [record]);
         tx.update(roomRefDoc, roomUpdate);
         tx.set(roomRefDoc.collection("actions").doc(String(record.seq)), {
           ...record,
