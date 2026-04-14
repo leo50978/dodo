@@ -135,6 +135,7 @@ function setupAppCheckDebugToken() {
 let appCheck = null;
 let appCheckBootstrapPromise = null;
 let appCheckBootstrapScheduled = false;
+const SITE_VISIT_SESSION_STORAGE_KEY = "dl_site_visit_session_v1";
 
 function initializeAppCheckWithKey(siteKey) {
   const normalized = String(siteKey || "").trim();
@@ -227,6 +228,54 @@ try {
     console.warn("[APP_CHECK] initialisation échouée", error);
   }
 }
+
+function shouldSkipSiteVisitTracking() {
+  if (typeof window === "undefined") return true;
+  const protocol = String(window.location?.protocol || "").toLowerCase();
+  const host = String(window.location?.hostname || "").toLowerCase();
+  const path = String(window.location?.pathname || "").toLowerCase();
+  return (
+    protocol === "file:" ||
+    host === "localhost" ||
+    host === "127.0.0.1" ||
+    host === "::1" ||
+    host.endsWith(".local") ||
+    path.startsWith("/__/auth/")
+  );
+}
+
+function getOrCreateSiteVisitSessionId() {
+  if (typeof window === "undefined") return "";
+  try {
+    const current = String(window.sessionStorage?.getItem(SITE_VISIT_SESSION_STORAGE_KEY) || "").trim();
+    if (current) return current;
+    const created = `visit_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 10)}`;
+    window.sessionStorage?.setItem(SITE_VISIT_SESSION_STORAGE_KEY, created);
+    return created;
+  } catch (_) {
+    return `visit_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 10)}`;
+  }
+}
+
+async function trackSiteVisitOncePerSession() {
+  if (shouldSkipSiteVisitTracking()) return;
+  const sessionId = getOrCreateSiteVisitSessionId();
+  if (!sessionId) return;
+  try {
+    const callable = httpsCallable(functions, "recordSiteVisitSecure");
+    await callable({
+      sessionId,
+      path: String(window.location?.pathname || "/"),
+      referrer: String(document?.referrer || ""),
+    });
+  } catch (error) {
+    if (typeof console !== "undefined") {
+      console.warn("[SITE_VISITS] tracking skipped", error);
+    }
+  }
+}
+
+void trackSiteVisitOncePerSession();
 
 export {
   app,

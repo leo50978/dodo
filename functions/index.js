@@ -57,6 +57,11 @@ const ANALYTICS_PRESENCE_DAILY_COLLECTION = "analyticsPresenceDaily";
 const ANALYTICS_PRESENCE_MONTHLY_COLLECTION = "analyticsPresenceMonthly";
 const ANALYTICS_PRESENCE_HOUR_COLLECTION = "analyticsPresenceHours";
 const ANALYTICS_PRESENCE_WEEKDAY_COLLECTION = "analyticsPresenceWeekdays";
+const ANALYTICS_SITE_VISIT_SESSIONS_COLLECTION = "analyticsSiteVisitSessions";
+const ANALYTICS_SITE_VISITS_DAILY_COLLECTION = "analyticsSiteVisitsDaily";
+const ANALYTICS_SITE_VISITS_HOURLY_COLLECTION = "analyticsSiteVisitsHourly";
+const ANALYTICS_SITE_VISITS_HOUR_COLLECTION = "analyticsSiteVisitsHours";
+const ANALYTICS_SITE_VISITS_WEEKDAY_COLLECTION = "analyticsSiteVisitsWeekdays";
 const RECRUITMENT_APPLICATIONS_COLLECTION = "recruitmentApplications";
 const RECRUITMENT_CAMPAIGN_DOC = "recruitmentCampaign";
 
@@ -99,6 +104,7 @@ const APP_PUBLIC_SETTINGS_DOC = "public_app_settings";
 const DASHBOARD_DEFAULT_NOTIFICATION_URL = "./Dpayment.html";
 const USERNAME_EMAIL_DOMAIN = "username.dominoeslakay.local";
 const PHONE_LOGIN_EMAIL_DOMAIN = "phone.dominoeslakay.local";
+const SITE_VISITS_META_DOC = "siteVisits";
 const RECRUITMENT_TARGET_COUNT = 100;
 const RECRUITMENT_DEADLINE_MS = Date.parse("2026-04-07T03:59:59.999Z");
 const DEFAULT_GAME_STAKE_OPTIONS = Object.freeze([
@@ -302,6 +308,26 @@ function analyticsMetaRef(docId = "") {
   return db.collection(ANALYTICS_META_COLLECTION).doc(String(docId || "").trim());
 }
 
+function siteVisitSessionRef(sessionId = "") {
+  return db.collection(ANALYTICS_SITE_VISIT_SESSIONS_COLLECTION).doc(hashText(String(sessionId || "").trim()));
+}
+
+function siteVisitsDailyCollection() {
+  return db.collection(ANALYTICS_SITE_VISITS_DAILY_COLLECTION);
+}
+
+function siteVisitsHourlyCollection() {
+  return db.collection(ANALYTICS_SITE_VISITS_HOURLY_COLLECTION);
+}
+
+function siteVisitsHourCollection() {
+  return db.collection(ANALYTICS_SITE_VISITS_HOUR_COLLECTION);
+}
+
+function siteVisitsWeekdayCollection() {
+  return db.collection(ANALYTICS_SITE_VISITS_WEEKDAY_COLLECTION);
+}
+
 function presenceSnapshotsCollection() {
   return db.collection(ANALYTICS_PRESENCE_SNAPSHOTS_COLLECTION);
 }
@@ -327,6 +353,17 @@ function getPresenceBucketStartMs(nowMs = Date.now()) {
   return safeNow - (safeNow % PRESENCE_ANALYTICS_BUCKET_MS);
 }
 
+function getHourBucketStartMs(nowMs = Date.now()) {
+  const safeNow = safeSignedInt(nowMs) || Date.now();
+  return safeNow - (safeNow % (60 * 60 * 1000));
+}
+
+function getDayBucketStartMs(nowMs = Date.now()) {
+  const safeNow = safeSignedInt(nowMs) || Date.now();
+  const date = new Date(safeNow);
+  return new Date(date.getFullYear(), date.getMonth(), date.getDate()).getTime();
+}
+
 function getPresenceLocalKeys(nowMs = Date.now()) {
   const parts = presenceDateTimeFormatter.formatToParts(new Date(nowMs));
   const values = {};
@@ -348,6 +385,10 @@ function getPresenceLocalKeys(nowMs = Date.now()) {
     hourKey: hour.padStart(2, "0"),
     weekdayKey: weekday,
   };
+}
+
+function getSiteVisitLocalKeys(nowMs = Date.now()) {
+  return getPresenceLocalKeys(nowMs);
 }
 
 function getTournamentQuotaLocalKeys(nowMs = Date.now()) {
@@ -521,6 +562,9 @@ const APP_CHECK_BYPASS_CALLABLES = new Set([
   "createMorpionBotTestRoom",
   "resumeMorpionBotTestRoom",
   "getDashboardClientScopeSnapshot",
+  "recordSiteVisitSecure",
+  "getSiteVisitsAnalyticsSnapshot",
+  "getGamesVolumeAnalyticsSnapshot",
   "searchAgentDepositClientsSecure",
   "getAgentDepositClientContextSecure",
   "creditAgentDepositSecure",
@@ -5443,6 +5487,76 @@ function getGlobalAnalyticsRange(options = {}, nowMs = Date.now()) {
     startMs: 0,
     endMs: nowMs,
   };
+}
+
+function getTimelineAnalyticsRange(options = {}, nowMs = Date.now()) {
+  const customStartMs = safeSignedInt(options.startMs);
+  const customEndMs = safeSignedInt(options.endMs);
+  if (customStartMs > 0 && customEndMs > 0 && customEndMs >= customStartMs) {
+    const rangeMs = Math.max(1, customEndMs - customStartMs);
+    return {
+      windowKey: "custom",
+      startMs: customStartMs,
+      endMs: customEndMs,
+      granularity: rangeMs <= (2 * 24 * 60 * 60 * 1000) ? "hour" : "day",
+      isGlobal: false,
+    };
+  }
+
+  const windowKey = normalizeGlobalAnalyticsWindow(options.window || "today");
+  const now = new Date(nowMs);
+  const todayStartMs = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+  if (windowKey === "today") {
+    return {
+      windowKey,
+      startMs: todayStartMs,
+      endMs: nowMs,
+      granularity: "hour",
+      isGlobal: false,
+    };
+  }
+  if (windowKey === "7d") {
+    return {
+      windowKey,
+      startMs: todayStartMs - (6 * 24 * 60 * 60 * 1000),
+      endMs: nowMs,
+      granularity: "day",
+      isGlobal: false,
+    };
+  }
+  if (windowKey === "30d") {
+    return {
+      windowKey,
+      startMs: todayStartMs - (29 * 24 * 60 * 60 * 1000),
+      endMs: nowMs,
+      granularity: "day",
+      isGlobal: false,
+    };
+  }
+  return {
+    windowKey: "global",
+    startMs: 0,
+    endMs: nowMs,
+    granularity: "day",
+    isGlobal: true,
+  };
+}
+
+function formatTimelineBucketLabel(granularity = "day", ms = 0) {
+  if (!ms) return "-";
+  const date = new Date(ms);
+  if (granularity === "hour") {
+    return date.toLocaleString("fr-FR", {
+      day: "2-digit",
+      month: "short",
+      hour: "2-digit",
+      minute: "2-digit",
+    });
+  }
+  return date.toLocaleDateString("fr-FR", {
+    day: "2-digit",
+    month: "short",
+  });
 }
 
 function applyAnalyticsTimeRange(query, field, range, direction = "desc") {
@@ -19649,6 +19763,79 @@ exports.recordRecruitmentVisitSecure = publicOnCall("recordRecruitmentVisitSecur
   };
 });
 
+exports.recordSiteVisitSecure = publicOnCall("recordSiteVisitSecure", async (request) => {
+  const payload = request.data && typeof request.data === "object" ? request.data : {};
+  const sessionId = sanitizeText(payload.sessionId || "", 120);
+  const path = normalizeSiteVisitPath(payload.path || payload.pathname || "/");
+  const referrer = sanitizeText(payload.referrer || "", 160);
+  const nowMs = Date.now();
+  const nowIso = new Date(nowMs).toISOString();
+  const localKeys = getSiteVisitLocalKeys(nowMs);
+  const hourBucketKey = `${localKeys.dayKey} ${localKeys.hourKey}:00`;
+  const sessionRef = siteVisitSessionRef(sessionId || `${path}:${nowMs}`);
+  const metaRef = analyticsMetaRef(SITE_VISITS_META_DOC);
+  const dailyRef = siteVisitsDailyCollection().doc(localKeys.dayKey);
+  const hourlyRef = siteVisitsHourlyCollection().doc(hourBucketKey);
+  const hourRef = siteVisitsHourCollection().doc(localKeys.hourKey);
+  const weekdayRef = siteVisitsWeekdayCollection().doc(localKeys.weekdayKey);
+
+  const result = await db.runTransaction(async (tx) => {
+    const [sessionSnap, metaSnap, dailySnap, hourlySnap, hourSnap, weekdaySnap] = await Promise.all([
+      tx.get(sessionRef),
+      tx.get(metaRef),
+      tx.get(dailyRef),
+      tx.get(hourlyRef),
+      tx.get(hourRef),
+      tx.get(weekdayRef),
+    ]);
+
+    if (sessionSnap.exists) {
+      const existing = sessionSnap.data() || {};
+      tx.set(sessionRef, {
+        lastSeenAtMs: nowMs,
+        lastSeenAt: nowIso,
+        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      }, { merge: true });
+      return {
+        ok: true,
+        counted: false,
+        sessionId: String(existing.sessionId || sessionId || ""),
+      };
+    }
+
+    const meta = metaSnap.exists ? (metaSnap.data() || {}) : {};
+    tx.set(sessionRef, {
+      sessionId,
+      path,
+      referrer,
+      createdAtMs: nowMs,
+      createdAt: nowIso,
+      lastSeenAtMs: nowMs,
+      lastSeenAt: nowIso,
+      updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+    }, { merge: true });
+    tx.set(metaRef, {
+      totalVisitCount: safeInt(meta.totalVisitCount) + 1,
+      lastVisitAtMs: nowMs,
+      lastVisitAt: nowIso,
+      updatedAtMs: nowMs,
+      updatedAt: nowIso,
+    }, { merge: true });
+    tx.set(dailyRef, buildSiteVisitDailyRecord(localKeys.dayKey, dailySnap.exists ? (dailySnap.data() || {}) : {}, nowMs), { merge: true });
+    tx.set(hourlyRef, buildSiteVisitHourlyRecord(hourBucketKey, localKeys, hourlySnap.exists ? (hourlySnap.data() || {}) : {}, nowMs), { merge: true });
+    tx.set(hourRef, buildSiteVisitDimensionRecord("hourKey", localKeys.hourKey, hourSnap.exists ? (hourSnap.data() || {}) : {}, nowMs), { merge: true });
+    tx.set(weekdayRef, buildSiteVisitDimensionRecord("weekdayKey", localKeys.weekdayKey, weekdaySnap.exists ? (weekdaySnap.data() || {}) : {}, nowMs), { merge: true });
+
+    return {
+      ok: true,
+      counted: true,
+      sessionId,
+    };
+  });
+
+  return result;
+});
+
 exports.submitRecruitmentApplicationSecure = publicOnCall("submitRecruitmentApplicationSecure", async (request) => {
   const payload = request.data && typeof request.data === "object" ? request.data : {};
   const firstName = sanitizeText(payload.firstName || "", 80);
@@ -20185,6 +20372,347 @@ async function computePresenceAnalyticsSnapshot(options = {}) {
   };
 }
 
+function normalizeSiteVisitPath(value = "") {
+  let path = sanitizeText(value || "/", 120);
+  if (!path.startsWith("/")) path = `/${path}`;
+  path = path.replace(/\/{2,}/g, "/");
+  if (path.length > 1 && path.endsWith("/")) path = path.slice(0, -1);
+  return path || "/";
+}
+
+function buildSiteVisitDailyRecord(dayKey = "", existing = {}, nowMs = Date.now()) {
+  return {
+    dayKey: String(dayKey || ""),
+    dayStartMs: getDayBucketStartMs(nowMs),
+    timezone: PRESENCE_ANALYTICS_TIMEZONE,
+    visitCount: safeInt(existing.visitCount) + 1,
+    lastVisitAtMs: nowMs,
+    updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+  };
+}
+
+function buildSiteVisitHourlyRecord(bucketKey = "", localKeys = {}, existing = {}, nowMs = Date.now()) {
+  return {
+    bucketKey: String(bucketKey || ""),
+    dayKey: String(localKeys.dayKey || ""),
+    hourKey: String(localKeys.hourKey || ""),
+    weekdayKey: String(localKeys.weekdayKey || ""),
+    bucketStartMs: getHourBucketStartMs(nowMs),
+    timezone: PRESENCE_ANALYTICS_TIMEZONE,
+    visitCount: safeInt(existing.visitCount) + 1,
+    lastVisitAtMs: nowMs,
+    updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+  };
+}
+
+function buildSiteVisitDimensionRecord(keyField = "", keyValue = "", existing = {}, nowMs = Date.now()) {
+  return {
+    [keyField]: String(keyValue || ""),
+    timezone: PRESENCE_ANALYTICS_TIMEZONE,
+    visitCount: safeInt(existing.visitCount) + 1,
+    lastVisitAtMs: nowMs,
+    updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+  };
+}
+
+function weekdayOrderIndex(weekdayKey = "") {
+  const order = ["mon", "tue", "wed", "thu", "fri", "sat", "sun"];
+  const idx = order.indexOf(String(weekdayKey || "").toLowerCase());
+  return idx >= 0 ? idx : order.length;
+}
+
+function weekdayLabel(weekdayKey = "") {
+  const labels = {
+    mon: "Lun",
+    tue: "Mar",
+    wed: "Mer",
+    thu: "Jeu",
+    fri: "Ven",
+    sat: "Sam",
+    sun: "Dim",
+  };
+  const safeKey = String(weekdayKey || "").toLowerCase();
+  return labels[safeKey] || safeKey || "-";
+}
+
+function siteVisitHourSeriesFromDocs(docs = []) {
+  const buckets = new Map();
+  (Array.isArray(docs) ? docs : []).forEach((item) => {
+    const hourKey = String(item.hourKey || "").padStart(2, "0");
+    const current = buckets.get(hourKey) || {
+      hourKey,
+      label: `${hourKey}h`,
+      visitCount: 0,
+    };
+    current.visitCount += safeInt(item.visitCount);
+    buckets.set(hourKey, current);
+  });
+  return Array.from({ length: 24 }, (_, hour) => {
+    const hourKey = String(hour).padStart(2, "0");
+    const found = buckets.get(hourKey);
+    return found || { hourKey, label: `${hourKey}h`, visitCount: 0 };
+  });
+}
+
+function siteVisitWeekdaySeriesFromDocs(docs = []) {
+  const buckets = new Map();
+  (Array.isArray(docs) ? docs : []).forEach((item) => {
+    const weekdayKey = String(item.weekdayKey || "").toLowerCase();
+    const current = buckets.get(weekdayKey) || {
+      weekdayKey,
+      label: weekdayLabel(weekdayKey),
+      visitCount: 0,
+    };
+    current.visitCount += safeInt(item.visitCount);
+    buckets.set(weekdayKey, current);
+  });
+
+  return Array.from(buckets.values())
+    .sort((left, right) => weekdayOrderIndex(left.weekdayKey) - weekdayOrderIndex(right.weekdayKey));
+}
+
+function buildSiteVisitTrend(range = {}, dailyDocs = [], hourlyDocs = []) {
+  if (range.granularity === "hour") {
+    return (Array.isArray(hourlyDocs) ? hourlyDocs : [])
+      .slice()
+      .sort((left, right) => safeSignedInt(left.bucketStartMs) - safeSignedInt(right.bucketStartMs))
+      .map((item) => ({
+        key: String(item.bucketKey || ""),
+        label: formatTimelineBucketLabel("hour", safeSignedInt(item.bucketStartMs)),
+        bucketMs: safeSignedInt(item.bucketStartMs),
+        visitCount: safeInt(item.visitCount),
+      }));
+  }
+
+  return (Array.isArray(dailyDocs) ? dailyDocs : [])
+    .slice()
+    .sort((left, right) => safeSignedInt(left.dayStartMs) - safeSignedInt(right.dayStartMs))
+    .map((item) => ({
+      key: String(item.dayKey || ""),
+      label: formatTimelineBucketLabel("day", safeSignedInt(item.dayStartMs)),
+      bucketMs: safeSignedInt(item.dayStartMs),
+      visitCount: safeInt(item.visitCount),
+    }));
+}
+
+async function computeSiteVisitsAnalyticsSnapshot(options = {}) {
+  const nowMs = safeSignedInt(options.nowMs) || Date.now();
+  const range = getTimelineAnalyticsRange(options, nowMs);
+  const todayLocalKeys = getSiteVisitLocalKeys(nowMs);
+  const [metaSnap, todaySnap] = await Promise.all([
+    analyticsMetaRef(SITE_VISITS_META_DOC).get(),
+    siteVisitsDailyCollection().doc(todayLocalKeys.dayKey).get(),
+  ]);
+
+  const meta = metaSnap.exists ? (metaSnap.data() || {}) : {};
+  const allTimeVisits = safeInt(meta.totalVisitCount);
+  const todayVisits = todaySnap.exists ? safeInt(todaySnap.data()?.visitCount) : 0;
+
+  let dailyDocs = [];
+  let hourlyDocs = [];
+  let hourOfDay = [];
+  let weekday = [];
+
+  if (range.isGlobal) {
+    const [dailySnap, hourSnap, weekdaySnap] = await Promise.all([
+      siteVisitsDailyCollection().orderBy("dayStartMs", "asc").get(),
+      siteVisitsHourCollection().orderBy("hourKey", "asc").get(),
+      siteVisitsWeekdayCollection().orderBy("weekdayKey", "asc").get(),
+    ]);
+    dailyDocs = dailySnap.docs.map(snapshotRecordForCallable);
+    hourOfDay = siteVisitHourSeriesFromDocs(hourSnap.docs.map(snapshotRecordForCallable));
+    weekday = siteVisitWeekdaySeriesFromDocs(weekdaySnap.docs.map(snapshotRecordForCallable));
+  } else {
+    const startDayMs = getDayBucketStartMs(range.startMs);
+    const endDayMs = getDayBucketStartMs(range.endMs);
+    const startHourMs = getHourBucketStartMs(range.startMs);
+    const endHourMs = getHourBucketStartMs(range.endMs);
+    const [dailySnap, hourlySnap] = await Promise.all([
+      siteVisitsDailyCollection()
+        .where("dayStartMs", ">=", startDayMs)
+        .where("dayStartMs", "<=", endDayMs)
+        .orderBy("dayStartMs", "asc")
+        .get(),
+      siteVisitsHourlyCollection()
+        .where("bucketStartMs", ">=", startHourMs)
+        .where("bucketStartMs", "<=", endHourMs)
+        .orderBy("bucketStartMs", "asc")
+        .get(),
+    ]);
+    dailyDocs = dailySnap.docs.map(snapshotRecordForCallable);
+    hourlyDocs = hourlySnap.docs.map(snapshotRecordForCallable);
+    hourOfDay = siteVisitHourSeriesFromDocs(hourlyDocs);
+    weekday = siteVisitWeekdaySeriesFromDocs(hourlyDocs);
+  }
+
+  const trend = buildSiteVisitTrend(range, dailyDocs, hourlyDocs);
+  const rangeVisits = range.isGlobal
+    ? allTimeVisits
+    : (range.granularity === "hour"
+      ? hourlyDocs.reduce((sum, item) => sum + safeInt(item.visitCount), 0)
+      : dailyDocs.reduce((sum, item) => sum + safeInt(item.visitCount), 0));
+  const peakBucket = trend
+    .slice()
+    .sort((left, right) => safeInt(right.visitCount) - safeInt(left.visitCount) || safeSignedInt(right.bucketMs) - safeSignedInt(left.bucketMs))
+    .at(0) || null;
+
+  return {
+    ok: true,
+    generatedAtMs: nowMs,
+    range,
+    snapshot: {
+      summary: {
+        allTimeVisits,
+        rangeVisits,
+        todayVisits,
+        activeBuckets: Math.max(1, trend.length),
+        avgPerBucket: trend.length > 0 ? Math.round(rangeVisits / trend.length) : rangeVisits,
+        peakBucketVisits: safeInt(peakBucket?.visitCount),
+        peakBucketLabel: String(peakBucket?.label || ""),
+      },
+      trend,
+      hourOfDay,
+      weekday,
+    },
+  };
+}
+
+function inferClassicGameComposition(result = {}) {
+  const botCount = safeInt(result.botCount);
+  return botCount > 0 ? "with_bot" : "human_only";
+}
+
+async function computeGamesVolumeAnalyticsSnapshot(options = {}) {
+  const nowMs = safeSignedInt(options.nowMs) || Date.now();
+  const range = getTimelineAnalyticsRange(options, nowMs);
+
+  let classicQuery = db.collection(ROOM_RESULTS_COLLECTION).orderBy("endedAtMs", "asc");
+  let duelQuery = db.collection(DUEL_ROOM_RESULTS_COLLECTION).orderBy("endedAtMs", "asc");
+  let morpionQuery = db.collection(MORPION_ROOM_RESULTS_COLLECTION).orderBy("endedAtMs", "asc");
+
+  if (range.startMs > 0) {
+    classicQuery = classicQuery.where("endedAtMs", ">=", range.startMs);
+    duelQuery = duelQuery.where("endedAtMs", ">=", range.startMs);
+    morpionQuery = morpionQuery.where("endedAtMs", ">=", range.startMs);
+  }
+  if (range.endMs > 0) {
+    classicQuery = classicQuery.where("endedAtMs", "<=", range.endMs);
+    duelQuery = duelQuery.where("endedAtMs", "<=", range.endMs);
+    morpionQuery = morpionQuery.where("endedAtMs", "<=", range.endMs);
+  }
+
+  const [classicSnap, duelSnap, morpionSnap] = await Promise.all([
+    safeAnalyticsQueryGet(classicQuery, db.collection(ROOM_RESULTS_COLLECTION), "classicRoomResults"),
+    safeAnalyticsQueryGet(duelQuery, db.collection(DUEL_ROOM_RESULTS_COLLECTION), "duelRoomResults"),
+    safeAnalyticsQueryGet(morpionQuery, db.collection(MORPION_ROOM_RESULTS_COLLECTION), "morpionRoomResults"),
+  ]);
+
+  const trendMap = new Map();
+  const recentMatches = [];
+
+  const summary = {
+    totalMatches: 0,
+    classicMatches: 0,
+    duelMatches: 0,
+    morpionMatches: 0,
+    classicWithBots: 0,
+    duelWithBots: 0,
+    morpionWithBots: 0,
+  };
+
+  const addMatch = (gameKey, label, data = {}, docId = "") => {
+    const status = String(data.status || "").trim().toLowerCase();
+    const endedAtMs = safeSignedInt(data.endedAtMs);
+    if (status !== "ended" || endedAtMs <= 0) return;
+    if (range.startMs > 0 && endedAtMs < range.startMs) return;
+    if (range.endMs > 0 && endedAtMs > range.endMs) return;
+
+    summary.totalMatches += 1;
+    if (gameKey === "classic") summary.classicMatches += 1;
+    if (gameKey === "duel") summary.duelMatches += 1;
+    if (gameKey === "morpion") summary.morpionMatches += 1;
+
+    const botCount = safeInt(data.botCount);
+    if (gameKey === "classic" && inferClassicGameComposition(data) === "with_bot") summary.classicWithBots += 1;
+    if (gameKey === "duel" && botCount > 0) summary.duelWithBots += 1;
+    if (gameKey === "morpion" && botCount > 0) summary.morpionWithBots += 1;
+
+    const bucketKey = getDuelAnalyticsBucketKey(range.granularity, endedAtMs);
+    const bucket = trendMap.get(bucketKey) || {
+      key: bucketKey,
+      label: getDuelAnalyticsBucketLabel(range.granularity, endedAtMs),
+      periodMs: endedAtMs,
+      totalMatches: 0,
+      classicMatches: 0,
+      duelMatches: 0,
+      morpionMatches: 0,
+    };
+    bucket.totalMatches += 1;
+    if (gameKey === "classic") bucket.classicMatches += 1;
+    if (gameKey === "duel") bucket.duelMatches += 1;
+    if (gameKey === "morpion") bucket.morpionMatches += 1;
+    if (endedAtMs > safeSignedInt(bucket.periodMs)) {
+      bucket.periodMs = endedAtMs;
+      bucket.label = getDuelAnalyticsBucketLabel(range.granularity, endedAtMs);
+    }
+    trendMap.set(bucketKey, bucket);
+
+    recentMatches.push({
+      id: String(docId || ""),
+      gameKey,
+      gameLabel: label,
+      endedAtMs,
+      stakeDoes: safeInt(data.entryCostDoes || data.stakeDoes),
+      roomMode: sanitizeText(data.roomMode || "", 40),
+      botCount,
+    });
+  };
+
+  classicSnap.forEach((docSnap) => addMatch("classic", "Domino classique", docSnap.data() || {}, docSnap.id));
+  duelSnap.forEach((docSnap) => addMatch("duel", "Duel 2 joueurs", docSnap.data() || {}, docSnap.id));
+  morpionSnap.forEach((docSnap) => addMatch("morpion", "Morpion 5", docSnap.data() || {}, docSnap.id));
+
+  recentMatches.sort((left, right) => safeSignedInt(right.endedAtMs) - safeSignedInt(left.endedAtMs));
+
+  const trend = Array.from(trendMap.values())
+    .sort((left, right) => safeSignedInt(left.periodMs) - safeSignedInt(right.periodMs))
+    .map((bucket) => ({
+      key: bucket.key,
+      label: bucket.label,
+      periodMs: safeSignedInt(bucket.periodMs),
+      totalMatches: safeInt(bucket.totalMatches),
+      classicMatches: safeInt(bucket.classicMatches),
+      duelMatches: safeInt(bucket.duelMatches),
+      morpionMatches: safeInt(bucket.morpionMatches),
+    }));
+
+  const peakBucket = trend
+    .slice()
+    .sort((left, right) => safeInt(right.totalMatches) - safeInt(left.totalMatches) || safeSignedInt(right.periodMs) - safeSignedInt(left.periodMs))
+    .at(0) || null;
+
+  return {
+    ok: true,
+    generatedAtMs: nowMs,
+    range,
+    snapshot: {
+      summary: {
+        ...summary,
+        avgMatchesPerBucket: trend.length > 0 ? Math.round(summary.totalMatches / trend.length) : summary.totalMatches,
+        peakBucketMatches: safeInt(peakBucket?.totalMatches),
+        peakBucketLabel: String(peakBucket?.label || ""),
+      },
+      mix: [
+        { key: "classic", label: "Domino classique", count: summary.classicMatches },
+        { key: "duel", label: "Duel 2 joueurs", count: summary.duelMatches },
+        { key: "morpion", label: "Morpion 5", count: summary.morpionMatches },
+      ],
+      trend,
+      recentMatches: recentMatches.slice(0, 12),
+    },
+  };
+}
+
 exports.getPresenceAnalyticsSnapshot = publicOnCall(
   "getPresenceAnalyticsSnapshot",
   async (request) => {
@@ -20194,6 +20722,30 @@ exports.getPresenceAnalyticsSnapshot = publicOnCall(
   },
   {
     memory: "512MiB",
+  }
+);
+
+exports.getSiteVisitsAnalyticsSnapshot = publicOnCall(
+  "getSiteVisitsAnalyticsSnapshot",
+  async (request) => {
+    assertFinanceAdmin(request);
+    const payload = request.data && typeof request.data === "object" ? request.data : {};
+    return computeSiteVisitsAnalyticsSnapshot(payload);
+  },
+  {
+    memory: "512MiB",
+  }
+);
+
+exports.getGamesVolumeAnalyticsSnapshot = publicOnCall(
+  "getGamesVolumeAnalyticsSnapshot",
+  async (request) => {
+    assertFinanceAdmin(request);
+    const payload = request.data && typeof request.data === "object" ? request.data : {};
+    return computeGamesVolumeAnalyticsSnapshot(payload);
+  },
+  {
+    memory: "1GiB",
   }
 );
 
