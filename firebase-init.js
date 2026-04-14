@@ -5,11 +5,13 @@ import {
 } from "https://www.gstatic.com/firebasejs/10.12.5/firebase-app-check.js";
 import {
   getAuth,
+  EmailAuthProvider,
   GoogleAuthProvider,
   signInWithPopup,
   signInWithRedirect,
   getRedirectResult,
   onAuthStateChanged,
+  reauthenticateWithCredential,
   signInWithEmailAndPassword,
   createUserWithEmailAndPassword,
   sendPasswordResetEmail,
@@ -17,6 +19,7 @@ import {
   sendEmailVerification,
   reload,
   applyActionCode,
+  updatePassword,
   updateProfile,
 } from "https://www.gstatic.com/firebasejs/10.12.5/firebase-auth.js";
 import {
@@ -233,11 +236,13 @@ export {
   functions,
   storage,
   httpsCallable,
+  EmailAuthProvider,
   GoogleAuthProvider,
   signInWithPopup,
   signInWithRedirect,
   getRedirectResult,
   onAuthStateChanged,
+  reauthenticateWithCredential,
   signInWithEmailAndPassword,
   createUserWithEmailAndPassword,
   sendPasswordResetEmail,
@@ -245,6 +250,7 @@ export {
   sendEmailVerification,
   reload,
   applyActionCode,
+  updatePassword,
   updateProfile,
   collection,
   collectionGroup,

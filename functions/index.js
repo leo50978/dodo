@@ -97,6 +97,8 @@ const WELCOME_BONUS_HTG_AMOUNT = 25;
 const DPAYMENT_ADMIN_BOOTSTRAP_DOC = "dpayment_admin_bootstrap";
 const APP_PUBLIC_SETTINGS_DOC = "public_app_settings";
 const DASHBOARD_DEFAULT_NOTIFICATION_URL = "./Dpayment.html";
+const USERNAME_EMAIL_DOMAIN = "username.dominoeslakay.local";
+const PHONE_LOGIN_EMAIL_DOMAIN = "phone.dominoeslakay.local";
 const RECRUITMENT_TARGET_COUNT = 100;
 const RECRUITMENT_DEADLINE_MS = Date.parse("2026-04-07T03:59:59.999Z");
 const DEFAULT_GAME_STAKE_OPTIONS = Object.freeze([
@@ -178,6 +180,16 @@ const DEPOSIT_ANALYTICS_DOC_LIMIT = 12000;
 const AGENT_DEPOSIT_SEARCH_FALLBACK_LIMIT = 250;
 const AGENT_DEPOSIT_CONTEXT_ORDER_LIMIT = 12;
 const AGENT_DEPOSIT_SEARCH_RESULT_LIMIT = 12;
+const CLIENT_DELETION_REVIEW_SEARCH_RESULT_LIMIT = 20;
+const CLIENT_DELETION_REVIEW_FALLBACK_LIMIT = 250;
+const CLIENT_DELETION_REVIEW_PAGE_SIZE = 10;
+const CLIENT_INACTIVITY_REVIEW_MS = 30 * 24 * 60 * 60 * 1000;
+const CLIENT_DELETION_REVIEW_SWEEP_BATCH_SIZE = 250;
+const CLIENT_DELETION_REVIEW_PENDING_STATUS = "pending_review";
+const CLIENT_DELETION_REVIEW_CONTACTED_STATUS = "contacted";
+const CLIENT_DELETION_REVIEW_CLEARED_STATUS = "cleared";
+const CLIENT_DELETION_REVIEW_ARCHIVED_STATUS = "archived";
+const DELETED_CLIENTS_ARCHIVE_COLLECTION = "deletedClientsArchive";
 const AGENT_SEARCH_RESULT_LIMIT = 12;
 const AGENT_LIST_LIMIT = 180;
 const AGENT_INITIAL_SIGNUP_BUDGET_HTG = 25000;
@@ -508,6 +520,15 @@ function logSecurityRejection(callable, request, code, extra = {}) {
 const APP_CHECK_BYPASS_CALLABLES = new Set([
   "createMorpionBotTestRoom",
   "resumeMorpionBotTestRoom",
+  "getDashboardClientScopeSnapshot",
+  "searchAgentDepositClientsSecure",
+  "getAgentDepositClientContextSecure",
+  "creditAgentDepositSecure",
+  "adminSetClientPasswordSecure",
+  "getDashboardDeletionReviewSnapshotSecure",
+  "setClientDeletionReviewStatusSecure",
+  "archiveClientAccountSecure",
+  "deleteClientAccountSecure",
 ]);
 
 function assertAppCheck(request, callable) {
@@ -544,6 +565,7 @@ async function assertAppCheckOrMorpionBotTest(request, callable, roomId) {
 
 function publicOnCall(callableName, handler, options = {}) {
   return onCall({
+    cors: true,
     ...options,
   }, async (request) => {
     assertAppCheck(request, callableName);
@@ -1140,6 +1162,19 @@ function sanitizePhone(value, maxLength = 40) {
 
 function phoneDigits(value = "") {
   return String(value || "").replace(/\D/g, "");
+}
+
+function usernameToSyntheticEmailLookup(value = "") {
+  const username = sanitizeUsername(value || "", 24);
+  return username ? `${username}@${USERNAME_EMAIL_DOMAIN}` : "";
+}
+
+function phoneToSyntheticEmailLookup(value = "") {
+  let digits = phoneDigits(value);
+  if (!digits) return "";
+  if (digits.startsWith("00")) digits = digits.slice(2);
+  if (digits.length === 8) digits = `509${digits}`;
+  return /^\d{11,15}$/.test(digits) ? `${digits}@${PHONE_LOGIN_EMAIL_DOMAIN}` : "";
 }
 
 function hashText(value = "") {
@@ -2584,6 +2619,321 @@ function getDashboardClientUpdatedAtMs(client = {}) {
   return safeInt(client.updatedAtMs) || toMillis(client.updatedAt);
 }
 
+function getClientDeletionReviewStatus(client = {}) {
+  const status = sanitizeText(client.deletionReviewStatus || "", 40).toLowerCase();
+  if (
+    status === CLIENT_DELETION_REVIEW_PENDING_STATUS
+    || status === CLIENT_DELETION_REVIEW_CONTACTED_STATUS
+    || status === CLIENT_DELETION_REVIEW_CLEARED_STATUS
+    || status === CLIENT_DELETION_REVIEW_ARCHIVED_STATUS
+  ) {
+    return status;
+  }
+  return "";
+}
+
+function getClientLastActivityAtMs(client = {}) {
+  return Math.max(
+    safeSignedInt(client.lastSeenAtMs),
+    toMillis(client.lastSeenAt),
+    safeSignedInt(client.lastAuthAtMs),
+    toMillis(client.lastAuthAt),
+    safeSignedInt(client.createdAtMs),
+    toMillis(client.createdAt),
+  );
+}
+
+function getClientDeletionReviewBalanceSnapshot(client = {}) {
+  const htgBalance = getDashboardClientVisibleHtg(client);
+  const doesBalance = getDashboardClientVisibleDoes(client);
+  return {
+    htgBalance,
+    doesBalance,
+    hasBalance: htgBalance > 0 || doesBalance > 0,
+  };
+}
+
+function isClientProtectedFromDeletionReview(clientId = "", client = {}) {
+  const email = sanitizeEmail(client.email || "", 160);
+  const agentStatus = normalizeAgentStatus(client.agentStatus || "");
+  return (
+    client.accountArchived === true
+    || getClientDeletionReviewStatus(client) === CLIENT_DELETION_REVIEW_ARCHIVED_STATUS
+    || email === FINANCE_ADMIN_EMAIL
+    || clientId === "dpayment_admin_bootstrap"
+    || client.isAgent === true
+    || agentStatus === "active"
+  );
+}
+
+function buildDeletionReviewClearPatch() {
+  return {
+    deletionReviewStatus: admin.firestore.FieldValue.delete(),
+    deletionReviewReason: admin.firestore.FieldValue.delete(),
+    deletionReviewFlaggedAt: admin.firestore.FieldValue.delete(),
+    deletionReviewFlaggedAtMs: admin.firestore.FieldValue.delete(),
+    deletionReviewLastActivityAtMs: admin.firestore.FieldValue.delete(),
+    deletionReviewHasBalance: admin.firestore.FieldValue.delete(),
+    deletionReviewHtgBalance: admin.firestore.FieldValue.delete(),
+    deletionReviewDoesBalance: admin.firestore.FieldValue.delete(),
+    deletionReviewContactedAt: admin.firestore.FieldValue.delete(),
+    deletionReviewContactedAtMs: admin.firestore.FieldValue.delete(),
+    deletionReviewContactedByUid: admin.firestore.FieldValue.delete(),
+    deletionReviewContactedByEmail: admin.firestore.FieldValue.delete(),
+    deletionReviewClearedAt: admin.firestore.FieldValue.delete(),
+    deletionReviewClearedAtMs: admin.firestore.FieldValue.delete(),
+    deletionReviewClearedByUid: admin.firestore.FieldValue.delete(),
+    deletionReviewClearedByEmail: admin.firestore.FieldValue.delete(),
+    deletionReviewArchivedAt: admin.firestore.FieldValue.delete(),
+    deletionReviewArchivedAtMs: admin.firestore.FieldValue.delete(),
+    deletionReviewArchivedByUid: admin.firestore.FieldValue.delete(),
+    deletionReviewArchivedByEmail: admin.firestore.FieldValue.delete(),
+    deletionReviewSource: admin.firestore.FieldValue.delete(),
+  };
+}
+
+function buildDeletionReviewFlagPatch(client = {}, nowMs = Date.now(), options = {}) {
+  const balance = getClientDeletionReviewBalanceSnapshot(client);
+  return {
+    deletionReviewStatus: CLIENT_DELETION_REVIEW_PENDING_STATUS,
+    deletionReviewReason: sanitizeText(options.reason || "inactive_30d", 80),
+    deletionReviewFlaggedAt: admin.firestore.FieldValue.serverTimestamp(),
+    deletionReviewFlaggedAtMs: nowMs,
+    deletionReviewLastActivityAtMs: getClientLastActivityAtMs(client),
+    deletionReviewHasBalance: balance.hasBalance,
+    deletionReviewHtgBalance: balance.htgBalance,
+    deletionReviewDoesBalance: balance.doesBalance,
+    deletionReviewSource: sanitizeText(options.source || "auto_inactivity_review", 80),
+    updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+  };
+}
+
+function buildDeletionReviewSearchRecord(clientId = "", raw = {}) {
+  const deletionReviewStatus = getClientDeletionReviewStatus(raw);
+  const balance = getClientDeletionReviewBalanceSnapshot(raw);
+  return {
+    uid: clientId,
+    id: clientId,
+    name: getDashboardClientDisplayName(raw),
+    email: sanitizeEmail(raw.email || "", 160),
+    phone: getDashboardClientPhone(raw),
+    username: sanitizeUsername(raw.username || "", 24),
+    createdAtMs: getDashboardClientCreatedAtMs(raw),
+    updatedAtMs: getDashboardClientUpdatedAtMs(raw),
+    lastSeenAtMs: getClientLastActivityAtMs(raw),
+    approvedHtgAvailable: safeInt(raw.approvedHtgAvailable),
+    provisionalHtgAvailable: safeInt(raw.provisionalHtgAvailable),
+    doesBalance: balance.doesBalance,
+    htgBalance: balance.htgBalance,
+    hasBalance: balance.hasBalance,
+    accountFrozen: raw.accountFrozen === true,
+    withdrawalHold: raw.withdrawalHold === true,
+    accountArchived: raw.accountArchived === true,
+    isAgent: raw.isAgent === true,
+    agentStatus: normalizeAgentStatus(raw.agentStatus || ""),
+    deletionReviewStatus,
+    deletionReviewReason: sanitizeText(raw.deletionReviewReason || "", 80),
+    deletionReviewFlaggedAtMs: safeSignedInt(raw.deletionReviewFlaggedAtMs) || toMillis(raw.deletionReviewFlaggedAt),
+    deletionReviewContactedAtMs: safeSignedInt(raw.deletionReviewContactedAtMs) || toMillis(raw.deletionReviewContactedAt),
+    deletionReviewClearedAtMs: safeSignedInt(raw.deletionReviewClearedAtMs) || toMillis(raw.deletionReviewClearedAt),
+    deletionReviewArchivedAtMs: safeSignedInt(raw.deletionReviewArchivedAtMs) || toMillis(raw.deletionReviewArchivedAt),
+    safeDeleteEligible: false,
+  };
+}
+
+function sortDeletionReviewRows(rows = []) {
+  return (Array.isArray(rows) ? [...rows] : []).sort((left, right) =>
+    safeSignedInt(right.deletionReviewFlaggedAtMs || right.lastSeenAtMs) - safeSignedInt(left.deletionReviewFlaggedAtMs || left.lastSeenAtMs)
+    || safeSignedInt(left.lastSeenAtMs) - safeSignedInt(right.lastSeenAtMs)
+    || String(left.name || left.email || left.id).localeCompare(String(right.name || right.email || right.id), "fr")
+  );
+}
+
+async function buildDashboardDeletionReviewSnapshot(options = {}) {
+  const queryText = sanitizeText(options.query || "", 160);
+  const normalizedQuery = normalizeSearchText(queryText);
+  const queryDigits = phoneDigits(queryText);
+  const queryUsername = sanitizeUsername(queryText || "", 24);
+  const queryEmail = sanitizeEmail(queryText || "", 160);
+  const queryUsernameEmail = usernameToSyntheticEmailLookup(queryText);
+  const queryPhoneEmail = phoneToSyntheticEmailLookup(queryText);
+  const pageSize = Math.min(50, Math.max(1, safeInt(options.pageSize) || CLIENT_DELETION_REVIEW_PAGE_SIZE));
+  const offset = Math.max(0, safeInt(options.offset));
+  const results = new Map();
+
+  const addClientSnap = (docSnap) => {
+    if (!docSnap?.exists) return;
+    const record = buildDeletionReviewSearchRecord(docSnap.id, docSnap.data() || {});
+    if (isClientProtectedFromDeletionReview(record.id, docSnap.data() || {})) return;
+    results.set(record.id, record);
+  };
+
+  const addClientDocs = (snap) => {
+    (snap?.docs || []).forEach((docSnap) => addClientSnap(docSnap));
+  };
+
+  const flaggedQuery = db.collection(CLIENTS_COLLECTION)
+    .where("deletionReviewStatus", "in", [
+      CLIENT_DELETION_REVIEW_PENDING_STATUS,
+      CLIENT_DELETION_REVIEW_CONTACTED_STATUS,
+    ])
+    .select(
+      "name",
+      "displayName",
+      "email",
+      "phone",
+      "customerPhone",
+      "username",
+      "createdAt",
+      "createdAtMs",
+      "updatedAt",
+      "updatedAtMs",
+      "lastSeenAt",
+      "lastSeenAtMs",
+      "approvedHtgAvailable",
+      "provisionalHtgAvailable",
+      "doesBalance",
+      "doesApprovedBalance",
+      "doesProvisionalBalance",
+      "accountFrozen",
+      "withdrawalHold",
+      "accountArchived",
+      "isAgent",
+      "agentStatus",
+      "deletionReviewStatus",
+      "deletionReviewReason",
+      "deletionReviewFlaggedAt",
+      "deletionReviewFlaggedAtMs",
+      "deletionReviewContactedAt",
+      "deletionReviewContactedAtMs",
+      "deletionReviewClearedAt",
+      "deletionReviewClearedAtMs",
+      "deletionReviewArchivedAt",
+      "deletionReviewArchivedAtMs"
+    );
+
+  const [flaggedResult, archivedCount] = await Promise.allSettled([
+    flaggedQuery.get(),
+    getAggregationCount(db.collection(CLIENTS_COLLECTION).where("accountArchived", "==", true)),
+  ]);
+
+  const flaggedSnap = flaggedResult.status === "fulfilled" ? flaggedResult.value : { docs: [] };
+  const archivedTotal = archivedCount.status === "fulfilled" ? safeInt(archivedCount.value) : 0;
+  addClientDocs(flaggedSnap);
+
+  if (queryText) {
+    if (queryText.length >= 20 && /^[A-Za-z0-9_-]+$/.test(queryText)) {
+      addClientSnap(await walletRef(queryText).get());
+    }
+
+    const exactLookups = [];
+    if (queryEmail) {
+      exactLookups.push(db.collection(CLIENTS_COLLECTION).where("email", "==", queryEmail).limit(6).get());
+    }
+    if (queryUsername) {
+      exactLookups.push(db.collection(CLIENTS_COLLECTION).where("username", "==", queryUsername).limit(6).get());
+      if (queryUsernameEmail && queryUsernameEmail !== queryEmail) {
+        exactLookups.push(db.collection(CLIENTS_COLLECTION).where("email", "==", queryUsernameEmail).limit(6).get());
+      }
+    }
+    if (queryDigits.length >= 8) {
+      exactLookups.push(db.collection(CLIENTS_COLLECTION).where("phone", "==", sanitizePhone(queryText, 40)).limit(6).get());
+      if (queryPhoneEmail && queryPhoneEmail !== queryEmail && queryPhoneEmail !== queryUsernameEmail) {
+        exactLookups.push(db.collection(CLIENTS_COLLECTION).where("email", "==", queryPhoneEmail).limit(6).get());
+      }
+    }
+
+    if (exactLookups.length) {
+      const exactSnaps = await Promise.allSettled(exactLookups);
+      exactSnaps.forEach((entry) => {
+        if (entry.status === "fulfilled") addClientDocs(entry.value);
+      });
+    }
+
+    if (results.size < CLIENT_DELETION_REVIEW_SEARCH_RESULT_LIMIT && normalizedQuery.length >= 2) {
+      let fallbackSnap = null;
+      try {
+        fallbackSnap = await db.collection(CLIENTS_COLLECTION)
+          .orderBy("lastSeenAtMs", "desc")
+          .limit(CLIENT_DELETION_REVIEW_FALLBACK_LIMIT)
+          .get();
+      } catch (_) {
+        fallbackSnap = await db.collection(CLIENTS_COLLECTION)
+          .limit(CLIENT_DELETION_REVIEW_FALLBACK_LIMIT)
+          .get();
+      }
+
+      (fallbackSnap?.docs || []).forEach((docSnap) => {
+        if (results.size >= CLIENT_DELETION_REVIEW_SEARCH_RESULT_LIMIT) return;
+        const raw = docSnap.data() || {};
+        if (isClientProtectedFromDeletionReview(docSnap.id, raw)) return;
+        const haystack = [
+          docSnap.id,
+          raw.uid,
+          raw.name,
+          raw.displayName,
+          raw.username,
+          raw.email,
+          raw.phone,
+        ]
+          .map((value) => normalizeSearchText(value))
+          .filter(Boolean)
+          .join(" ");
+        const phoneHaystack = [phoneDigits(raw.phone || ""), phoneDigits(raw.customerPhone || "")]
+          .filter(Boolean)
+          .join(" ");
+        const match = haystack.includes(normalizedQuery)
+          || (queryDigits.length >= 4 && phoneHaystack.includes(queryDigits));
+        if (match) {
+          addClientSnap(docSnap);
+        }
+      });
+    }
+  }
+
+  const allRows = Array.from(results.values());
+  const reviewRows = allRows.filter((row) =>
+    row.deletionReviewStatus === CLIENT_DELETION_REVIEW_PENDING_STATUS
+    || row.deletionReviewStatus === CLIENT_DELETION_REVIEW_CONTACTED_STATUS
+  );
+  const orderedRows = sortDeletionReviewRows(queryText ? allRows : reviewRows);
+  const slice = orderedRows.slice(offset, offset + pageSize);
+  const nextOffset = offset + slice.length;
+
+  return {
+    ok: true,
+    query: queryText,
+    stats: {
+      totalFlagged: reviewRows.length,
+      contacted: reviewRows.filter((row) => row.deletionReviewStatus === CLIENT_DELETION_REVIEW_CONTACTED_STATUS).length,
+      withBalance: reviewRows.filter((row) => row.hasBalance === true).length,
+      archived: archivedTotal,
+    },
+    totalMatches: orderedRows.length,
+    rows: slice,
+    pageSize,
+    offset,
+    nextOffset,
+    hasMore: nextOffset < orderedRows.length,
+  };
+}
+
+async function getClientDeletionBlockers(clientId = "", clientData = {}) {
+  const balance = getClientDeletionReviewBalanceSnapshot(clientData);
+  const [ordersSnap, withdrawalsSnap, xchangesSnap] = await Promise.all([
+    walletRef(clientId).collection("orders").limit(1).get().catch(() => ({ empty: true })),
+    walletRef(clientId).collection("withdrawals").limit(1).get().catch(() => ({ empty: true })),
+    walletHistoryRef(clientId).limit(1).get().catch(() => ({ empty: true })),
+  ]);
+  return {
+    hasBalance: balance.hasBalance,
+    hasOrders: ordersSnap?.empty === false,
+    hasWithdrawals: withdrawalsSnap?.empty === false,
+    hasHistory: xchangesSnap?.empty === false,
+    isProtected: isClientProtectedFromDeletionReview(clientId, clientData),
+  };
+}
+
 function sortDashboardClientRows(rows = [], scope = "all") {
   const list = Array.isArray(rows) ? [...rows] : [];
   if (scope === "frozen") {
@@ -2621,11 +2971,51 @@ async function buildDashboardClientScopeSnapshot(options = {}) {
   const pageSize = Math.min(50, Math.max(1, safeInt(options.pageSize) || 10));
   const offset = Math.max(0, safeInt(options.offset));
 
+  const needsOrders = scope === "active" || scope === "gain" || scope === "loss" || scope === "all";
+  const needsXchanges = scope === "gain" || scope === "loss" || scope === "all";
+
+  const clientsQuery = db.collection(CLIENTS_COLLECTION).select(
+    "name",
+    "displayName",
+    "email",
+    "phone",
+    "customerPhone",
+    "createdAt",
+    "createdAtMs",
+    "updatedAt",
+    "updatedAtMs",
+    "rejectedDepositStrikeCount",
+    "approvedHtgAvailable",
+    "provisionalHtgAvailable",
+    "doesBalance",
+    "doesApprovedBalance",
+    "doesProvisionalBalance",
+    "accountFrozen",
+    "withdrawalHold"
+  );
+
+  const ordersQuery = needsOrders
+    ? db.collectionGroup("orders").select("createdAt", "createdAtMs")
+    : null;
+
+  const xchangesQuery = needsXchanges
+    ? db.collectionGroup("xchanges").select("type", "amountDoes")
+    : null;
+
   const [clientsSnap, ordersSnap, xchangesSnap] = await Promise.all([
-    db.collection(CLIENTS_COLLECTION).get(),
-    db.collectionGroup("orders").get(),
-    db.collectionGroup("xchanges").get(),
+    clientsQuery.get(),
+    ordersQuery ? ordersQuery.get() : Promise.resolve({ forEach() {} }),
+    xchangesQuery ? xchangesQuery.get() : Promise.resolve({ forEach() {} }),
   ]);
+
+  console.info("[DASHBOARD_CLIENT_SCOPE] data:loaded", JSON.stringify({
+    scope,
+    needsOrders,
+    needsXchanges,
+    clients: safeInt(clientsSnap.size),
+    orders: ordersSnap && typeof ordersSnap.size === "number" ? safeInt(ordersSnap.size) : 0,
+    xchanges: xchangesSnap && typeof xchangesSnap.size === "number" ? safeInt(xchangesSnap.size) : 0,
+  }));
 
   const orderStatsByClient = new Map();
   ordersSnap.forEach((docSnap) => {
@@ -19072,6 +19462,89 @@ exports.capturePresenceAnalytics = onSchedule("every 30 minutes", async () => {
   }
 });
 
+exports.refreshInactiveClientDeletionReview = onSchedule("every 24 hours", async () => {
+  const nowMs = Date.now();
+  const cutoffMs = nowMs - CLIENT_INACTIVITY_REVIEW_MS;
+  let lastDoc = null;
+  let scanned = 0;
+  let flagged = 0;
+  let skipped = 0;
+
+  while (true) {
+    let query = db.collection(CLIENTS_COLLECTION)
+      .where("lastSeenAtMs", "<=", cutoffMs)
+      .orderBy("lastSeenAtMs", "asc")
+      .select(
+        "email",
+        "phone",
+        "username",
+        "createdAt",
+        "createdAtMs",
+        "updatedAt",
+        "updatedAtMs",
+        "lastSeenAt",
+        "lastSeenAtMs",
+        "approvedHtgAvailable",
+        "provisionalHtgAvailable",
+        "doesBalance",
+        "doesApprovedBalance",
+        "doesProvisionalBalance",
+        "accountArchived",
+        "isAgent",
+        "agentStatus",
+        "deletionReviewStatus"
+      )
+      .limit(CLIENT_DELETION_REVIEW_SWEEP_BATCH_SIZE);
+
+    if (lastDoc) {
+      query = query.startAfter(lastDoc);
+    }
+
+    const snap = await query.get();
+    if (snap.empty) break;
+
+    const batch = db.batch();
+    snap.docs.forEach((docSnap) => {
+      scanned += 1;
+      const client = docSnap.data() || {};
+      const reviewStatus = getClientDeletionReviewStatus(client);
+      if (isClientProtectedFromDeletionReview(docSnap.id, client)) {
+        skipped += 1;
+        return;
+      }
+      if (
+        reviewStatus === CLIENT_DELETION_REVIEW_PENDING_STATUS
+        || reviewStatus === CLIENT_DELETION_REVIEW_CONTACTED_STATUS
+        || reviewStatus === CLIENT_DELETION_REVIEW_CLEARED_STATUS
+      ) {
+        skipped += 1;
+        return;
+      }
+      batch.set(docSnap.ref, buildDeletionReviewFlagPatch(client, nowMs), { merge: true });
+      flagged += 1;
+    });
+    await batch.commit();
+
+    lastDoc = snap.docs[snap.docs.length - 1] || null;
+    if (snap.size < CLIENT_DELETION_REVIEW_SWEEP_BATCH_SIZE) break;
+  }
+
+  console.info("[CLIENT_DELETION_REVIEW_SWEEP] done", {
+    scanned,
+    flagged,
+    skipped,
+    cutoffMs,
+  });
+
+  return {
+    ok: true,
+    scanned,
+    flagged,
+    skipped,
+    cutoffMs,
+  };
+});
+
 async function getSettingsSnapshotData() {
   const data = await readRawPublicAppSettings();
   return normalizePublicAppSettings(data);
@@ -20068,6 +20541,9 @@ exports.updateClientProfileSecure = publicOnCall("updateClientProfileSecure", as
     lastAuthAt: admin.firestore.FieldValue.serverTimestamp(),
     updatedAt: admin.firestore.FieldValue.serverTimestamp(),
   };
+  if (getClientDeletionReviewStatus(current) && current.accountArchived !== true) {
+    Object.assign(profile, buildDeletionReviewClearPatch());
+  }
   if (isNewProfile) {
     profile.createdAt = admin.firestore.FieldValue.serverTimestamp();
     profile.createdAtMs = Date.now();
@@ -21126,6 +21602,77 @@ exports.getAgentDepositClientContextSecure = publicOnCall(
     };
   },
   { invoker: "public" }
+);
+
+exports.adminSetClientPasswordSecure = publicOnCall(
+  "adminSetClientPasswordSecure",
+  async (request) => {
+    const { uid: adminUid, email: adminEmail } = assertFinanceAdmin(request);
+    const payload = request.data && typeof request.data === "object" ? request.data : {};
+    const clientId = sanitizeText(payload.clientId || payload.uid || "", 160);
+    const newPassword = String(payload.newPassword || "").trim();
+    const note = sanitizeText(payload.note || "", 240);
+
+    if (!clientId) {
+      throw new HttpsError("invalid-argument", "Client introuvable.");
+    }
+    if (newPassword.length < 6) {
+      throw new HttpsError("invalid-argument", "Le nouveau mot de passe doit contenir au moins 6 caracteres.");
+    }
+
+    const clientRef = walletRef(clientId);
+    const clientSnap = await clientRef.get();
+    if (!clientSnap.exists) {
+      throw new HttpsError("not-found", "Compte client introuvable.");
+    }
+
+    try {
+      await admin.auth().updateUser(clientId, { password: newPassword });
+    } catch (error) {
+      console.error("[ADMIN_PASSWORD_RESET] updateUser failed", {
+        clientId,
+        adminUid,
+        adminEmail,
+        error: String(error?.message || error),
+        code: String(error?.code || ""),
+      });
+      throw new HttpsError("internal", "Impossible de reinitialiser le mot de passe pour ce compte.");
+    }
+
+    const clientData = clientSnap.data() || {};
+    const nowMs = Date.now();
+    const auditData = {
+      type: "client_password_reset",
+      clientId,
+      adminUid,
+      adminEmail: sanitizeEmail(adminEmail || "", 160),
+      note,
+      createdAtMs: nowMs,
+      clientEmail: sanitizeEmail(clientData.email || "", 160),
+      clientPhone: sanitizePhone(clientData.phone || "", 40),
+      clientUsername: sanitizeUsername(clientData.username || "", 24),
+    };
+
+    await Promise.allSettled([
+      clientRef.set({
+        passwordResetByAdminAtMs: nowMs,
+        passwordResetByAdminEmail: sanitizeEmail(adminEmail || "", 160),
+        passwordResetByAdminUid: sanitizeText(adminUid || "", 160),
+        passwordResetMode: "admin_assisted",
+        passwordResetSupportNote: note,
+        updatedAtMs: nowMs,
+      }, { merge: true }),
+      db.collection("adminAuditLogs").add(auditData),
+    ]);
+
+    return {
+      ok: true,
+      clientId,
+      client: buildAgentDepositSearchRecord(clientId, clientData),
+      passwordResetAtMs: nowMs,
+    };
+  },
+  { invoker: "public", memory: "512MiB" }
 );
 
 exports.creditAgentDepositSecure = publicOnCall(
@@ -22352,6 +22899,283 @@ exports.unfreezeClientAccountSecure = publicOnCall("unfreezeClientAccountSecure"
   };
 });
 
+exports.getDashboardDeletionReviewSnapshotSecure = publicOnCall(
+  "getDashboardDeletionReviewSnapshotSecure",
+  async (request) => {
+    assertFinanceAdmin(request);
+    const payload = request.data && typeof request.data === "object" ? request.data : {};
+    return buildDashboardDeletionReviewSnapshot(payload);
+  },
+  { invoker: "public", memory: "512MiB" }
+);
+
+exports.setClientDeletionReviewStatusSecure = publicOnCall(
+  "setClientDeletionReviewStatusSecure",
+  async (request) => {
+    const { uid: adminUid, email: adminEmail } = assertFinanceAdmin(request);
+    const payload = request.data && typeof request.data === "object" ? request.data : {};
+    const clientId = sanitizeText(payload.clientId || payload.uid || "", 160);
+    const status = sanitizeText(payload.status || "", 40).toLowerCase();
+
+    if (!clientId) {
+      throw new HttpsError("invalid-argument", "Client introuvable.");
+    }
+    if (![
+      CLIENT_DELETION_REVIEW_PENDING_STATUS,
+      CLIENT_DELETION_REVIEW_CONTACTED_STATUS,
+      CLIENT_DELETION_REVIEW_CLEARED_STATUS,
+    ].includes(status)) {
+      throw new HttpsError("invalid-argument", "Statut de suppression invalide.");
+    }
+
+    const clientRef = walletRef(clientId);
+    const clientSnap = await clientRef.get();
+    if (!clientSnap.exists) {
+      throw new HttpsError("not-found", "Compte client introuvable.");
+    }
+
+    const clientData = clientSnap.data() || {};
+    if (isClientProtectedFromDeletionReview(clientId, clientData)) {
+      throw new HttpsError("failed-precondition", "Ce compte est protege et ne peut pas entrer dans ce flux.");
+    }
+
+    const nowMs = Date.now();
+    const patch = {
+      updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+    };
+
+    if (status === CLIENT_DELETION_REVIEW_PENDING_STATUS) {
+      Object.assign(patch, buildDeletionReviewFlagPatch(clientData, nowMs, {
+        source: "dashboard_manual_review",
+        reason: "manual_review",
+      }));
+      patch.deletionReviewContactedAt = admin.firestore.FieldValue.delete();
+      patch.deletionReviewContactedAtMs = admin.firestore.FieldValue.delete();
+      patch.deletionReviewContactedByUid = admin.firestore.FieldValue.delete();
+      patch.deletionReviewContactedByEmail = admin.firestore.FieldValue.delete();
+      patch.deletionReviewClearedAt = admin.firestore.FieldValue.delete();
+      patch.deletionReviewClearedAtMs = admin.firestore.FieldValue.delete();
+      patch.deletionReviewClearedByUid = admin.firestore.FieldValue.delete();
+      patch.deletionReviewClearedByEmail = admin.firestore.FieldValue.delete();
+    } else if (status === CLIENT_DELETION_REVIEW_CONTACTED_STATUS) {
+      const balance = getClientDeletionReviewBalanceSnapshot(clientData);
+      patch.deletionReviewStatus = CLIENT_DELETION_REVIEW_CONTACTED_STATUS;
+      patch.deletionReviewHasBalance = balance.hasBalance;
+      patch.deletionReviewHtgBalance = balance.htgBalance;
+      patch.deletionReviewDoesBalance = balance.doesBalance;
+      patch.deletionReviewLastActivityAtMs = getClientLastActivityAtMs(clientData);
+      patch.deletionReviewContactedAt = admin.firestore.FieldValue.serverTimestamp();
+      patch.deletionReviewContactedAtMs = nowMs;
+      patch.deletionReviewContactedByUid = adminUid;
+      patch.deletionReviewContactedByEmail = sanitizeEmail(adminEmail || "", 160);
+      patch.deletionReviewClearedAt = admin.firestore.FieldValue.delete();
+      patch.deletionReviewClearedAtMs = admin.firestore.FieldValue.delete();
+      patch.deletionReviewClearedByUid = admin.firestore.FieldValue.delete();
+      patch.deletionReviewClearedByEmail = admin.firestore.FieldValue.delete();
+    } else {
+      Object.assign(patch, buildDeletionReviewClearPatch());
+      patch.deletionReviewStatus = CLIENT_DELETION_REVIEW_CLEARED_STATUS;
+      patch.deletionReviewClearedAt = admin.firestore.FieldValue.serverTimestamp();
+      patch.deletionReviewClearedAtMs = nowMs;
+      patch.deletionReviewClearedByUid = adminUid;
+      patch.deletionReviewClearedByEmail = sanitizeEmail(adminEmail || "", 160);
+    }
+
+    await Promise.allSettled([
+      clientRef.set(patch, { merge: true }),
+      db.collection("adminAuditLogs").add({
+        type: "client_deletion_review_status",
+        clientId,
+        status,
+        adminUid,
+        adminEmail: sanitizeEmail(adminEmail || "", 160),
+        createdAtMs: nowMs,
+      }),
+    ]);
+
+    return {
+      ok: true,
+      clientId,
+      status,
+    };
+  },
+  { invoker: "public", memory: "512MiB" }
+);
+
+exports.archiveClientAccountSecure = publicOnCall(
+  "archiveClientAccountSecure",
+  async (request) => {
+    const { uid: adminUid, email: adminEmail } = assertFinanceAdmin(request);
+    const payload = request.data && typeof request.data === "object" ? request.data : {};
+    const clientId = sanitizeText(payload.clientId || payload.uid || "", 160);
+    const note = sanitizeText(payload.note || "", 240);
+
+    if (!clientId) {
+      throw new HttpsError("invalid-argument", "Client introuvable.");
+    }
+
+    const clientRef = walletRef(clientId);
+    const clientSnap = await clientRef.get();
+    if (!clientSnap.exists) {
+      throw new HttpsError("not-found", "Compte client introuvable.");
+    }
+
+    const clientData = clientSnap.data() || {};
+    if (isClientProtectedFromDeletionReview(clientId, clientData) && clientData.accountArchived !== true) {
+      throw new HttpsError("failed-precondition", "Ce compte est protege et ne peut pas etre archive ici.");
+    }
+
+    const nowMs = Date.now();
+    const balance = getClientDeletionReviewBalanceSnapshot(clientData);
+    const archivePayload = {
+      clientId,
+      mode: "archived_disabled",
+      note,
+      archivedAtMs: nowMs,
+      archivedByUid: adminUid,
+      archivedByEmail: sanitizeEmail(adminEmail || "", 160),
+      hasBalance: balance.hasBalance,
+      htgBalance: balance.htgBalance,
+      doesBalance: balance.doesBalance,
+      client: {
+        ...clientData,
+        email: sanitizeEmail(clientData.email || "", 160),
+        phone: sanitizePhone(clientData.phone || "", 40),
+        username: sanitizeUsername(clientData.username || "", 24),
+      },
+    };
+
+    try {
+      await admin.auth().updateUser(clientId, { disabled: true });
+    } catch (error) {
+      const code = String(error?.code || "");
+      if (!code.includes("user-not-found")) {
+        throw new HttpsError("internal", "Impossible de desactiver ce compte.");
+      }
+    }
+
+    await Promise.allSettled([
+      db.collection(DELETED_CLIENTS_ARCHIVE_COLLECTION).doc(clientId).set(archivePayload, { merge: true }),
+      clientRef.set({
+        accountArchived: true,
+        accountArchivedAt: admin.firestore.FieldValue.serverTimestamp(),
+        accountArchivedAtMs: nowMs,
+        accountArchivedByUid: adminUid,
+        accountArchivedByEmail: sanitizeEmail(adminEmail || "", 160),
+        accountArchivedNote: note,
+        accountFrozen: true,
+        withdrawalHold: true,
+        deletionReviewStatus: CLIENT_DELETION_REVIEW_ARCHIVED_STATUS,
+        deletionReviewArchivedAt: admin.firestore.FieldValue.serverTimestamp(),
+        deletionReviewArchivedAtMs: nowMs,
+        deletionReviewArchivedByUid: adminUid,
+        deletionReviewArchivedByEmail: sanitizeEmail(adminEmail || "", 160),
+        deletionReviewHasBalance: balance.hasBalance,
+        deletionReviewHtgBalance: balance.htgBalance,
+        deletionReviewDoesBalance: balance.doesBalance,
+        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      }, { merge: true }),
+      db.collection("adminAuditLogs").add({
+        type: "client_account_archived",
+        clientId,
+        adminUid,
+        adminEmail: sanitizeEmail(adminEmail || "", 160),
+        note,
+        createdAtMs: nowMs,
+        hasBalance: balance.hasBalance,
+        htgBalance: balance.htgBalance,
+        doesBalance: balance.doesBalance,
+      }),
+    ]);
+
+    return {
+      ok: true,
+      clientId,
+      archived: true,
+      hasBalance: balance.hasBalance,
+    };
+  },
+  { invoker: "public", memory: "512MiB" }
+);
+
+exports.deleteClientAccountSecure = publicOnCall(
+  "deleteClientAccountSecure",
+  async (request) => {
+    const { uid: adminUid, email: adminEmail } = assertFinanceAdmin(request);
+    const payload = request.data && typeof request.data === "object" ? request.data : {};
+    const clientId = sanitizeText(payload.clientId || payload.uid || "", 160);
+    const note = sanitizeText(payload.note || "", 240);
+
+    if (!clientId) {
+      throw new HttpsError("invalid-argument", "Client introuvable.");
+    }
+
+    const clientRef = walletRef(clientId);
+    const clientSnap = await clientRef.get();
+    if (!clientSnap.exists) {
+      throw new HttpsError("not-found", "Compte client introuvable.");
+    }
+
+    const clientData = clientSnap.data() || {};
+    const blockers = await getClientDeletionBlockers(clientId, clientData);
+    if (blockers.isProtected) {
+      throw new HttpsError("failed-precondition", "Ce compte est protege et ne peut pas etre supprime.");
+    }
+    if (blockers.hasBalance || blockers.hasOrders || blockers.hasWithdrawals || blockers.hasHistory) {
+      throw new HttpsError(
+        "failed-precondition",
+        "Ce compte doit etre archive et non supprime, car il possede encore un solde ou un historique financier.",
+        { code: "archive-required", blockers }
+      );
+    }
+
+    const nowMs = Date.now();
+    await db.collection(DELETED_CLIENTS_ARCHIVE_COLLECTION).doc(clientId).set({
+      clientId,
+      mode: "deleted_hard",
+      note,
+      deletedAtMs: nowMs,
+      deletedByUid: adminUid,
+      deletedByEmail: sanitizeEmail(adminEmail || "", 160),
+      client: {
+        ...clientData,
+        email: sanitizeEmail(clientData.email || "", 160),
+        phone: sanitizePhone(clientData.phone || "", 40),
+        username: sanitizeUsername(clientData.username || "", 24),
+      },
+      blockers,
+    }, { merge: true });
+
+    try {
+      await admin.auth().deleteUser(clientId);
+    } catch (error) {
+      const code = String(error?.code || "");
+      if (!code.includes("user-not-found")) {
+        throw new HttpsError("internal", "Impossible de supprimer ce compte Firebase Auth.");
+      }
+    }
+
+    await Promise.allSettled([
+      clientRef.delete(),
+      db.collection("adminAuditLogs").add({
+        type: "client_account_deleted",
+        clientId,
+        adminUid,
+        adminEmail: sanitizeEmail(adminEmail || "", 160),
+        note,
+        createdAtMs: nowMs,
+      }),
+    ]);
+
+    return {
+      ok: true,
+      clientId,
+      deleted: true,
+    };
+  },
+  { invoker: "public", memory: "512MiB" }
+);
+
 exports.markChatSeenSecure = publicOnCall("markChatSeenSecure", async (request) => {
   const { uid, email } = assertAuth(request);
   await walletRef(uid).set({
@@ -22830,9 +23654,31 @@ exports.adminCheck = publicOnCall("adminCheck", async (request) => {
 });
 
 exports.getDashboardClientScopeSnapshot = publicOnCall("getDashboardClientScopeSnapshot", async (request) => {
+  console.info("[DASHBOARD_CLIENT_SCOPE] callable:start", JSON.stringify({
+    uid: String(request?.auth?.uid || ""),
+    email: String(request?.auth?.token?.email || ""),
+    hasAuth: !!request?.auth?.uid,
+    hasAppCheck: !!request?.app,
+    origin: String(request?.rawRequest?.headers?.origin || ""),
+    scope: String(request?.data?.scope || ""),
+    query: String(request?.data?.query || ""),
+    offset: safeInt(request?.data?.offset),
+    pageSize: safeInt(request?.data?.pageSize),
+  }));
   assertFinanceAdmin(request);
   const payload = request.data && typeof request.data === "object" ? request.data : {};
-  return buildDashboardClientScopeSnapshot(payload);
+  const snapshot = await buildDashboardClientScopeSnapshot(payload);
+  console.info("[DASHBOARD_CLIENT_SCOPE] callable:done", JSON.stringify({
+    scope: String(payload.scope || ""),
+    total: safeInt(snapshot?.stats?.total),
+    totalMatches: safeInt(snapshot?.totalMatches),
+    rows: Array.isArray(snapshot?.rows) ? snapshot.rows.length : 0,
+    nextOffset: safeInt(snapshot?.nextOffset),
+    hasMore: snapshot?.hasMore === true,
+  }));
+  return snapshot;
+}, {
+  memory: "1GiB",
 });
 
 exports.setBotDifficulty = publicOnCall("setBotDifficulty", async (request) => {

@@ -1,4 +1,4 @@
-import { auth, logoutCurrentUser, watchAuthState } from "./auth.js";
+import { auth, formatAuthError, logoutCurrentUser, watchAuthState } from "./auth.js";
 import { mountXchangeModal, getXchangeState } from "./xchange.js";
 import { mountRetraitModal, getWithdrawalRuleStatus } from "./retrait.js";
 import {
@@ -8,7 +8,14 @@ import {
   renderPendingOperationsList,
   waitForBalanceHydration,
 } from "./solde.js";
-import { db, doc, getDoc } from "./firebase-init.js";
+import {
+  EmailAuthProvider,
+  db,
+  doc,
+  getDoc,
+  reauthenticateWithCredential,
+  updatePassword,
+} from "./firebase-init.js";
 import { getDepositFundingStatusSecure } from "./secure-functions.js";
 import { SUPPORT_WHATSAPP_PHONE, buildSupportWhatsAppUrl } from "./support-contact.js";
 const BALANCE_DEBUG = false;
@@ -246,6 +253,231 @@ function ensureProfilePendingOperationsModal() {
   };
   overlay.__closePendingOps = close;
 
+  return overlay;
+}
+
+function formatProfilePasswordError(error) {
+  const code = String(error?.code || "");
+  if (code.includes("wrong-password") || code.includes("invalid-credential")) {
+    return "Mot de passe actuel incorrect.";
+  }
+  if (code.includes("too-many-requests")) {
+    return "Trop de tentatives. Réessaie un peu plus tard.";
+  }
+  if (code.includes("requires-recent-login")) {
+    return "Reconnecte-toi puis reviens changer ton mot de passe.";
+  }
+  return formatAuthError(error, "Impossible de changer le mot de passe.");
+}
+
+function bindPasswordVisibilityToggle(button, input) {
+  if (!button || !input || button.dataset.bound === "1") return;
+  button.dataset.bound = "1";
+  const icon = button.querySelector("i");
+  button.addEventListener("click", () => {
+    const hidden = input.type === "password";
+    input.type = hidden ? "text" : "password";
+    button.setAttribute("aria-label", hidden ? "Masquer le mot de passe" : "Afficher le mot de passe");
+    if (icon) {
+      icon.classList.toggle("fa-eye", !hidden);
+      icon.classList.toggle("fa-eye-slash", hidden);
+    }
+  });
+}
+
+function ensureProfilePasswordModal() {
+  let overlay = document.getElementById("profilePasswordOverlay");
+  if (overlay) return overlay;
+
+  overlay = document.createElement("div");
+  overlay.id = "profilePasswordOverlay";
+  overlay.className = "fixed inset-0 z-[3700] hidden items-center justify-center bg-black/55 p-4 backdrop-blur-sm";
+  overlay.innerHTML = `
+    <div class="w-full max-w-md rounded-3xl border border-white/20 bg-[#3F4766]/82 p-5 text-white shadow-[14px_14px_34px_rgba(16,23,40,0.5),-10px_-10px_24px_rgba(112,126,165,0.2)] backdrop-blur-xl sm:p-6">
+      <div class="flex items-center justify-between gap-3">
+        <div>
+          <p class="text-xs font-semibold uppercase tracking-[0.16em] text-white/70">Securite compte</p>
+          <h3 class="mt-1 text-xl font-bold text-white">Changer mot de passe</h3>
+        </div>
+        <button id="profilePasswordClose" type="button" class="grid h-10 w-10 place-items-center rounded-2xl border border-white/20 bg-white/10 text-white">
+          <i class="fa-solid fa-xmark"></i>
+        </button>
+      </div>
+
+      <p class="mt-3 text-sm leading-6 text-white/84">
+        Entre ton mot de passe actuel puis choisis un nouveau mot de passe pour mieux proteger ton compte.
+      </p>
+
+      <form id="profilePasswordForm" class="mt-4 space-y-3">
+        <label class="block">
+          <span class="mb-2 block text-xs font-semibold uppercase tracking-[0.14em] text-white/65">Mot de passe actuel</span>
+          <div class="relative">
+            <input id="profileCurrentPassword" type="password" autocomplete="current-password" class="w-full rounded-2xl border border-white/16 bg-white/10 px-4 py-3 pr-12 text-sm text-white outline-none transition focus:border-[#f48f45]" />
+            <button id="profileCurrentPasswordToggle" type="button" class="absolute inset-y-0 right-3 my-auto grid h-9 w-9 place-items-center rounded-xl border border-white/15 bg-white/10 text-white/90">
+              <i class="fa-regular fa-eye"></i>
+            </button>
+          </div>
+        </label>
+
+        <label class="block">
+          <span class="mb-2 block text-xs font-semibold uppercase tracking-[0.14em] text-white/65">Nouveau mot de passe</span>
+          <div class="relative">
+            <input id="profileNewPassword" type="password" autocomplete="new-password" class="w-full rounded-2xl border border-white/16 bg-white/10 px-4 py-3 pr-12 text-sm text-white outline-none transition focus:border-[#f48f45]" />
+            <button id="profileNewPasswordToggle" type="button" class="absolute inset-y-0 right-3 my-auto grid h-9 w-9 place-items-center rounded-xl border border-white/15 bg-white/10 text-white/90">
+              <i class="fa-regular fa-eye"></i>
+            </button>
+          </div>
+        </label>
+
+        <label class="block">
+          <span class="mb-2 block text-xs font-semibold uppercase tracking-[0.14em] text-white/65">Confirmer le nouveau</span>
+          <div class="relative">
+            <input id="profileConfirmPassword" type="password" autocomplete="new-password" class="w-full rounded-2xl border border-white/16 bg-white/10 px-4 py-3 pr-12 text-sm text-white outline-none transition focus:border-[#f48f45]" />
+            <button id="profileConfirmPasswordToggle" type="button" class="absolute inset-y-0 right-3 my-auto grid h-9 w-9 place-items-center rounded-xl border border-white/15 bg-white/10 text-white/90">
+              <i class="fa-regular fa-eye"></i>
+            </button>
+          </div>
+        </label>
+
+        <div id="profilePasswordStatus" class="min-h-5 text-sm text-white/75"></div>
+
+        <div class="grid gap-2 sm:grid-cols-2">
+          <button id="profilePasswordCancel" type="button" class="h-11 rounded-2xl border border-white/20 bg-white/10 text-sm font-semibold text-white">
+            Annuler
+          </button>
+          <button id="profilePasswordSubmit" type="submit" class="h-11 rounded-2xl border border-[#ffb26e] bg-[#F57C00] text-sm font-semibold text-white shadow-[8px_8px_18px_rgba(163,82,27,0.45),-6px_-6px_14px_rgba(255,175,102,0.22)]">
+            Mettre a jour
+          </button>
+        </div>
+      </form>
+    </div>
+  `;
+
+  document.body.appendChild(overlay);
+
+  const form = overlay.querySelector("#profilePasswordForm");
+  const closeBtn = overlay.querySelector("#profilePasswordClose");
+  const cancelBtn = overlay.querySelector("#profilePasswordCancel");
+  const submitBtn = overlay.querySelector("#profilePasswordSubmit");
+  const statusEl = overlay.querySelector("#profilePasswordStatus");
+  const currentInput = overlay.querySelector("#profileCurrentPassword");
+  const nextInput = overlay.querySelector("#profileNewPassword");
+  const confirmInput = overlay.querySelector("#profileConfirmPassword");
+
+  const setStatus = (text = "", tone = "neutral") => {
+    if (!statusEl) return;
+    statusEl.textContent = String(text || "");
+    statusEl.style.color = tone === "error"
+      ? "#ffb0b0"
+      : tone === "success"
+        ? "#88f3ca"
+        : "";
+  };
+
+  const close = () => {
+    overlay.classList.add("hidden");
+    overlay.classList.remove("flex");
+    form?.reset();
+    setStatus("");
+    [currentInput, nextInput, confirmInput].forEach((input) => {
+      if (input) input.type = "password";
+    });
+    [
+      overlay.querySelector("#profileCurrentPasswordToggle"),
+      overlay.querySelector("#profileNewPasswordToggle"),
+      overlay.querySelector("#profileConfirmPasswordToggle"),
+    ].forEach((button) => {
+      const icon = button?.querySelector("i");
+      if (button) {
+        button.setAttribute("aria-label", "Afficher le mot de passe");
+      }
+      if (icon) {
+        icon.classList.add("fa-eye");
+        icon.classList.remove("fa-eye-slash");
+      }
+    });
+  };
+
+  const open = () => {
+    overlay.classList.remove("hidden");
+    overlay.classList.add("flex");
+    setStatus("");
+    window.setTimeout(() => currentInput?.focus(), 0);
+  };
+
+  bindPasswordVisibilityToggle(overlay.querySelector("#profileCurrentPasswordToggle"), currentInput);
+  bindPasswordVisibilityToggle(overlay.querySelector("#profileNewPasswordToggle"), nextInput);
+  bindPasswordVisibilityToggle(overlay.querySelector("#profileConfirmPasswordToggle"), confirmInput);
+
+  const setBusy = (busy) => {
+    const disabled = busy === true;
+    [closeBtn, cancelBtn, submitBtn, currentInput, nextInput, confirmInput].forEach((el) => {
+      if (el) el.disabled = disabled;
+    });
+    if (submitBtn) {
+      submitBtn.textContent = disabled ? "Mise a jour..." : "Mettre a jour";
+    }
+  };
+
+  closeBtn?.addEventListener("click", close);
+  cancelBtn?.addEventListener("click", close);
+  overlay.addEventListener("click", (event) => {
+    if (event.target === overlay) {
+      close();
+    }
+  });
+
+  form?.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const user = auth.currentUser;
+    const email = String(user?.email || "").trim();
+    const currentPassword = String(currentInput?.value || "");
+    const nextPassword = String(nextInput?.value || "");
+    const confirmPassword = String(confirmInput?.value || "");
+
+    if (!user?.uid || !email) {
+      setStatus("Reconnecte-toi puis reessaie.", "error");
+      return;
+    }
+    if (!currentPassword) {
+      setStatus("Entre ton mot de passe actuel.", "error");
+      currentInput?.focus();
+      return;
+    }
+    if (nextPassword.length < 6) {
+      setStatus("Le nouveau mot de passe doit contenir au moins 6 caracteres.", "error");
+      nextInput?.focus();
+      return;
+    }
+    if (nextPassword !== confirmPassword) {
+      setStatus("La confirmation du nouveau mot de passe ne correspond pas.", "error");
+      confirmInput?.focus();
+      return;
+    }
+    if (currentPassword === nextPassword) {
+      setStatus("Choisis un nouveau mot de passe different de l'actuel.", "error");
+      nextInput?.focus();
+      return;
+    }
+
+    setBusy(true);
+    setStatus("Verification du compte en cours...");
+
+    try {
+      const credential = EmailAuthProvider.credential(email, currentPassword);
+      await reauthenticateWithCredential(user, credential);
+      await updatePassword(user, nextPassword);
+      setStatus("Mot de passe mis a jour avec succes.", "success");
+      window.setTimeout(close, 900);
+    } catch (error) {
+      setStatus(formatProfilePasswordError(error), "error");
+    } finally {
+      setBusy(false);
+    }
+  });
+
+  overlay.__openPasswordModal = open;
+  overlay.__closePasswordModal = close;
   return overlay;
 }
 
@@ -552,6 +784,13 @@ function ensureProfileModal() {
                 Faire un retrait
               </span>
               <i class="fa-solid fa-money-bill-transfer shrink-0 text-xs text-white/80"></i>
+            </button>
+            <button id="profilePasswordBtn" type="button" class="mt-2 inline-flex w-full min-w-0 items-center justify-between gap-2 rounded-xl border border-white/20 bg-white/10 px-3 py-2 text-sm font-semibold text-white shadow-[8px_8px_18px_rgba(19,25,40,0.34),-6px_-6px_14px_rgba(111,126,164,0.2)]">
+              <span class="inline-flex min-w-0 flex-1 items-center gap-2">
+                <i class="fa-solid fa-key text-[11px]"></i>
+                Changer mot de passe
+              </span>
+              <i class="fa-solid fa-shield-halved shrink-0 text-xs text-white/80"></i>
             </button>
           </div>
         </div>
@@ -1475,6 +1714,7 @@ export function mountProfileModal(options = {}) {
 
       const depositBtn = document.getElementById("profileDepositBtn");
       const withdrawBtn = document.getElementById("profileWithdrawBtn");
+      const passwordBtn = document.getElementById("profilePasswordBtn");
       if (depositBtn && !depositBtn.dataset.bound) {
         depositBtn.dataset.bound = "1";
         depositBtn.addEventListener("click", () => {
@@ -1492,6 +1732,12 @@ export function mountProfileModal(options = {}) {
           if (typeof window.openRetraitDirectly === "function") {
             window.openRetraitDirectly();
           }
+        });
+      }
+      if (passwordBtn && !passwordBtn.dataset.bound) {
+        passwordBtn.dataset.bound = "1";
+        passwordBtn.addEventListener("click", () => {
+          ensureProfilePasswordModal().__openPasswordModal?.();
         });
       }
     });
@@ -1680,11 +1926,19 @@ export function mountProfilePage(options = {}) {
 
   const pendingOpsOverlay = ensureProfilePendingOperationsModal();
   const pendingOpsBtn = document.getElementById("profilePendingOpsBtn");
+  const profilePasswordBtn = document.getElementById("profilePasswordBtn");
   if (pendingOpsBtn && pendingOpsBtn.dataset.bound !== "1") {
     pendingOpsBtn.dataset.bound = "1";
     pendingOpsBtn.addEventListener("click", async () => {
       await waitForBalanceHydration(auth.currentUser?.uid, 1800);
       pendingOpsOverlay?.__openPendingOps?.();
+    });
+  }
+
+  if (profilePasswordBtn && profilePasswordBtn.dataset.bound !== "1") {
+    profilePasswordBtn.dataset.bound = "1";
+    profilePasswordBtn.addEventListener("click", () => {
+      ensureProfilePasswordModal().__openPasswordModal?.();
     });
   }
 

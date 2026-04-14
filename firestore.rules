@@ -9,6 +9,10 @@ service cloud.firestore {
       return signedIn() && request.auth.uid == uid;
     }
 
+    function bootstrapFinanceEmail() {
+      return get(/databases/$(database)/documents/settings/dpayment_admin_bootstrap).data.email;
+    }
+
     function isFinanceAdmin() {
       return signedIn()
         && (
@@ -16,7 +20,10 @@ service cloud.firestore {
           || request.auth.token.financeAdmin == true
           || (
             request.auth.token.email != null
-            && request.auth.token.email == "leovitch2004@gmail.com"
+            && (
+              request.auth.token.email == "leovitch2004@gmail.com"
+              || request.auth.token.email == bootstrapFinanceEmail()
+            )
           )
         );
     }
@@ -117,6 +124,11 @@ service cloud.firestore {
     match /clients/{uid}/withdrawals/{withdrawalId} {
       allow read: if isOwner(uid) || isFinanceAdmin();
       allow write: if isFinanceAdmin();
+    }
+
+    match /{path=**}/withdrawals/{withdrawalId} {
+      allow read: if isFinanceAdmin();
+      allow write: if false;
     }
 
     match /clients/{uid}/xchanges/{entryId} {

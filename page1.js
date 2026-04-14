@@ -17,7 +17,6 @@ import {
   signupWithEmail,
   signupWithPhone,
   signupWithUsername,
-  sendPasswordReset,
   sendSignupVerificationEmail,
   refreshCurrentUser,
   syncCurrentUserDisplayName,
@@ -36,6 +35,7 @@ import {
   normalizeCode,
 } from "./referral.js";
 import { updateClientProfileSecure } from "./secure-functions.js";
+import { buildSupportWhatsAppUrl } from "./support-contact.js";
 
 let authMode = "signup";
 let signupCreationMode = "chooser";
@@ -91,6 +91,7 @@ function updateAuthModalBodyLock() {
   const modalIds = [
     "oneClickAuthOverlay",
     "emailVerificationOverlay",
+    "forgotPasswordAssistOverlay",
   ];
   const shouldLock = modalIds.some((id) => {
     const node = document.getElementById(id);
@@ -100,6 +101,109 @@ function updateAuthModalBodyLock() {
   document.body.classList.toggle("overflow-hidden", shouldLock);
   document.documentElement.style.overflow = shouldLock ? "hidden" : "";
   document.body.style.overflow = shouldLock ? "hidden" : "";
+}
+
+function buildForgotPasswordSupportMessage(identifier = "") {
+  const cleanIdentifier = String(identifier || "").trim();
+  const base = "Bonjour assistance, j'ai oublie le mot de passe de mon compte Dominoes Lakay et j'ai besoin d'aide pour le recuperer.";
+  if (!cleanIdentifier) return base;
+  return `${base} Mon identifiant de connexion est: ${cleanIdentifier}`;
+}
+
+function ensureForgotPasswordAssistModal() {
+  let overlay = document.getElementById("forgotPasswordAssistOverlay");
+  if (overlay) return overlay;
+
+  overlay = document.createElement("div");
+  overlay.id = "forgotPasswordAssistOverlay";
+  overlay.className = "fixed inset-0 z-[3600] hidden items-center justify-center bg-[#050814]/72 px-4 py-6 backdrop-blur-md";
+  overlay.innerHTML = `
+    <div class="w-full max-w-lg rounded-[32px] border border-white/12 bg-[linear-gradient(180deg,rgba(72,81,116,0.96),rgba(48,56,84,0.98))] p-5 text-white shadow-[18px_18px_42px_rgba(16,23,40,0.44),-10px_-10px_22px_rgba(114,128,169,0.14)] sm:p-6">
+      <div class="flex items-start justify-between gap-4">
+        <div>
+          <p class="text-[11px] font-semibold uppercase tracking-[0.2em] text-white/65">Recuperation compte</p>
+          <h2 class="mt-2 text-2xl font-bold leading-tight text-white">Mot de passe oublie ?</h2>
+        </div>
+        <button
+          id="forgotPasswordAssistCloseBtn"
+          type="button"
+          class="grid h-10 w-10 shrink-0 place-items-center rounded-2xl border border-white/15 bg-white/10 text-white/80 transition hover:bg-white/15"
+          aria-label="Fermer"
+        >
+          <i class="fa-solid fa-xmark"></i>
+        </button>
+      </div>
+
+      <div class="mt-4 rounded-[26px] border border-white/10 bg-white/[0.06] p-4 text-sm leading-7 text-white/88">
+        Si ou pedi modpas ou, kontakte yon ajan asistans. Ajan an ap poze w kestyon pou verifye idantite w, epi l ap ede w reprann aksè ak kont ou.
+      </div>
+
+      <div class="mt-4 rounded-[26px] border border-[#ffcf9e]/18 bg-[#f48f45]/10 p-4">
+        <p class="text-xs font-semibold uppercase tracking-[0.16em] text-[#ffd8b5]">Sa k ap pase apre</p>
+        <ol class="mt-3 space-y-2 text-sm leading-6 text-white/82">
+          <li>1. Ekri ajan an sou WhatsApp.</li>
+          <li>2. Reponn kestyon verifikasyon yo.</li>
+          <li>3. Ajan an ap ede w mete yon nouvo modpas tanporè.</li>
+          <li>4. Apre sa, ou ka antre nan pwofil ou pou chanje l ankò.</li>
+        </ol>
+      </div>
+
+      <p id="forgotPasswordAssistIdentifier" class="mt-4 text-xs leading-5 text-white/65"></p>
+
+      <div class="mt-5 grid gap-3 sm:grid-cols-2">
+        <button
+          id="forgotPasswordAssistWhatsappBtn"
+          type="button"
+          class="rounded-2xl bg-[#25D366] px-4 py-3 text-sm font-semibold text-[#042814] shadow-[10px_10px_20px_rgba(7,64,33,0.28),-6px_-6px_16px_rgba(96,232,152,0.12)] transition hover:-translate-y-0.5"
+        >
+          Contacter un agent
+        </button>
+        <button
+          id="forgotPasswordAssistCancelBtn"
+          type="button"
+          class="rounded-2xl border border-white/14 bg-white/8 px-4 py-3 text-sm font-semibold text-white/90 transition hover:bg-white/12"
+        >
+          Fermer
+        </button>
+      </div>
+    </div>
+  `;
+
+  const close = () => {
+    overlay.classList.add("hidden");
+    overlay.classList.remove("flex");
+    updateAuthModalBodyLock();
+  };
+
+  overlay.querySelector("#forgotPasswordAssistCloseBtn")?.addEventListener("click", close);
+  overlay.querySelector("#forgotPasswordAssistCancelBtn")?.addEventListener("click", close);
+  overlay.addEventListener("click", (event) => {
+    if (event.target === overlay) {
+      close();
+    }
+  });
+  overlay.querySelector("#forgotPasswordAssistWhatsappBtn")?.addEventListener("click", () => {
+    const identifier = String(overlay.dataset.identifier || "").trim();
+    window.open(buildSupportWhatsAppUrl(buildForgotPasswordSupportMessage(identifier)), "_blank", "noopener,noreferrer");
+  });
+
+  document.body.appendChild(overlay);
+  return overlay;
+}
+
+function openForgotPasswordAssistModal(identifier = "") {
+  const overlay = ensureForgotPasswordAssistModal();
+  const cleanIdentifier = String(identifier || "").trim();
+  const identifierEl = overlay.querySelector("#forgotPasswordAssistIdentifier");
+  overlay.dataset.identifier = cleanIdentifier;
+  if (identifierEl) {
+    identifierEl.textContent = cleanIdentifier
+      ? `Identifiant rempli actuellement: ${cleanIdentifier}`
+      : "Si ou sonje nimewo, username oswa imel la, voye l bay ajan an pou ede l jwenn kont ou pi vit.";
+  }
+  overlay.classList.remove("hidden");
+  overlay.classList.add("flex");
+  updateAuthModalBodyLock();
 }
 
 async function ensurePage2Module() {
@@ -1700,29 +1804,12 @@ function bindPage1Events() {
 
   if (forgotPasswordBtn && forgotPasswordBtn.dataset.bound !== "1") {
     forgotPasswordBtn.dataset.bound = "1";
-    forgotPasswordBtn.addEventListener("click", async () => {
-      const email = (identifierInput?.value || "").trim();
+    forgotPasswordBtn.addEventListener("click", () => {
+      const identifier = (identifierInput?.value || "").trim();
       const errorEl = document.getElementById("authError");
       if (errorEl) errorEl.textContent = "";
-
-      if (!isValidEmail(email)) {
-        setForgotPasswordStatus("Entre l'email du compte pour réinitialiser le mot de passe.", "error");
-        return;
-      }
-
-      try {
-        await withButtonLoading(
-          forgotPasswordBtn,
-          async () => {
-            await sendPasswordReset(email);
-            setForgotPasswordStatus("Email de réinitialisation envoyé. Vérifie aussi le dossier Spam/Indésirable.", "success");
-          },
-          { loadingLabel: "Envoi..." }
-        );
-      } catch (err) {
-        console.error("Password reset error:", err);
-        setForgotPasswordStatus(formatAuthError(err, "Impossible d'envoyer l'email de réinitialisation."), "error");
-      }
+      setForgotPasswordStatus("Une fenetre d'assistance est ouverte pour t'aider a recuperer le compte.", "success");
+      openForgotPasswordAssistModal(identifier);
     });
   }
 
