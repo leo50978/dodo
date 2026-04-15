@@ -99,6 +99,10 @@ const DEFAULT_PUBLIC_SETTINGS = Object.freeze({
 });
 const WELCOME_BONUS_ORDER_TYPE = "welcome_bonus";
 const WELCOME_BONUS_HTG_AMOUNT = 25;
+
+function isWelcomeBonusProgramActive(nowMs = Date.now()) {
+  return safeSignedInt(nowMs) > 0 && safeSignedInt(nowMs) <= WELCOME_BONUS_END_AT_MS;
+}
 const DPAYMENT_ADMIN_BOOTSTRAP_DOC = "dpayment_admin_bootstrap";
 const APP_PUBLIC_SETTINGS_DOC = "public_app_settings";
 const DASHBOARD_DEFAULT_NOTIFICATION_URL = "./Dpayment.html";
@@ -20980,6 +20984,17 @@ async function grantWelcomeBonusForClient(options = {}) {
     const existingOrders = ordersSnap.docs.map((item) => ({ id: item.id, ...(item.data() || {}) }));
     const existingWithdrawals = withdrawalsSnap.docs.map((item) => item.data() || {});
     const existingXchanges = xchangesSnap.docs.map((item) => item.data() || {});
+    const currentFundingSnapshot = buildWalletFundingSnapshot({
+      orders: existingOrders,
+      withdrawals: existingWithdrawals,
+      walletData,
+      exchangeHistory: existingXchanges,
+    });
+    const eligibility = resolveWelcomeBonusEligibility({
+      walletData,
+      orders: existingOrders,
+      fundingSnapshot: currentFundingSnapshot,
+    });
     const alreadyClaimed = walletData.welcomeBonusClaimed === true
       || safeSignedInt(walletData.welcomeBonusReceivedAtMs) > 0
       || !!String(walletData.welcomeBonusOrderId || "").trim()
@@ -20987,6 +21002,13 @@ async function grantWelcomeBonusForClient(options = {}) {
 
     if (alreadyClaimed) {
       return { granted: false, reason: "already-claimed" };
+    }
+    if (eligibility.eligible !== true) {
+      return {
+        granted: false,
+        reason: String(eligibility.reason || "not-eligible"),
+        offerEnded: eligibility.offerEnded === true,
+      };
     }
 
     const nextWallet = {
@@ -21222,8 +21244,8 @@ exports.updateClientProfileSecure = publicOnCall("updateClientProfileSecure", as
     });
   }
 
-  let signupBonusGrant = { granted: false, reason: "already-claimed" };
-  if (isNewProfile) {
+  let signupBonusGrant = { granted: false, reason: isWelcomeBonusProgramActive() ? "not-attempted" : "offer-ended" };
+  if (isNewProfile && isWelcomeBonusProgramActive()) {
     signupBonusGrant = await grantWelcomeBonusForClient({
       uid,
       email,
@@ -21590,16 +21612,21 @@ exports.claimWelcomeBonusSecure = publicOnCall("claimWelcomeBonusSecure", async 
   });
 
   if (result.granted !== true) {
+    const reason = String(result.reason || "");
     throw new HttpsError(
       "failed-precondition",
-      result.reason === "already-claimed"
+      reason === "already-claimed"
         ? "Bonus bienvenue déjà réclamé."
+        : reason === "offer-ended"
+          ? "Désolé, le bonus de bienvenue est terminé."
         : "Ce compte n'est pas éligible au bonus de bienvenue.",
       {
-        code: result.reason === "already-claimed"
+        code: reason === "already-claimed"
           ? "welcome-bonus-already-claimed"
+          : reason === "offer-ended"
+            ? "welcome-bonus-offer-ended"
           : "welcome-bonus-not-eligible",
-        reason: result.reason,
+        reason,
       }
     );
   }

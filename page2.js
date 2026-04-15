@@ -52,7 +52,7 @@ const SHARE_SITE_PROMO_TARGET = 5;
 const SHARE_SITE_PROMO_REWARD_DOES = 100;
 const SHARE_SITE_PROMO_LINK = "https://dominoeslakay.com";
 const SHARE_SITE_PROMO_TITLE = "Dominoes Lakay";
-const SHARE_SITE_PROMO_TEXT = "Viens jouer au domino avec moi et gagne de l'argent. 25 Gdes gratuit comme prime d'inscription.";
+const SHARE_SITE_PROMO_TEXT = "Viens jouer au domino avec moi et gagne de l'argent. Bonus d'inscription terminé, mais tu peux toujours jouer et gagner.";
 const CLIENT_FINANCE_NOTICE_LAUNCH_MS = Date.parse("2026-03-23T00:00:00Z");
 const DEFAULT_GAME_STAKE_OPTIONS = Object.freeze([
   Object.freeze({ id: "stake_100", stakeDoes: 100, rewardDoes: 300, enabled: true, sortOrder: 10 }),
