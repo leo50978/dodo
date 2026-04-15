@@ -3140,7 +3140,6 @@ bindStartButton();
 bindLeaveRoomTopButton();
 bindHudViewToggle();
 bindFullscreenToggle();
-startOnlineUsersTicker();
 window.addEventListener("resize", onOrientationMaybeChanged);
 window.addEventListener("orientationchange", onOrientationMaybeChanged);
 window.addEventListener("xchangeUpdated", refreshDoesHud);

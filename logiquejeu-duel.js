@@ -2541,7 +2541,6 @@ async function bootstrap() {
   bindHudViewToggle();
   bindFullscreenToggle();
   bindLotModalControls();
-  startOnlineUsersTicker();
   await loadStakeOptions();
   refreshDoesHud();
   renderApp();

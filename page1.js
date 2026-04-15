@@ -39,6 +39,7 @@ import { buildSupportWhatsAppUrl } from "./support-contact.js";
 
 let authMode = "signup";
 let signupCreationMode = "chooser";
+let oneClickSignupStep = 0;
 let authFlowBusy = false;
 let redirectingToApp = false;
 let referralBootstrapPromise = null;
@@ -89,7 +90,6 @@ function getAuthShell() {
 
 function updateAuthModalBodyLock() {
   const modalIds = [
-    "oneClickAuthOverlay",
     "emailVerificationOverlay",
     "forgotPasswordAssistOverlay",
   ];
@@ -535,23 +535,26 @@ function closeEmailVerificationModal() {
   updateAuthModalBodyLock();
 }
 
-function syncOneClickModalStep(requestedStep = 0) {
-  const overlay = document.getElementById("oneClickAuthOverlay");
-  if (!overlay) return 0;
-  const modalCard = document.getElementById("oneClickAuthCard");
-  const steps = Array.from(overlay.querySelectorAll("[data-oneclick-step]"));
+function syncOneClickStepUi(rootNode, requestedStep = 0) {
+  if (!rootNode) return 0;
+  const cardId = String(rootNode.dataset.oneclickCardId || "").trim();
+  const stepLabelId = String(rootNode.dataset.oneclickStepLabelId || "").trim();
+  const prevBtnId = String(rootNode.dataset.oneclickPrevBtnId || "").trim();
+  const nextBtnId = String(rootNode.dataset.oneclickNextBtnId || "").trim();
+  const submitBtnId = String(rootNode.dataset.oneclickSubmitBtnId || "").trim();
+  const cardNode = cardId ? document.getElementById(cardId) : null;
+  const steps = Array.from(rootNode.querySelectorAll("[data-oneclick-step]"));
   const totalSteps = steps.length;
   if (totalSteps === 0) return 0;
   const safeStep = Math.max(0, Math.min(Number(requestedStep) || 0, totalSteps - 1));
-  overlay.dataset.step = String(safeStep);
-  if (modalCard) {
+  rootNode.dataset.step = String(safeStep);
+  oneClickSignupStep = safeStep;
+  if (cardNode) {
     const isMobile = window.matchMedia("(max-width: 640px)").matches;
-    const mobileHeights = ["24.5rem", "25.5rem", "25.5rem", "25rem", "28rem"];
-    const desktopHeights = ["24rem", "25rem", "25rem", "24.5rem", "26.5rem"];
-    const targetHeight = (isMobile ? mobileHeights : desktopHeights)[safeStep] || (isMobile ? "25rem" : "24.5rem");
-    modalCard.style.height = targetHeight;
-    modalCard.style.minHeight = targetHeight;
-    modalCard.style.maxHeight = "calc(100dvh - 1.5rem)";
+    const mobileMinHeights = ["24rem", "25rem", "25rem", "24.5rem", "27rem"];
+    const desktopMinHeights = ["23rem", "24rem", "24rem", "23.5rem", "25rem"];
+    const targetHeight = (isMobile ? mobileMinHeights : desktopMinHeights)[safeStep] || (isMobile ? "24.5rem" : "23.5rem");
+    cardNode.style.minHeight = targetHeight;
   }
 
   steps.forEach((stepNode, index) => {
@@ -560,7 +563,7 @@ function syncOneClickModalStep(requestedStep = 0) {
     stepNode.setAttribute("aria-hidden", active ? "false" : "true");
   });
 
-  overlay.querySelectorAll("[data-oneclick-dot]").forEach((dot, index) => {
+  rootNode.querySelectorAll("[data-oneclick-dot]").forEach((dot, index) => {
     const active = index === safeStep;
     dot.classList.toggle("bg-[#f48f45]", active);
     dot.classList.toggle("border-[#f7c08d]", active);
@@ -568,227 +571,25 @@ function syncOneClickModalStep(requestedStep = 0) {
     dot.classList.toggle("border-white/10", !active);
   });
 
-  const label = overlay.querySelector("#oneClickStepLabel");
+  const label = stepLabelId ? document.getElementById(stepLabelId) : null;
   if (label) label.textContent = `Étape ${safeStep + 1} sur ${totalSteps}`;
 
-  const prevBtn = overlay.querySelector("#oneClickStepPrevBtn");
+  const prevBtn = prevBtnId ? document.getElementById(prevBtnId) : null;
   if (prevBtn) {
     prevBtn.classList.toggle("hidden", safeStep === 0);
   }
 
-  const nextBtn = overlay.querySelector("#oneClickStepNextBtn");
+  const nextBtn = nextBtnId ? document.getElementById(nextBtnId) : null;
   if (nextBtn) {
     nextBtn.classList.toggle("hidden", safeStep === totalSteps - 1);
   }
 
-  const submitBtn = overlay.querySelector("#oneClickAuthSubmitBtn");
+  const submitBtn = submitBtnId ? document.getElementById(submitBtnId) : null;
   if (submitBtn) {
     submitBtn.classList.toggle("hidden", safeStep !== totalSteps - 1);
   }
 
   return safeStep;
-}
-
-function ensureOneClickModal() {
-  let overlay = document.getElementById("oneClickAuthOverlay");
-  if (!overlay) {
-    overlay = document.createElement("div");
-    overlay.id = "oneClickAuthOverlay";
-    overlay.className = "fixed inset-0 z-[5400] hidden items-center justify-center bg-black/65 p-3 backdrop-blur-md sm:p-4";
-    overlay.innerHTML = `
-      <div id="oneClickAuthCard" class="relative flex h-[24.5rem] min-h-[24.5rem] w-full max-w-[22.5rem] flex-col overflow-hidden rounded-[26px] border border-white/18 bg-[radial-gradient(circle_at_top,rgba(85,98,139,0.45),rgba(18,24,40,0.96)_58%)] p-4 text-white shadow-[18px_18px_44px_rgba(11,16,29,0.58),-12px_-12px_28px_rgba(99,112,152,0.16)] backdrop-blur-xl sm:max-w-[30rem] sm:rounded-[28px] sm:p-5">
-        <button
-          id="oneClickAuthCloseBtn"
-          type="button"
-          aria-label="Fermer"
-          title="Fermer"
-          class="absolute right-3 top-3 grid h-10 w-10 place-items-center rounded-full border border-white/12 bg-white/6 text-white/80 transition hover:border-white/25 hover:bg-white/12"
-        >
-          <i class="fa-solid fa-xmark text-base"></i>
-        </button>
-        <div class="flex items-center gap-3 pr-12">
-          <div class="grid h-11 w-11 shrink-0 place-items-center rounded-2xl border border-[#ffb26e]/30 bg-[#f57c00]/14 text-[#ffd2ac] shadow-[inset_0_1px_0_rgba(255,255,255,0.12)]">
-            <i class="fa-solid fa-key text-base"></i>
-          </div>
-          <div class="min-w-0">
-            <div class="text-[15px] font-semibold tracking-[0.01em] text-white">Auth en un click</div>
-          </div>
-        </div>
-        <div class="mt-4 rounded-2xl border border-white/10 bg-white/[0.04] px-4 py-2.5">
-          <div class="flex items-center justify-between gap-4">
-            <div id="oneClickStepLabel" class="text-[11px] font-semibold uppercase tracking-[0.18em] text-white/60">Étape 1 sur 5</div>
-            <div class="flex items-center gap-1.5 sm:gap-2">
-              <span data-oneclick-dot class="h-2.5 w-2.5 rounded-full border border-[#f7c08d] bg-[#f48f45] shadow-[0_0_14px_rgba(244,143,69,0.45)]"></span>
-              <span data-oneclick-dot class="h-2.5 w-2.5 rounded-full border border-white/10 bg-white/12"></span>
-              <span data-oneclick-dot class="h-2.5 w-2.5 rounded-full border border-white/10 bg-white/12"></span>
-              <span data-oneclick-dot class="h-2.5 w-2.5 rounded-full border border-white/10 bg-white/12"></span>
-              <span data-oneclick-dot class="h-2.5 w-2.5 rounded-full border border-white/10 bg-white/12"></span>
-            </div>
-          </div>
-        </div>
-        <div class="mt-4 min-h-0 flex-1 overflow-hidden">
-          <div data-oneclick-step="0" class="space-y-3">
-            <div>
-              <label for="oneClickUsername" class="mb-1.5 block text-xs font-medium text-white/70">Nom du player</label>
-              <input id="oneClickUsername" type="text" autocomplete="off" placeholder="ex: player509" class="block w-full rounded-2xl border border-white/16 bg-white/[0.08] px-4 py-3 text-sm text-white placeholder-white/45 shadow-[inset_6px_6px_12px_rgba(8,12,22,0.35),inset_-4px_-4px_10px_rgba(84,96,136,0.12)] outline-none transition focus:border-[#f48f45]" />
-              <div class="mt-1.5 text-[11px] leading-5 text-white/55">3 à 24 caractères, avec au moins 4 lettres et 1 chiffre.</div>
-            </div>
-          </div>
-          <div data-oneclick-step="1" class="hidden space-y-3">
-            <div>
-              <label for="oneClickPassword" class="mb-1.5 block text-xs font-medium text-white/70">Passcode</label>
-              <div class="relative">
-                <input id="oneClickPassword" type="password" autocomplete="new-password" placeholder="Minimum 6 caractères" class="block w-full rounded-2xl border border-white/16 bg-white/[0.08] px-4 py-3 pr-12 text-sm text-white placeholder-white/45 shadow-[inset_6px_6px_12px_rgba(8,12,22,0.35),inset_-4px_-4px_10px_rgba(84,96,136,0.12)] outline-none transition focus:border-[#f48f45]" />
-                <button
-                  id="oneClickPasswordToggleBtn"
-                  type="button"
-                  aria-label="Afficher le mot de passe"
-                  title="Afficher le mot de passe"
-                  class="absolute inset-y-0 right-2 my-auto grid h-9 w-9 place-items-center rounded-xl border border-white/16 bg-white/[0.08] text-white/82 transition hover:bg-white/14"
-                >
-                  <i class="fa-regular fa-eye"></i>
-                </button>
-              </div>
-              <div class="mt-1.5 text-[11px] leading-5 text-white/55">Le passcode doit contenir au moins 1 lettre et 1 chiffre.</div>
-            </div>
-          </div>
-          <div data-oneclick-step="2" class="hidden space-y-3">
-            <div class="rounded-2xl border border-white/10 bg-white/[0.04] px-4 py-3 text-[12px] leading-5 text-white/62">
-              Réécris exactement le passcode précédent pour confirmer qu’il est correct.
-            </div>
-            <div>
-              <label for="oneClickPasswordConfirm" class="mb-1.5 block text-xs font-medium text-white/70">Vérification du passcode</label>
-              <div class="relative">
-                <input id="oneClickPasswordConfirm" type="password" autocomplete="new-password" placeholder="Confirme ton passcode" class="block w-full rounded-2xl border border-white/16 bg-white/[0.08] px-4 py-3 pr-12 text-sm text-white placeholder-white/45 shadow-[inset_6px_6px_12px_rgba(8,12,22,0.35),inset_-4px_-4px_10px_rgba(84,96,136,0.12)] outline-none transition focus:border-[#f48f45]" />
-                <button
-                  id="oneClickPasswordConfirmToggleBtn"
-                  type="button"
-                  aria-label="Afficher le mot de passe de confirmation"
-                  title="Afficher le mot de passe de confirmation"
-                  class="absolute inset-y-0 right-2 my-auto grid h-9 w-9 place-items-center rounded-xl border border-white/16 bg-white/[0.08] text-white/82 transition hover:bg-white/14"
-                >
-                  <i class="fa-regular fa-eye"></i>
-                </button>
-              </div>
-            </div>
-          </div>
-          <div data-oneclick-step="3" class="hidden space-y-2.5">
-            <div class="rounded-2xl border border-[#ffb26e]/22 bg-[#f57c00]/10 px-4 py-3.5 text-sm leading-6 text-white/80">
-              Tu peux ajouter le code promo de la personne qui t'a invite ou continuer sans code. <span class="font-semibold text-white">Le bonus de bienvenue est termine, mais ton inscription reste normale dans les deux cas.</span>
-            </div>
-            <div>
-              <label for="oneClickPromoInput" class="mb-1.5 block text-xs font-medium text-white/70">Code promo optionnel</label>
-              <input
-                id="oneClickPromoInput"
-                type="text"
-                placeholder="Ex: BONUS25"
-                autocapitalize="characters"
-                autocomplete="off"
-                spellcheck="false"
-                class="block w-full rounded-2xl border border-white/16 bg-white/[0.08] px-4 py-3.5 text-sm uppercase text-white placeholder-white/45 shadow-[inset_6px_6px_12px_rgba(8,12,22,0.35),inset_-4px_-4px_10px_rgba(84,96,136,0.12)] outline-none transition focus:border-[#f48f45]"
-              />
-            </div>
-            <div class="rounded-2xl border border-white/10 bg-white/[0.04] px-4 py-3 text-[12px] leading-5 text-white/56">
-              Si tu n’as pas de code promo, passe directement à l’étape suivante. Désolé, le bonus de bienvenue est terminé.
-            </div>
-          </div>
-          <div data-oneclick-step="4" class="hidden space-y-2.5">
-            <div class="space-y-3 rounded-2xl border border-white/12 bg-white/[0.05] px-4 py-3.5">
-              <label class="flex items-start gap-3 text-sm text-white/90">
-                <input
-                  id="oneClickAgeCheckbox"
-                  type="checkbox"
-                  class="mt-1 h-4 w-4 rounded border-white/30 bg-white/10 text-[#f48f45]"
-                />
-                <span>J'ai 18 ans ou plus.</span>
-              </label>
-              <label class="flex items-start gap-3 text-sm text-white/90">
-                <input
-                  id="oneClickTermsCheckbox"
-                  type="checkbox"
-                  class="mt-1 h-4 w-4 rounded border-white/30 bg-white/10 text-[#f48f45]"
-                />
-                <span>
-                  J'accepte les
-                  <a href="${TERMS_ROUTE}" target="_blank" rel="noopener noreferrer" class="font-semibold text-[#ffd8b5] underline underline-offset-2">conditions d'utilisation</a>.
-                </span>
-              </label>
-              <div class="text-[11px] leading-5 text-white/62 sm:text-xs">
-                Tu confirmes aussi avoir lu la
-                <a href="${PRIVACY_ROUTE}" target="_blank" rel="noopener noreferrer" class="text-[#ffd8b5] underline underline-offset-2">politique de confidentialité</a>
-                et les
-                <a href="${LEGAL_ROUTE}" target="_blank" rel="noopener noreferrer" class="text-[#ffd8b5] underline underline-offset-2">mentions légales</a>.
-              </div>
-            </div>
-          </div>
-        </div>
-        <div id="oneClickAuthError" class="mt-2.5 min-h-5 text-sm text-[#ffb0b0]"></div>
-        <div class="mt-3 flex flex-col gap-3 sm:flex-row">
-          <button id="oneClickAuthCancelBtn" type="button" class="h-11 flex-1 rounded-2xl border border-white/12 bg-white/[0.06] text-sm font-semibold text-white/82 transition hover:bg-white/[0.1]">
-            Annuler
-          </button>
-          <button id="oneClickStepPrevBtn" type="button" class="hidden h-11 flex-1 rounded-2xl border border-white/12 bg-white/[0.06] text-sm font-semibold text-white/82 transition hover:bg-white/[0.1]">
-            Précédent
-          </button>
-          <button id="oneClickStepNextBtn" type="button" class="h-11 flex-1 rounded-2xl border border-[#ffb26e]/80 bg-[#F57C00] text-sm font-semibold text-white shadow-[8px_8px_18px_rgba(163,82,27,0.45),-6px_-6px_14px_rgba(255,175,102,0.22)] transition hover:-translate-y-0.5 hover:bg-[#ff9549]">
-            Suivant
-          </button>
-          <button id="oneClickAuthSubmitBtn" type="button" class="hidden h-11 flex-1 rounded-2xl border border-[#ffb26e]/80 bg-[#F57C00] text-sm font-semibold text-white shadow-[8px_8px_18px_rgba(163,82,27,0.45),-6px_-6px_14px_rgba(255,175,102,0.22)] transition hover:-translate-y-0.5 hover:bg-[#ff9549]">
-            S'inscrire
-          </button>
-        </div>
-      </div>
-    `;
-    document.body.appendChild(overlay);
-  }
-  return overlay;
-}
-
-function openOneClickModal() {
-  const overlay = ensureOneClickModal();
-  const usernameInput = document.getElementById("oneClickUsername");
-  const passwordInput = document.getElementById("oneClickPassword");
-  const passwordConfirmInput = document.getElementById("oneClickPasswordConfirm");
-  const promoInput = document.getElementById("oneClickPromoInput");
-  const errorEl = document.getElementById("oneClickAuthError");
-  if (usernameInput) usernameInput.value = "";
-  if (passwordInput) passwordInput.value = "";
-  if (passwordConfirmInput) passwordConfirmInput.value = "";
-  if (promoInput) promoInput.value = String(document.getElementById("promoCodeInput")?.value || "");
-  if (passwordInput) passwordInput.type = "password";
-  if (passwordConfirmInput) passwordConfirmInput.type = "password";
-  const resetEyeState = (btnId) => {
-    const btn = document.getElementById(btnId);
-    const icon = btn?.querySelector("i");
-    if (!btn) return;
-    btn.setAttribute("aria-label", "Afficher le mot de passe");
-    btn.setAttribute("title", "Afficher le mot de passe");
-    if (icon) {
-      icon.classList.add("fa-eye");
-      icon.classList.remove("fa-eye-slash");
-    }
-  };
-  resetEyeState("oneClickPasswordToggleBtn");
-  resetEyeState("oneClickPasswordConfirmToggleBtn");
-  const pageAgeCheckbox = document.getElementById("signupAgeCheckbox");
-  const pageTermsCheckbox = document.getElementById("signupTermsCheckbox");
-  const modalAgeCheckbox = document.getElementById("oneClickAgeCheckbox");
-  const modalTermsCheckbox = document.getElementById("oneClickTermsCheckbox");
-  if (modalAgeCheckbox) modalAgeCheckbox.checked = pageAgeCheckbox?.checked === true;
-  if (modalTermsCheckbox) modalTermsCheckbox.checked = pageTermsCheckbox?.checked === true;
-  if (errorEl) errorEl.textContent = "";
-  syncOneClickModalStep(0);
-  overlay.classList.remove("hidden");
-  overlay.classList.add("flex");
-  updateAuthModalBodyLock();
-}
-
-function closeOneClickModal() {
-  const overlay = document.getElementById("oneClickAuthOverlay");
-  if (!overlay) return;
-  overlay.classList.add("hidden");
-  overlay.classList.remove("flex");
-  updateAuthModalBodyLock();
 }
 
 function ensureEmailVerificationModal() {
@@ -1103,8 +904,9 @@ function renderPage1() {
   pageAuthDebug("renderPage1");
   hideGlobalLoading();
   const isLegacySignin = authMode === "signin";
-  const isSignupChooser = !isLegacySignin && signupCreationMode !== "phone";
+  const isSignupChooser = !isLegacySignin && signupCreationMode === "chooser";
   const isSignupPhoneFlow = !isLegacySignin && signupCreationMode === "phone";
+  const isSignupOneClickFlow = !isLegacySignin && signupCreationMode === "oneclick";
   const referralCtx = getReferralContextFromUrl(window.location.search);
   const hintCode = referralCtx.userCodeFromLink;
   const promoPrefill = normalizeCode(
@@ -1168,7 +970,7 @@ function renderPage1() {
         <button id="openLegacySigninBtn" type="button" class="font-semibold text-[#f48f45] hover:text-[#ff9f58]">Connectez-vous</button>
       </p>
     `;
-  const signupPhoneTopActions = isSignupPhoneFlow
+  const signupFlowTopActions = (isSignupPhoneFlow || isSignupOneClickFlow)
     ? `
       <div class="mt-6 flex items-center justify-between gap-3">
         <button
@@ -1179,6 +981,156 @@ function renderPage1() {
           <i class="fa-solid fa-arrow-left text-[11px]"></i>
           Methodes
         </button>
+        <div class="rounded-full border ${isSignupOneClickFlow ? "border-white/16 bg-white/10 text-white/80" : "border-[#ffcf9e]/30 bg-[#f57c00]/16 text-[#ffe0bf]"} px-3 py-1 text-[10px] font-semibold uppercase tracking-[0.18em]">
+          ${isSignupOneClickFlow ? "En un click" : "Avec numero"}
+        </div>
+      </div>
+    `
+    : "";
+  const signupOneClickPanel = isSignupOneClickFlow
+    ? `
+      <div
+        id="oneClickAuthInline"
+        data-step="${oneClickSignupStep}"
+        data-oneclick-card-id="oneClickAuthCard"
+        data-oneclick-step-label-id="oneClickStepLabel"
+        data-oneclick-prev-btn-id="oneClickStepPrevBtn"
+        data-oneclick-next-btn-id="oneClickStepNextBtn"
+        data-oneclick-submit-btn-id="oneClickAuthSubmitBtn"
+        class="mt-6"
+      >
+        <div id="oneClickAuthCard" class="rounded-[28px] border border-white/18 bg-[radial-gradient(circle_at_top,rgba(85,98,139,0.42),rgba(18,24,40,0.92)_58%)] p-4 text-white shadow-[18px_18px_44px_rgba(11,16,29,0.5),-12px_-12px_28px_rgba(99,112,152,0.14)] backdrop-blur-xl sm:p-5">
+          <div class="flex items-center gap-3">
+            <div class="grid h-11 w-11 shrink-0 place-items-center rounded-2xl border border-[#ffb26e]/30 bg-[#f57c00]/14 text-[#ffd2ac] shadow-[inset_0_1px_0_rgba(255,255,255,0.12)]">
+              <i class="fa-solid fa-bolt text-base"></i>
+            </div>
+            <div class="min-w-0">
+              <div class="text-[15px] font-semibold tracking-[0.01em] text-white">Créer votre compte en un click</div>
+              <div class="mt-1 text-xs text-white/60">Même logique qu'avant, avec une présentation plus propre et plus directe.</div>
+            </div>
+          </div>
+          <div class="mt-4 rounded-2xl border border-white/10 bg-white/[0.04] px-4 py-2.5">
+            <div class="flex items-center justify-between gap-4">
+              <div id="oneClickStepLabel" class="text-[11px] font-semibold uppercase tracking-[0.18em] text-white/60">Étape 1 sur 5</div>
+              <div class="flex items-center gap-1.5 sm:gap-2">
+                <span data-oneclick-dot class="h-2.5 w-2.5 rounded-full border border-[#f7c08d] bg-[#f48f45] shadow-[0_0_14px_rgba(244,143,69,0.45)]"></span>
+                <span data-oneclick-dot class="h-2.5 w-2.5 rounded-full border border-white/10 bg-white/12"></span>
+                <span data-oneclick-dot class="h-2.5 w-2.5 rounded-full border border-white/10 bg-white/12"></span>
+                <span data-oneclick-dot class="h-2.5 w-2.5 rounded-full border border-white/10 bg-white/12"></span>
+                <span data-oneclick-dot class="h-2.5 w-2.5 rounded-full border border-white/10 bg-white/12"></span>
+              </div>
+            </div>
+          </div>
+          <div class="mt-4 min-h-0">
+            <div data-oneclick-step="0" class="space-y-3">
+              <div>
+                <label for="oneClickUsername" class="mb-1.5 block text-xs font-medium text-white/70">Nom du player</label>
+                <input id="oneClickUsername" type="text" autocomplete="off" placeholder="ex: player509" class="block w-full rounded-2xl border border-white/16 bg-white/[0.08] px-4 py-3 text-sm text-white placeholder-white/45 shadow-[inset_6px_6px_12px_rgba(8,12,22,0.35),inset_-4px_-4px_10px_rgba(84,96,136,0.12)] outline-none transition focus:border-[#f48f45]" />
+                <div class="mt-1.5 text-[11px] leading-5 text-white/55">3 à 24 caractères, avec au moins 4 lettres et 1 chiffre.</div>
+              </div>
+            </div>
+            <div data-oneclick-step="1" class="hidden space-y-3">
+              <div>
+                <label for="oneClickPassword" class="mb-1.5 block text-xs font-medium text-white/70">Passcode</label>
+                <div class="relative">
+                  <input id="oneClickPassword" type="password" autocomplete="new-password" placeholder="Minimum 6 caractères" class="block w-full rounded-2xl border border-white/16 bg-white/[0.08] px-4 py-3 pr-12 text-sm text-white placeholder-white/45 shadow-[inset_6px_6px_12px_rgba(8,12,22,0.35),inset_-4px_-4px_10px_rgba(84,96,136,0.12)] outline-none transition focus:border-[#f48f45]" />
+                  <button
+                    id="oneClickPasswordToggleBtn"
+                    type="button"
+                    aria-label="Afficher le mot de passe"
+                    title="Afficher le mot de passe"
+                    class="absolute inset-y-0 right-2 my-auto grid h-9 w-9 place-items-center rounded-xl border border-white/16 bg-white/[0.08] text-white/82 transition hover:bg-white/14"
+                  >
+                    <i class="fa-regular fa-eye"></i>
+                  </button>
+                </div>
+                <div class="mt-1.5 text-[11px] leading-5 text-white/55">Le passcode doit contenir au moins 1 lettre et 1 chiffre.</div>
+              </div>
+            </div>
+            <div data-oneclick-step="2" class="hidden space-y-3">
+              <div class="rounded-2xl border border-white/10 bg-white/[0.04] px-4 py-3 text-[12px] leading-5 text-white/62">
+                Réécris exactement le passcode précédent pour confirmer qu’il est correct.
+              </div>
+              <div>
+                <label for="oneClickPasswordConfirm" class="mb-1.5 block text-xs font-medium text-white/70">Vérification du passcode</label>
+                <div class="relative">
+                  <input id="oneClickPasswordConfirm" type="password" autocomplete="new-password" placeholder="Confirme ton passcode" class="block w-full rounded-2xl border border-white/16 bg-white/[0.08] px-4 py-3 pr-12 text-sm text-white placeholder-white/45 shadow-[inset_6px_6px_12px_rgba(8,12,22,0.35),inset_-4px_-4px_10px_rgba(84,96,136,0.12)] outline-none transition focus:border-[#f48f45]" />
+                  <button
+                    id="oneClickPasswordConfirmToggleBtn"
+                    type="button"
+                    aria-label="Afficher le mot de passe de confirmation"
+                    title="Afficher le mot de passe de confirmation"
+                    class="absolute inset-y-0 right-2 my-auto grid h-9 w-9 place-items-center rounded-xl border border-white/16 bg-white/[0.08] text-white/82 transition hover:bg-white/14"
+                  >
+                    <i class="fa-regular fa-eye"></i>
+                  </button>
+                </div>
+              </div>
+            </div>
+            <div data-oneclick-step="3" class="hidden space-y-2.5">
+              <div class="rounded-2xl border border-[#ffb26e]/22 bg-[#f57c00]/10 px-4 py-3.5 text-sm leading-6 text-white/80">
+                Tu peux ajouter le code promo de la personne qui t'a invite ou continuer sans code. <span class="font-semibold text-white">Le bonus de bienvenue est termine, mais ton inscription reste normale dans les deux cas.</span>
+              </div>
+              <div>
+                <label for="oneClickPromoInput" class="mb-1.5 block text-xs font-medium text-white/70">Code promo optionnel</label>
+                <input
+                  id="oneClickPromoInput"
+                  type="text"
+                  placeholder="Ex: BONUS25"
+                  autocapitalize="characters"
+                  autocomplete="off"
+                  spellcheck="false"
+                  value="${escapeAttr(promoPrefill)}"
+                  class="block w-full rounded-2xl border border-white/16 bg-white/[0.08] px-4 py-3.5 text-sm uppercase text-white placeholder-white/45 shadow-[inset_6px_6px_12px_rgba(8,12,22,0.35),inset_-4px_-4px_10px_rgba(84,96,136,0.12)] outline-none transition focus:border-[#f48f45]"
+                />
+              </div>
+              <div class="rounded-2xl border border-white/10 bg-white/[0.04] px-4 py-3 text-[12px] leading-5 text-white/56">
+                Si tu n’as pas de code promo, passe directement à l’étape suivante. Désolé, le bonus de bienvenue est terminé.
+              </div>
+            </div>
+            <div data-oneclick-step="4" class="hidden space-y-2.5">
+              <div class="space-y-3 rounded-2xl border border-white/12 bg-white/[0.05] px-4 py-3.5">
+                <label class="flex items-start gap-3 text-sm text-white/90">
+                  <input
+                    id="oneClickAgeCheckbox"
+                    type="checkbox"
+                    class="mt-1 h-4 w-4 rounded border-white/30 bg-white/10 text-[#f48f45]"
+                  />
+                  <span>J'ai 18 ans ou plus.</span>
+                </label>
+                <label class="flex items-start gap-3 text-sm text-white/90">
+                  <input
+                    id="oneClickTermsCheckbox"
+                    type="checkbox"
+                    class="mt-1 h-4 w-4 rounded border-white/30 bg-white/10 text-[#f48f45]"
+                  />
+                  <span>
+                    J'accepte les
+                    <a href="${TERMS_ROUTE}" target="_blank" rel="noopener noreferrer" class="font-semibold text-[#ffd8b5] underline underline-offset-2">conditions d'utilisation</a>.
+                  </span>
+                </label>
+                <div class="text-[11px] leading-5 text-white/62 sm:text-xs">
+                  Tu confirmes aussi avoir lu la
+                  <a href="${PRIVACY_ROUTE}" target="_blank" rel="noopener noreferrer" class="text-[#ffd8b5] underline underline-offset-2">politique de confidentialité</a>
+                  et les
+                  <a href="${LEGAL_ROUTE}" target="_blank" rel="noopener noreferrer" class="text-[#ffd8b5] underline underline-offset-2">mentions légales</a>.
+                </div>
+              </div>
+            </div>
+          </div>
+          <div id="oneClickAuthError" class="mt-3 min-h-5 text-sm text-[#ffb0b0]"></div>
+          <div class="mt-3 flex flex-col gap-3 sm:flex-row">
+            <button id="oneClickStepPrevBtn" type="button" class="hidden h-11 flex-1 rounded-2xl border border-white/12 bg-white/[0.06] text-sm font-semibold text-white/82 transition hover:bg-white/[0.1]">
+              Précédent
+            </button>
+            <button id="oneClickStepNextBtn" type="button" class="h-11 flex-1 rounded-2xl border border-[#ffb26e]/80 bg-[#F57C00] text-sm font-semibold text-white shadow-[8px_8px_18px_rgba(163,82,27,0.45),-6px_-6px_14px_rgba(255,175,102,0.22)] transition hover:-translate-y-0.5 hover:bg-[#ff9549]">
+              Suivant
+            </button>
+            <button id="oneClickAuthSubmitBtn" type="button" class="hidden h-11 flex-1 rounded-2xl border border-[#ffb26e]/80 bg-[#F57C00] text-sm font-semibold text-white shadow-[8px_8px_18px_rgba(163,82,27,0.45),-6px_-6px_14px_rgba(255,175,102,0.22)] transition hover:-translate-y-0.5 hover:bg-[#ff9549]">
+              S'inscrire
+            </button>
+          </div>
+        </div>
       </div>
     `
     : "";
@@ -1227,7 +1179,8 @@ function renderPage1() {
     `
     : `
       ${signupMethodChooser}
-      ${signupPhoneTopActions}
+      ${signupFlowTopActions}
+      ${signupOneClickPanel}
       <form id="authForm" class="${isSignupPhoneFlow ? "mt-6 space-y-4 sm:space-y-5" : "hidden"}">
         <input
           id="usernameInput"
@@ -1384,6 +1337,9 @@ function renderPage1() {
   `;
 
   bindPage1Events();
+  if (isSignupOneClickFlow) {
+    syncOneClickStepUi(document.getElementById("oneClickAuthInline"), oneClickSignupStep);
+  }
   animatePage1();
   updateAuthModalBodyLock();
 }
@@ -1473,6 +1429,7 @@ function bindPage1Events() {
     openPhoneSignupBtn.addEventListener("click", () => {
       authMode = "signup";
       signupCreationMode = "chooser";
+      oneClickSignupStep = 0;
       renderPage1();
     });
   }
@@ -1481,6 +1438,7 @@ function bindPage1Events() {
     openPhoneFieldsBtn.dataset.bound = "1";
     openPhoneFieldsBtn.addEventListener("click", () => {
       signupCreationMode = "phone";
+      oneClickSignupStep = 0;
       renderPage1();
     });
   }
@@ -1489,6 +1447,7 @@ function bindPage1Events() {
     backToSignupMethodsBtn.dataset.bound = "1";
     backToSignupMethodsBtn.addEventListener("click", () => {
       signupCreationMode = "chooser";
+      oneClickSignupStep = 0;
       renderPage1();
     });
   }
@@ -1622,13 +1581,14 @@ function bindPage1Events() {
     oneClickAuthBtn.addEventListener("click", () => {
       const errorEl = document.getElementById("authError");
       if (errorEl) errorEl.textContent = "";
-      openOneClickModal();
+      signupCreationMode = "oneclick";
+      oneClickSignupStep = 0;
+      renderPage1();
     });
   }
 
-  const oneClickOverlay = ensureOneClickModal();
+  const oneClickRoot = document.getElementById("oneClickAuthInline");
   const oneClickCancelBtn = document.getElementById("oneClickAuthCancelBtn");
-  const oneClickCloseBtn = document.getElementById("oneClickAuthCloseBtn");
   const oneClickSubmitBtn = document.getElementById("oneClickAuthSubmitBtn");
   const oneClickErrorEl = document.getElementById("oneClickAuthError");
   const oneClickUsernameInput = document.getElementById("oneClickUsername");
@@ -1641,14 +1601,6 @@ function bindPage1Events() {
   const oneClickTermsCheckbox = document.getElementById("oneClickTermsCheckbox");
   const oneClickStepPrevBtn = document.getElementById("oneClickStepPrevBtn");
   const oneClickStepNextBtn = document.getElementById("oneClickStepNextBtn");
-
-  const syncOneClickDataToSignup = () => {
-    const signupAgeCheckbox = document.getElementById("signupAgeCheckbox");
-    const signupTermsCheckbox = document.getElementById("signupTermsCheckbox");
-    if (promoCodeInput && oneClickPromoInput) promoCodeInput.value = normalizeCode(oneClickPromoInput.value || "");
-    if (signupAgeCheckbox && oneClickAgeCheckbox) signupAgeCheckbox.checked = oneClickAgeCheckbox.checked === true;
-    if (signupTermsCheckbox && oneClickTermsCheckbox) signupTermsCheckbox.checked = oneClickTermsCheckbox.checked === true;
-  };
 
   const validateOneClickUsernameStep = () => {
     const usernameRaw = String(oneClickUsernameInput?.value || "").trim();
@@ -1702,21 +1654,9 @@ function bindPage1Events() {
   if (oneClickCancelBtn && oneClickCancelBtn.dataset.bound !== "1") {
     oneClickCancelBtn.dataset.bound = "1";
     oneClickCancelBtn.addEventListener("click", () => {
-      closeOneClickModal();
-    });
-  }
-
-  if (oneClickCloseBtn && oneClickCloseBtn.dataset.bound !== "1") {
-    oneClickCloseBtn.dataset.bound = "1";
-    oneClickCloseBtn.addEventListener("click", () => {
-      closeOneClickModal();
-    });
-  }
-
-  if (oneClickOverlay && oneClickOverlay.dataset.bound !== "1") {
-    oneClickOverlay.dataset.bound = "1";
-    oneClickOverlay.addEventListener("click", (ev) => {
-      if (ev.target === oneClickOverlay) closeOneClickModal();
+      signupCreationMode = "chooser";
+      oneClickSignupStep = 0;
+      renderPage1();
     });
   }
 
@@ -1724,8 +1664,7 @@ function bindPage1Events() {
     oneClickStepPrevBtn.dataset.bound = "1";
     oneClickStepPrevBtn.addEventListener("click", () => {
       if (oneClickErrorEl) oneClickErrorEl.textContent = "";
-      const currentStep = Number(oneClickOverlay?.dataset.step || 0);
-      syncOneClickModalStep(currentStep - 1);
+      syncOneClickStepUi(oneClickRoot, oneClickSignupStep - 1);
     });
   }
 
@@ -1733,14 +1672,11 @@ function bindPage1Events() {
     oneClickStepNextBtn.dataset.bound = "1";
     oneClickStepNextBtn.addEventListener("click", () => {
       if (oneClickErrorEl) oneClickErrorEl.textContent = "";
-      const currentStep = Number(oneClickOverlay?.dataset.step || 0);
+      const currentStep = Number(oneClickRoot?.dataset.step || oneClickSignupStep || 0);
       if (currentStep === 0 && !validateOneClickUsernameStep()) return;
       if (currentStep === 1 && !validateOneClickPasswordStep()) return;
       if (currentStep === 2 && !validateOneClickPasswordConfirmStep()) return;
-      if (currentStep === 3) {
-        syncOneClickDataToSignup();
-      }
-      syncOneClickModalStep(currentStep + 1);
+      syncOneClickStepUi(oneClickRoot, currentStep + 1);
     });
   }
 
@@ -1773,7 +1709,6 @@ function bindPage1Events() {
         await withButtonLoading(oneClickSubmitBtn, async () => {
           pageAuthDebug("oneClickSignup:start", { username, oneClickId });
           assertSignupAllowedOnThisDevice();
-          syncOneClickDataToSignup();
           savePendingUsername(username);
           savePendingOneClickId(oneClickId);
           savePendingPromoCode(promoCode);
@@ -1788,7 +1723,6 @@ function bindPage1Events() {
             currentDisplayName: String(auth.currentUser?.displayName || ""),
             currentEmail: String(auth.currentUser?.email || ""),
           });
-          closeOneClickModal();
           await handleAuthenticatedUser(auth.currentUser);
         }, { loadingLabel: "Création..." });
       } catch (err) {
@@ -1859,10 +1793,15 @@ async function animatePage1() {
     ? ["#identifierInput", "#passwordInput"]
     : (signupCreationMode === "phone"
       ? ["#usernameInput", "#phoneInput", "#passwordInput"]
-      : ["#oneClickAuthBtn", "#openPhoneFieldsBtn"]);
+      : signupCreationMode === "oneclick"
+        ? ["#oneClickUsername", "#oneClickPassword", "#oneClickPasswordConfirm"]
+        : ["#oneClickAuthBtn", "#openPhoneFieldsBtn"]);
   if (authMode === "signup" && signupCreationMode === "phone") {
     animatedInputs.push("#promoCodeInput");
     animatedInputs.push("#passwordConfirmInput");
+  }
+  if (authMode === "signup" && signupCreationMode === "oneclick") {
+    animatedInputs.push("#oneClickPromoInput");
   }
 
   anime({
