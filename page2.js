@@ -1923,8 +1923,8 @@ export function renderPage2(user, options = {}) {
           <div class="mt-5 grid gap-3">
             <button id="gameModeClassicCard" type="button" class="flex w-full items-center justify-between gap-3 rounded-[22px] border border-[#ffb26e]/28 bg-[linear-gradient(135deg,rgba(245,124,0,0.18),rgba(72,45,15,0.54))] px-4 py-4 text-left text-white shadow-[8px_8px_20px_rgba(54,32,13,0.3),-6px_-6px_14px_rgba(255,184,111,0.08)] transition hover:-translate-y-0.5 hover:border-[#ffb26e]/42">
               <span class="flex min-w-0 items-center gap-3">
-                <span class="grid h-11 w-11 shrink-0 place-items-center rounded-2xl border border-white/12 bg-white/10 text-[17px] text-[#ffd4ab]">
-                  <i class="fa-solid fa-table-cells-large"></i>
+                <span class="grid h-12 w-12 shrink-0 place-items-center overflow-hidden rounded-2xl border border-white/14 bg-white/10">
+                  <img src="/domino4j.png" alt="Domino 4 joueurs" class="h-full w-full object-contain p-1" decoding="async" />
                 </span>
                 <span class="min-w-0">
                   <span class="block text-sm font-semibold text-white">Domino 4 joueurs</span>
@@ -1935,8 +1935,8 @@ export function renderPage2(user, options = {}) {
             </button>
             <button id="gameModeDuelCard" type="button" class="flex w-full items-center justify-between gap-3 rounded-[22px] border border-[#8de7ff]/28 bg-[linear-gradient(135deg,rgba(18,147,216,0.2),rgba(10,31,62,0.66))] px-4 py-4 text-left text-white shadow-[8px_8px_20px_rgba(10,27,48,0.28),-6px_-6px_14px_rgba(97,186,224,0.08)] transition hover:-translate-y-0.5 hover:border-[#8de7ff]/42">
               <span class="flex min-w-0 items-center gap-3">
-                <span class="grid h-11 w-11 shrink-0 place-items-center rounded-2xl border border-white/12 bg-white/10 text-[17px] text-[#c8f7ff]">
-                  <i class="fa-solid fa-user-group"></i>
+                <span class="grid h-12 w-12 shrink-0 place-items-center overflow-hidden rounded-2xl border border-white/14 bg-white/10">
+                  <img src="/domino2j.png" alt="Domino 1 vs 1" class="h-full w-full object-contain p-1" decoding="async" />
                 </span>
                 <span class="min-w-0">
                   <span class="block text-sm font-semibold text-white">Domino 1 vs 1</span>
@@ -1947,8 +1947,8 @@ export function renderPage2(user, options = {}) {
             </button>
             <button id="gameModeMorpionCard" type="button" class="flex w-full items-center justify-between gap-3 rounded-[22px] border border-[#8de7ff]/24 bg-[linear-gradient(135deg,rgba(66,171,255,0.16),rgba(17,28,59,0.66))] px-4 py-4 text-left text-white shadow-[8px_8px_20px_rgba(12,27,48,0.28),-6px_-6px_14px_rgba(88,173,232,0.08)] transition hover:-translate-y-0.5 hover:border-[#8de7ff]/38">
               <span class="flex min-w-0 items-center gap-3">
-                <span class="grid h-11 w-11 shrink-0 place-items-center rounded-2xl border border-white/12 bg-white/10 text-[17px] text-[#cdefff]">
-                  <i class="fa-solid fa-hashtag"></i>
+                <span class="grid h-12 w-12 shrink-0 place-items-center overflow-hidden rounded-2xl border border-white/14 bg-white/10">
+                  <img src="/morpion.png" alt="Morpion 5" class="h-full w-full object-contain p-1" decoding="async" onerror="this.onerror=null;this.src='/mopion.png';" />
                 </span>
                 <span class="min-w-0">
                   <span class="block text-sm font-semibold text-white">Morpion 5</span>

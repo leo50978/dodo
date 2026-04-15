@@ -12,6 +12,12 @@ const HOME_AUTH_BOOTSTRAP_TIMEOUT_MS = 900;
 const HOME_AUTH_SUCCESS_TIMEOUT_MS = 2600;
 const HOME_HERO_ROTATION_MS = 5000;
 let homeHeroRotationTimer = null;
+const HOME_HERO_REQUIRED_SLIDES = [
+  { src: "/hero.jpg", alt: "Interface Dominoes Lakay" },
+  { src: "/hero1.jpg", alt: "Interface Dominoes Lakay hero 1" },
+  { src: "/hero2.jpg", alt: "Interface Dominoes Lakay hero 2" },
+  { src: "/hero4.jpg", alt: "Interface Dominoes Lakay hero 4" },
+];
 
 function homeDebug(event, data = {}) {
   try {
@@ -48,8 +54,46 @@ function stopHomeHeroRotation() {
   homeHeroRotationTimer = null;
 }
 
+function normalizeHeroPath(value = "") {
+  return String(value || "").trim().replace(/^https?:\/\/[^/]+/i, "");
+}
+
+function ensureRequiredHeroSlides() {
+  const track = document.querySelector("[data-home-hero-track]");
+  if (!track) return [];
+
+  const existingSlides = Array.from(track.querySelectorAll("[data-home-hero-slide]"));
+  const existingSrc = new Set(
+    existingSlides
+      .map((slide) => normalizeHeroPath(slide.querySelector("img")?.getAttribute("src") || ""))
+      .filter(Boolean)
+  );
+
+  HOME_HERO_REQUIRED_SLIDES.forEach((entry) => {
+    const source = normalizeHeroPath(entry.src);
+    if (!source || existingSrc.has(source)) return;
+
+    const slide = document.createElement("div");
+    slide.className = "home-shell__hero-slide";
+    slide.setAttribute("data-home-hero-slide", "");
+    slide.innerHTML = `
+      <img
+        src="${source}"
+        alt="${entry.alt}"
+        width="600"
+        height="600"
+        decoding="async"
+      />
+    `;
+    track.appendChild(slide);
+    existingSrc.add(source);
+  });
+
+  return Array.from(track.querySelectorAll("[data-home-hero-slide]"));
+}
+
 function initHomeHeroRotation() {
-  const slides = Array.from(document.querySelectorAll("[data-home-hero-slide]"));
+  const slides = ensureRequiredHeroSlides();
   stopHomeHeroRotation();
   if (slides.length === 0) return;
 

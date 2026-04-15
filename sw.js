@@ -1,4 +1,4 @@
-const CACHE_VERSION = "domino-static-v8";
+const CACHE_VERSION = "domino-static-v10";
 const PAGE_CACHE = `${CACHE_VERSION}-pages`;
 const ASSET_CACHE = `${CACHE_VERSION}-assets`;
 const MEDIA_CACHE = `${CACHE_VERSION}-media`;
@@ -6,6 +6,7 @@ const MEDIA_CACHE = `${CACHE_VERSION}-media`;
 const CORE_PRECACHE = [
   "/",
   "/index.html",
+  "/inedex.html",
   "/home.html",
   "/auth.html",
   "/recrutement.html",
@@ -26,6 +27,9 @@ const CORE_PRECACHE = [
   "/web-app-manifest-192x192.png",
   "/web-app-manifest-512x512.png",
   "/hero.jpg",
+  "/hero1.jpg",
+  "/hero2.jpg",
+  "/hero4.jpg",
   "/logo.png",
 ];
 

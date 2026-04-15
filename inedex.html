@@ -140,8 +140,8 @@
         display: block;
         height: 100%;
         width: 100%;
-        object-fit: contain;
-        object-position: center;
+        object-fit: cover;
+        object-position: center center;
       }
 
       .home-shell__shade {
@@ -355,6 +355,15 @@
                   decoding="async"
                 />
               </div>
+              <div class="home-shell__hero-slide" data-home-hero-slide>
+                <img
+                  src="/hero4.jpg"
+                  alt="Interface Dominoes Lakay hero 4"
+                  width="600"
+                  height="600"
+                  decoding="async"
+                />
+              </div>
             </div>
           </div>
           <div class="home-shell__shade"></div>
@@ -375,6 +384,6 @@
       </main>
     </div>
     <script src="https://cdn.tailwindcss.com"></script>
-    <script type="module" src="./home.js"></script>
+    <script type="module" src="./home.js?v=hero4fix"></script>
   </body>
 </html>
