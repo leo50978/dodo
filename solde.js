@@ -372,7 +372,7 @@ function ensureDepositInfoModal() {
           </div>
           <div class="min-w-0">
             <p class="text-sm leading-7 text-white/92">
-              Fason pou fe depo yo fasil epi yo sekirize. Pou nou kapab pi proch nou, nou gen 2 system depo sou sit la. Kontakte on agent kounya pou fe depo. Metod sa natirel, li senp, li fasil epi li mete w an konfyans. Mesi paske w chwazi nou, vinn fe lajan ak kapasitew.
+              Fason pou fe depo yo fasil epi yo sekirize. Pou nou kapab pi proch nou, nou gen 2 system depo sou sit la. Kontakte on agent kounya pou fe depo. Metod sa natirel, li senp, li fasil epi li mete w an konfyans. Mesi paske w chwazi nou, vinn fe lajan ak kapasitew. Resevwa 10% bonus an plis lew fe on depo pou pi piti 100 goud, pa pedi bonus ou.
             </p>
           </div>
         </div>

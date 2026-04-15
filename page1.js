@@ -892,7 +892,7 @@ async function handleAuthenticatedUser(user, explicitPromoCode = "") {
 
 function renderAuthLoading() {
   getAuthShell().innerHTML = `
-    <div class="min-h-screen grid place-items-center bg-[#3f4766] text-white font-['Poppins']">
+    <div class="min-h-screen grid place-items-center bg-[#0b1f3f] text-white font-['Poppins']">
       <div class="rounded-3xl border border-white/15 bg-white/10 px-6 py-5 text-center shadow-[12px_12px_28px_rgba(25,30,44,0.42),-10px_-10px_24px_rgba(97,110,150,0.16)] backdrop-blur-md">
         <div class="text-base font-semibold tracking-wide">Connexion en cours...</div>
       </div>
@@ -1294,7 +1294,7 @@ function renderPage1() {
     `;
 
   getAuthShell().innerHTML = `
-    <div id="appRoot" class="bg-[#3f4766] text-white font-['Poppins']" style="min-height:100svh;">
+    <div id="appRoot" class="bg-[#0b1f3f] text-white font-['Poppins']" style="min-height:100svh;">
       <div class="lg:grid lg:h-[100svh] lg:grid-cols-[1.05fr_0.95fr]" style="min-height:100svh;">
         <section class="auth-scroll-pane flex h-[100svh] max-h-[100svh] flex-col px-6 pb-8 pt-8 sm:px-10 lg:min-h-0 lg:max-h-[100svh] lg:px-0 lg:pl-24 lg:pr-16 lg:pt-10" style="min-height:100svh;">
           <div class="mx-auto w-full max-w-xl rounded-3xl border border-white/10 bg-white/5 p-6 shadow-[12px_12px_28px_rgba(25,30,44,0.42),-10px_-10px_24px_rgba(97,110,150,0.16)] backdrop-blur-md lg:mx-0 lg:bg-transparent lg:p-0 lg:shadow-none lg:backdrop-blur-0">
@@ -1327,7 +1327,7 @@ function renderPage1() {
         <button
           id="loginDiscussionFabBtn"
           type="button"
-          class="grid h-14 w-14 place-items-center rounded-full border border-white/25 bg-[#3F4766]/75 text-white shadow-[10px_10px_22px_rgba(16,23,40,0.45),-8px_-8px_18px_rgba(112,126,165,0.2)] backdrop-blur-xl transition hover:-translate-y-0.5"
+          class="grid h-14 w-14 place-items-center rounded-full border border-white/25 bg-[#0b2a57]/78 text-white shadow-[10px_10px_22px_rgba(10,28,55,0.48),-8px_-8px_18px_rgba(90,133,201,0.18)] backdrop-blur-xl transition hover:-translate-y-0.5"
           aria-label="Ouvrir la discussion"
         >
           <i class="fa-solid fa-comments text-xl"></i>

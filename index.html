@@ -95,7 +95,7 @@
       body {
         min-height: 100%;
         margin: 0;
-        background: #3f4766;
+        background: #0b1f3f;
         overscroll-behavior-y: none;
       }
 
@@ -105,7 +105,7 @@
 
       .home-shell {
         height: 100dvh;
-        background: #3f4766;
+        background: #0b1f3f;
         color: #fff;
         font-family: "Poppins", system-ui, sans-serif;
         overflow: hidden;
@@ -146,12 +146,15 @@
         display: block;
         height: 100%;
         width: 100%;
-        object-fit: contain;
-        object-position: center;
+        object-fit: cover;
+        object-position: center center;
       }
 
       .home-shell__shade {
-        background: transparent;
+        background:
+          radial-gradient(circle at 14% 16%, rgba(59, 130, 246, 0.24), transparent 26%),
+          radial-gradient(circle at 82% 12%, rgba(56, 189, 248, 0.16), transparent 28%),
+          linear-gradient(180deg, rgba(8, 24, 48, 0.24), rgba(8, 24, 48, 0.58));
       }
 
       .home-shell__top {
@@ -197,19 +200,19 @@
         align-items: center;
         justify-content: center;
         border-radius: 14px;
-        background: #f57c00;
+        background: #2563eb;
         padding: 0 18px;
         color: #fff;
         font-size: 14px;
         font-weight: 600;
-        box-shadow: 8px 8px 18px rgba(163, 82, 27, 0.45), -6px -6px 14px rgba(255, 175, 102, 0.16);
+        box-shadow: 8px 8px 18px rgba(16, 55, 129, 0.45), -6px -6px 14px rgba(103, 168, 255, 0.18);
       }
 
       .home-shell__header-cta--ghost {
-        background: rgba(255, 255, 255, 0.08);
+        background: rgba(186, 230, 253, 0.1);
         color: #fff;
-        border: 1px solid rgba(255, 255, 255, 0.16);
-        box-shadow: 10px 10px 24px rgba(22, 28, 45, 0.34), -6px -6px 18px rgba(123, 140, 184, 0.12);
+        border: 1px solid rgba(147, 197, 253, 0.24);
+        box-shadow: 10px 10px 24px rgba(9, 29, 56, 0.36), -6px -6px 18px rgba(91, 142, 215, 0.14);
       }
 
       .home-shell__content {
@@ -221,11 +224,11 @@
 
       .home-shell__card {
         max-width: 540px;
-        border: 1px solid rgba(255, 255, 255, 0.16);
+        border: 1px solid rgba(147, 197, 253, 0.22);
         border-radius: 28px;
-        background: rgba(63, 71, 102, 0.62);
+        background: rgba(12, 37, 74, 0.64);
         padding: 28px 24px;
-        box-shadow: 12px 12px 30px rgba(18, 24, 38, 0.45), -8px -8px 22px rgba(110, 126, 165, 0.14);
+        box-shadow: 12px 12px 30px rgba(5, 19, 40, 0.5), -8px -8px 22px rgba(65, 114, 184, 0.16);
         backdrop-filter: blur(10px);
       }
 
