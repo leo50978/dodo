@@ -1276,6 +1276,13 @@ function buildEndModalPayload() {
       copy: `Advese w la pa t pedi, li te deside pa jwe. Kont ou ap ranbouse pou ou ka kontinye jwe.${rematchLine}`,
     };
   }
+  if (endedReason === "quit_refund_before_opening") {
+    return {
+      eyebrow: "Partie annulee",
+      title: "Kont ou ap ranbouse",
+      copy: `Parti a te kanpe avan 2 jwe yo te antre toutbon nan match la. Kont ou ap ranbouse pou ou ka rekomanse jwe.${rematchLine}`,
+    };
+  }
   if (endedReason === "draw") {
     return {
       eyebrow: "Match nul",

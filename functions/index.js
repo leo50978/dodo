@@ -12425,7 +12425,7 @@ function buildMorpionPresenceUpdates(room = {}, actorUid = "", nowMs = Date.now(
   };
 }
 
-async function applyMorpionLeaveForUidTx(tx, roomRefDoc, room = {}, uid = "", userEmail = "") {
+async function applyMorpionLeaveForUidTx(tx, roomRefDoc, room = {}, uid = "", userEmail = "", options = {}) {
   const safeUid = String(uid || "").trim();
   const currentUids = Array.from({ length: 2 }, (_, idx) => String((room.playerUids || [])[idx] || ""));
   if (!safeUid || !currentUids.includes(safeUid)) {
@@ -12438,6 +12438,43 @@ async function applyMorpionLeaveForUidTx(tx, roomRefDoc, room = {}, uid = "", us
 
   const status = String(room.status || "");
   const seatIndex = currentUids.findIndex((candidate) => candidate === safeUid);
+  const currentState = options.state && typeof options.state === "object"
+    ? options.state
+    : createInitialMorpionGameState(room);
+  if (shouldRefundMorpionLeaveBeforeOpening(room, currentState, seatIndex)) {
+    const refundState = buildMorpionLeaveRefundState(currentState, room, seatIndex, safeUid);
+    const refundRecord = {
+      seq: refundState.appliedActionSeq,
+      type: "quit_refund_before_opening",
+      player: seatIndex,
+      symbol: seatIndex === 0 ? "X" : "O",
+      cellIndex: -1,
+      row: -1,
+      col: -1,
+      actorUid: safeUid,
+    };
+    await refundMorpionEntriesForNoPlayTimeoutTx(tx, roomRefDoc, room);
+    tx.set(morpionGameStateRef(roomRefDoc.id), buildMorpionGameStateWrite(refundState), { merge: true });
+    const roomUpdate = buildMorpionRoomUpdateFromGameState(room, refundState, [refundRecord]);
+    tx.update(roomRefDoc, roomUpdate);
+    tx.set(roomRefDoc.collection("actions").doc(String(refundRecord.seq)), {
+      ...refundRecord,
+      roomId: roomRefDoc.id,
+      createdAt: admin.firestore.FieldValue.serverTimestamp(),
+    }, { merge: true });
+    writeMorpionRoomResultIfEndedTx(tx, roomRefDoc, room, roomUpdate);
+    return {
+      result: {
+        ok: true,
+        deleted: false,
+        status: "ended",
+        reason: "quit_refund_before_opening",
+        refunded: true,
+      },
+      shouldCleanup: false,
+      shouldNudgeBots: false,
+    };
+  }
   const nextPlayerUids = currentUids.slice();
   if (seatIndex >= 0) nextPlayerUids[seatIndex] = "";
   const nextPlayerNames = Array.from({ length: 2 }, (_, idx) => String((room.playerNames || [])[idx] || ""));
@@ -12585,7 +12622,10 @@ async function forceRemoveUserFromMorpionRoom(roomId = "", uid = "", userEmail =
 
   const roomRefDoc = morpionRoomRef(safeRoomId);
   const outcome = await db.runTransaction(async (tx) => {
-    const roomSnap = await tx.get(roomRefDoc);
+    const [roomSnap, stateSnap] = await Promise.all([
+      tx.get(roomRefDoc),
+      tx.get(morpionGameStateRef(safeRoomId)),
+    ]);
     if (!roomSnap.exists) {
       return {
         result: { ok: true, deleted: true, status: "missing" },
@@ -12593,7 +12633,9 @@ async function forceRemoveUserFromMorpionRoom(roomId = "", uid = "", userEmail =
         shouldNudgeBots: false,
       };
     }
-    return await applyMorpionLeaveForUidTx(tx, roomRefDoc, roomSnap.data() || {}, safeUid, userEmail);
+    const roomData = roomSnap.data() || {};
+    const stateData = stateSnap.exists ? normalizeMorpionGameState(stateSnap.data(), roomData) : createInitialMorpionGameState(roomData);
+    return await applyMorpionLeaveForUidTx(tx, roomRefDoc, roomData, safeUid, userEmail, { state: stateData });
   });
 
   if (outcome?.shouldCleanup) {
@@ -14666,6 +14708,33 @@ function buildMorpionTimeoutState(state = {}, room = {}) {
     endedReason: "timeout",
     currentPlayer: winnerSeat,
     winningLine: [],
+    appliedActionSeq: safeInt(state.appliedActionSeq) + 1,
+  };
+}
+
+function shouldRefundMorpionLeaveBeforeOpening(room = {}, state = {}, leavingSeat = -1) {
+  const safeLeavingSeat = safeSignedInt(leavingSeat, -1);
+  if (safeLeavingSeat < 0 || safeLeavingSeat > 1) return false;
+  if (String(room.status || "") !== "playing") return false;
+  if (isMorpionBotTestRoom(room)) return false;
+  if (!isMorpionSeatHuman(room, 0) || !isMorpionSeatHuman(room, 1)) return false;
+  if (String(state.endedReason || "").trim()) return false;
+  const placedCountBySeat = [0, 1].map((seat) => Math.max(0, safeInt((state.placedCountBySeat || [])[seat])));
+  return placedCountBySeat[0] <= 0 || placedCountBySeat[1] <= 0;
+}
+
+function buildMorpionLeaveRefundState(state = {}, room = {}, leavingSeat = -1, actorUid = "") {
+  const safeLeavingSeat = safeSignedInt(leavingSeat, -1);
+  const placedCountBySeat = [0, 1].map((seat) => Math.max(0, safeInt((state.placedCountBySeat || [])[seat])));
+  return {
+    ...state,
+    placedCountBySeat,
+    winnerSeat: -1,
+    winnerUid: "",
+    endedReason: "quit_refund_before_opening",
+    currentPlayer: safeLeavingSeat >= 0 ? safeLeavingSeat : safeSignedInt(state.currentPlayer, 0),
+    winningLine: [],
+    lastActorUid: String(actorUid || ""),
     appliedActionSeq: safeInt(state.appliedActionSeq) + 1,
   };
 }
@@ -16869,7 +16938,10 @@ exports.leaveRoomMorpion = publicOnCall("leaveRoomMorpion", async (request) => {
 
   const roomRefDoc = morpionRoomRef(roomId);
   const outcome = await db.runTransaction(async (tx) => {
-    const roomSnap = await tx.get(roomRefDoc);
+    const [roomSnap, stateSnap] = await Promise.all([
+      tx.get(roomRefDoc),
+      tx.get(morpionGameStateRef(roomId)),
+    ]);
     if (!roomSnap.exists) {
       return {
         result: { ok: true, deleted: true, status: "missing" },
@@ -16878,7 +16950,8 @@ exports.leaveRoomMorpion = publicOnCall("leaveRoomMorpion", async (request) => {
       };
     }
     const roomData = roomSnap.data() || {};
-    const result = await applyMorpionLeaveForUidTx(tx, roomRefDoc, roomData, uid, email);
+    const stateData = stateSnap.exists ? normalizeMorpionGameState(stateSnap.data(), roomData) : createInitialMorpionGameState(roomData);
+    const result = await applyMorpionLeaveForUidTx(tx, roomRefDoc, roomData, uid, email, { state: stateData });
     tx.set(morpionWaitingRequestRef(uid), {
       uid,
       roomId,
