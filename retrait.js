@@ -18,7 +18,7 @@ import { getXchangeState } from "./xchange.js";
 import { SUPPORT_WHATSAPP_PHONE } from "./support-contact.js";
 const MIN_WITHDRAWAL_HTG = 50;
 const BALANCE_DEBUG = true;
-const ASSISTANCE_PHONE = "50937914996";
+const ASSISTANCE_PHONE = SUPPORT_WHATSAPP_PHONE;
 const buildRetraitWhatsAppUrl = (message = "") => {
   const base = `https://wa.me/${ASSISTANCE_PHONE}`;
   const text = String(message || "").trim();

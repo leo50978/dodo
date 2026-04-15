@@ -395,6 +395,37 @@
         box-shadow: 18px 22px 44px rgba(17, 9, 5, 0.5), -10px -10px 22px rgba(133, 88, 55, 0.12);
       }
 
+      /* Confidence theme dedicated to recruitment modal (deposit/retrait message). */
+      #recruitmentModal .welcome-modal__card--campaign {
+        background:
+          radial-gradient(circle at top right, rgba(34, 211, 238, 0.2), transparent 36%),
+          linear-gradient(180deg, rgba(7, 47, 83, 0.98), rgba(5, 28, 55, 0.98));
+        border-color: rgba(125, 211, 252, 0.3);
+        box-shadow: 18px 22px 44px rgba(4, 20, 39, 0.5), -10px -10px 22px rgba(83, 145, 196, 0.12);
+      }
+
+      #recruitmentModal .welcome-modal__badge {
+        border-color: rgba(125, 211, 252, 0.4);
+        background: rgba(125, 211, 252, 0.14);
+        color: #d0f2ff;
+      }
+
+      #recruitmentModal .welcome-modal__btn {
+        background: linear-gradient(180deg, #0ea57a, #0b8965);
+        box-shadow: 8px 8px 18px rgba(10, 79, 58, 0.38), -6px -6px 14px rgba(108, 243, 193, 0.12);
+      }
+
+      #recruitmentModal .welcome-modal__ghost {
+        border-color: rgba(147, 197, 253, 0.34);
+        background: rgba(255, 255, 255, 0.08);
+        color: #e0f2fe;
+      }
+
+      #recruitmentModal .welcome-modal__close {
+        border-color: rgba(147, 197, 253, 0.34);
+        background: rgba(8, 29, 56, 0.5);
+      }
+
       .welcome-modal__badge {
         display: inline-flex;
         align-items: center;
@@ -640,39 +671,22 @@
       <div class="welcome-modal__backdrop" data-recruitment-close></div>
       <div class="welcome-modal__card welcome-modal__card--campaign" aria-labelledby="recruitmentTitle">
         <button class="welcome-modal__close" type="button" aria-label="Fermer" data-recruitment-close>×</button>
-        <div class="welcome-modal__badge">Mise a jour programme</div>
-        <h2 id="recruitmentTitle" class="welcome-modal__title">Le recrutement d'ambassadeurs est termine</h2>
+        <div class="welcome-modal__badge">Mesaj konfyans</div>
+        <h2 id="recruitmentTitle" class="welcome-modal__title">Depo ak retre fasil sou sit la</h2>
         <div id="recruitmentBody" class="welcome-modal__stack">
           <p class="welcome-modal__text">
-            Nous ne prenons plus de CV pour le programme <strong>Ambassadeur</strong>.
-          </p>
-          <div class="welcome-modal__facts" aria-label="Informations recrutement">
-            <div class="welcome-modal__fact">
-              <span class="welcome-modal__fact-icon"><i class="fa-solid fa-users"></i></span>
-              <span>Un nouveau programme <strong>Agent</strong> est disponible.</span>
-            </div>
-            <div class="welcome-modal__fact">
-              <span class="welcome-modal__fact-icon"><i class="fa-solid fa-medal"></i></span>
-              <span>Ce programme est <strong>gratuit</strong> et ouvert des maintenant.</span>
-            </div>
-            <div class="welcome-modal__fact">
-              <span class="welcome-modal__fact-icon"><i class="fa-solid fa-headset"></i></span>
-              <span>Contact direct avec un responsable pour demarrer rapidement.</span>
-            </div>
-          </div>
-          <p class="welcome-modal__text">
-            Clique sur le bouton ci-dessous pour parler a un responsable WhatsApp.
+            fe depot ak retre se on bagy ki fasil sou site la , ou kapab swa kontakte on agent ki la pou ede w swa fel poukow otomikman , mesi paske w chwazi nou , pa blye issit la nou pemet ou fe lajan ak kapassitew plis ou fo se pliss ou fe kob
           </p>
         </div>
         <div class="welcome-modal__cta welcome-modal__cta--campaign">
           <a
             id="recruitmentSupportBtn"
             class="welcome-modal__btn"
-            href="https://wa.me/50937914996?text=Bonjour%2C%20je%20veux%20des%20infos%20sur%20le%20programme%20Agent%20gratuit%20de%20Dominoes%20Lakay."
+            href="https://wa.me/50940507232?text=Bonjou%20agent%2C%20mwen%20bezwen%20ede%20pou%20fe%20depo%20sou%20sit%20la."
             target="_blank"
             rel="noopener"
           >
-            Contacter un responsable
+            Kontakte on agent
           </a>
           <button id="recruitmentHideBtn" class="welcome-modal__ghost welcome-modal__ghost--subtle" type="button">
             Je ne suis pas interesse

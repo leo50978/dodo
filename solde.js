@@ -16,7 +16,7 @@ const SOLDE_BUILD_TAG = "welcome-bonus-debug-2026-03-21-v2";
 const DEPOSIT_INFO_DISMISSED_KEY = "domino_deposit_info_hidden_v1";
 const REJECTED_ORDER_ALERT_SEEN_KEY = "domino_rejected_order_alert_seen_v1";
 const REJECTED_ORDER_SUPPORT_PHONE = "50940507232";
-const AGENT_DEPOSIT_SUPPORT_PHONE = "50941752992";
+const AGENT_DEPOSIT_SUPPORT_PHONE = REJECTED_ORDER_SUPPORT_PHONE;
 const WELCOME_BONUS_HTG = 25;
 const AGENT_REQUIRED_DEPOSIT_THRESHOLD_HTG = 500;
 
@@ -349,45 +349,41 @@ function ensureDepositInfoModal() {
 
   const overlay = document.createElement("div");
   overlay.id = "depositInfoModalOverlay";
-  overlay.className = "fixed inset-0 z-[3150] hidden items-end justify-center bg-[#160708]/72 px-[max(12px,env(safe-area-inset-left))] pb-[max(12px,env(safe-area-inset-bottom))] pt-[max(12px,env(safe-area-inset-top))] backdrop-blur-sm sm:items-center sm:px-4 sm:py-4";
+  overlay.className = "fixed inset-0 z-[3150] hidden items-end justify-center bg-[#071226]/68 px-[max(12px,env(safe-area-inset-left))] pb-[max(12px,env(safe-area-inset-bottom))] pt-[max(12px,env(safe-area-inset-top))] backdrop-blur-sm sm:items-center sm:px-4 sm:py-4";
   overlay.innerHTML = `
-    <div id="depositInfoModalPanel" class="w-full max-w-lg max-h-full overflow-y-auto rounded-[28px] border border-[#ff8a8a]/30 bg-[linear-gradient(180deg,rgba(87,17,22,0.98),rgba(44,9,13,0.98))] p-4 text-white shadow-[0_-18px_38px_rgba(34,8,11,0.5)] backdrop-blur-xl sm:max-h-[min(88vh,760px)] sm:rounded-[32px] sm:p-6 sm:shadow-[16px_18px_42px_rgba(22,6,9,0.48)]">
+    <div id="depositInfoModalPanel" class="w-full max-w-lg max-h-full overflow-y-auto rounded-[28px] border border-[#7dd3fc]/26 bg-[linear-gradient(180deg,rgba(10,44,80,0.97),rgba(8,26,52,0.98))] p-4 text-white shadow-[0_-18px_38px_rgba(6,20,42,0.5)] backdrop-blur-xl sm:max-h-[min(88vh,760px)] sm:rounded-[32px] sm:p-6 sm:shadow-[16px_18px_42px_rgba(6,20,42,0.48)]">
       <div class="flex items-start justify-between gap-3">
         <div class="min-w-0">
-          <div class="inline-flex items-center gap-2 rounded-full border border-[#ff9b9b]/25 bg-white/8 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.18em] text-[#ffd0d0]">
-            <i class="fa-solid fa-triangle-exclamation text-[12px]"></i>
-            Avertissement important
+          <div class="inline-flex items-center gap-2 rounded-full border border-[#7dd3fc]/28 bg-white/10 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.18em] text-[#bae6fd]">
+            <i class="fa-solid fa-shield-halved text-[12px]"></i>
+            Mesaj konfyans
           </div>
-          <h3 class="mt-3 text-xl font-bold text-white sm:text-2xl">Avant de faire ton depot</h3>
+          <h3 class="mt-3 text-xl font-bold text-white sm:text-2xl">Depo ou an sekirite</h3>
         </div>
         <button id="depositInfoClose" type="button" class="grid h-10 w-10 shrink-0 place-items-center rounded-full border border-white/15 bg-white/10 text-white">
           <i class="fa-solid fa-xmark"></i>
         </button>
       </div>
 
-      <div class="mt-4 rounded-[24px] border border-[#ff9c9c]/20 bg-white/8 p-4 sm:p-5">
+      <div class="mt-4 rounded-[24px] border border-[#7dd3fc]/22 bg-white/10 p-4 sm:p-5">
         <div class="flex items-start gap-3">
-          <div class="grid h-11 w-11 shrink-0 place-items-center rounded-2xl border border-[#ff9c9c]/20 bg-[#ff6b6b]/14 text-[#ffd8d8]">
+          <div class="grid h-11 w-11 shrink-0 place-items-center rounded-2xl border border-[#93c5fd]/28 bg-[#22d3ee]/14 text-[#dbeafe]">
             <i class="fa-solid fa-shield-halved text-lg"></i>
           </div>
           <div class="min-w-0">
             <p class="text-sm leading-7 text-white/92">
-              <span class="font-semibold text-white">Attention:</span> si tu envoies un faux depot, un depot vole, un faux document, ou si tu fais une tentative d'arnaque ou de vol, tu peux perdre definitivement ton compte, ton solde, tes gains et l'acces a la plateforme. Le vol, l'arnaque et la fraude peuvent aussi avoir des consequences avec la justice.
+              Fason pou fe depo yo fasil epi yo sekirize. Pou nou kapab pi proch nou, nou gen 2 system depo sou sit la. Kontakte on agent kounya pou fe depo. Metod sa natirel, li senp, li fasil epi li mete w an konfyans. Mesi paske w chwazi nou, vinn fe lajan ak kapasitew.
             </p>
-            <button id="depositInfoTermsLink" type="button" class="mt-3 inline-flex items-center gap-2 text-sm font-semibold text-sky-300 underline decoration-sky-300/80 underline-offset-4">
-              <i class="fa-solid fa-book-open text-[13px]"></i>
-              Lire les conditions d'utilisation
-            </button>
           </div>
         </div>
       </div>
 
       <div class="mt-5 grid gap-3 sm:grid-cols-2">
-        <button id="depositInfoHide" type="button" class="h-11 rounded-2xl border border-white/15 bg-white/10 text-sm font-semibold text-white">
+        <button id="depositInfoHide" type="button" class="h-11 rounded-2xl border border-[#93c5fd]/25 bg-white/10 text-sm font-semibold text-[#e0f2fe]">
           Ne plus afficher ce message
         </button>
-        <button id="depositInfoContinue" type="button" class="h-11 rounded-2xl border border-[#ff8a8a]/35 bg-[#c62828] text-sm font-semibold text-white shadow-[10px_12px_22px_rgba(96,17,17,0.34)]">
-          Je comprends
+        <button id="depositInfoContactAgent" type="button" class="h-11 rounded-2xl border border-[#6ee7b7]/26 bg-[#0f9f79] text-sm font-semibold text-white shadow-[10px_12px_22px_rgba(6,68,51,0.36)]">
+          Contacter l'agent
         </button>
       </div>
     </div>
@@ -398,8 +394,7 @@ function ensureDepositInfoModal() {
   const panel = overlay.querySelector("#depositInfoModalPanel");
   const closeBtn = overlay.querySelector("#depositInfoClose");
   const hideBtn = overlay.querySelector("#depositInfoHide");
-  const continueBtn = overlay.querySelector("#depositInfoContinue");
-  const termsBtn = overlay.querySelector("#depositInfoTermsLink");
+  const contactAgentBtn = overlay.querySelector("#depositInfoContactAgent");
 
   const close = () => {
     overlay.classList.add("hidden");
@@ -435,13 +430,15 @@ function ensureDepositInfoModal() {
   if (panel) panel.addEventListener("click", (ev) => ev.stopPropagation());
   if (closeBtn) closeBtn.addEventListener("click", close);
   if (hideBtn) hideBtn.addEventListener("click", handleHideForever);
-  if (continueBtn) continueBtn.addEventListener("click", handleContinue);
-  if (termsBtn) {
-    termsBtn.addEventListener("click", () => {
-      const termsOverlay = ensureDepositTermsModal();
-      if (typeof termsOverlay.__openDepositTerms === "function") {
-        termsOverlay.__openDepositTerms();
+  if (contactAgentBtn) {
+    contactAgentBtn.addEventListener("click", () => {
+      const text = encodeURIComponent("Bonjou agent, mwen bezwen fe yon depo kounya tanpri.");
+      const url = `https://wa.me/${AGENT_DEPOSIT_SUPPORT_PHONE}?text=${text}`;
+      const popup = window.open(url, "_blank", "noopener,noreferrer");
+      if (!popup) {
+        window.location.href = url;
       }
+      close();
     });
   }
 

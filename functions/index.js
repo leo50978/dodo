@@ -20790,6 +20790,328 @@ async function computeGamesVolumeAnalyticsSnapshot(options = {}) {
   };
 }
 
+function clampPercentScore(value = 0) {
+  const num = Number(value);
+  if (!Number.isFinite(num)) return 0;
+  return Math.max(0, Math.min(100, num));
+}
+
+function getAiAdvisorReportConfig(rawReportType = "") {
+  const reportType = String(rawReportType || "daily").trim().toLowerCase() === "global"
+    ? "global"
+    : "daily";
+  return reportType === "global"
+    ? {
+        reportType,
+        analyticsWindow: "30d",
+        label: "30 derniers jours",
+        goal: "Vue globale recente pour piloter la croissance, la retention et la monetisation sans charger tout l'historique brut.",
+      }
+    : {
+        reportType,
+        analyticsWindow: "today",
+        label: "Aujourd'hui",
+        goal: "Vue quotidienne pour savoir quoi corriger, surveiller ou pousser dans les prochaines heures.",
+      };
+}
+
+function buildAiTrendDigest(trend = [], key = "") {
+  const rows = Array.isArray(trend) ? trend : [];
+  const values = rows
+    .map((item) => Number(item?.[key]))
+    .filter((value) => Number.isFinite(value) && value >= 0);
+
+  if (values.length <= 0) {
+    return {
+      direction: "flat",
+      changePct: 0,
+      baselineAvg: 0,
+      recentAvg: 0,
+      latest: 0,
+      samples: 0,
+    };
+  }
+
+  const splitIndex = Math.max(1, Math.floor(values.length / 2));
+  const baseline = values.slice(0, splitIndex);
+  const recent = values.slice(splitIndex);
+  const safeRecent = recent.length > 0 ? recent : baseline;
+  const baselineAvg = baseline.length > 0
+    ? baseline.reduce((sum, value) => sum + value, 0) / baseline.length
+    : 0;
+  const recentAvg = safeRecent.reduce((sum, value) => sum + value, 0) / Math.max(1, safeRecent.length);
+  const latest = values[values.length - 1] || 0;
+  const changePct = baselineAvg > 0
+    ? Number((((recentAvg - baselineAvg) / baselineAvg) * 100).toFixed(2))
+    : (recentAvg > 0 ? 100 : 0);
+
+  let direction = "flat";
+  if (changePct >= 8) direction = "up";
+  else if (changePct <= -8) direction = "down";
+
+  return {
+    direction,
+    changePct,
+    baselineAvg: Number(baselineAvg.toFixed(2)),
+    recentAvg: Number(recentAvg.toFixed(2)),
+    latest: Number(latest.toFixed(2)),
+    samples: values.length,
+  };
+}
+
+function computeAiAdvisorHealth(snapshot = {}) {
+  const visitsSummary = snapshot.siteVisits?.summary || {};
+  const presenceSummary = snapshot.presence?.summary || {};
+  const gamesSummary = snapshot.games?.summary || {};
+  const acquisitionSummary = snapshot.acquisition?.summary || {};
+  const depositsSummary = snapshot.deposits?.summary || {};
+  const operationsSummary = snapshot.operations || {};
+
+  const rangeVisits = safeInt(visitsSummary.rangeVisits);
+  const peakVisitors = safeInt(presenceSummary.peakVisitors);
+  const peakPlayers = safeInt(presenceSummary.peakPlayers);
+  const totalMatches = safeInt(gamesSummary.totalMatches);
+  const approvedHtg = safeInt(depositsSummary.approvedHtg);
+  const totalAccounts = Math.max(1, safeInt(acquisitionSummary.totalAccounts));
+  const activeRatePct = Number(acquisitionSummary.activeRatePct || 0);
+  const signupToActiveRatePct = Number(acquisitionSummary.signupToActiveRatePct || 0);
+  const signupToFidelizedRatePct = Number(acquisitionSummary.signupToFidelizedRatePct || 0);
+  const signupToDepositRatePct = Number(acquisitionSummary.signupToDepositRatePct || 0);
+  const approvedRatePct = Number(depositsSummary.approvedRatePct || 0);
+  const rejectedRatePct = Number(depositsSummary.rejectedRatePct || 0);
+  const pendingDeposits = safeInt(depositsSummary.pendingCount);
+  const pendingWithdrawals = safeInt(operationsSummary.pendingWithdrawalsCount);
+  const frozenAccounts = safeInt(acquisitionSummary.frozenAccounts);
+  const openDeletionReviewCount = safeInt(operationsSummary.openDeletionReviewCount);
+  const activeGames = [
+    safeInt(gamesSummary.classicMatches) > 0,
+    safeInt(gamesSummary.duelMatches) > 0,
+    safeInt(gamesSummary.morpionMatches) > 0,
+  ].filter(Boolean).length;
+
+  const trafficScore = clampPercentScore(
+    Math.min(42, Math.log10(rangeVisits + 1) * 19)
+    + Math.min(28, Math.log10(peakVisitors + 1) * 15)
+    + Math.min(30, Math.log10(totalMatches + 1) * 15)
+  );
+
+  const matchPerVisit = rangeVisits > 0 ? (totalMatches / rangeVisits) : 0;
+  const livePlayRatio = peakVisitors > 0 ? (peakPlayers / peakVisitors) : 0;
+  const engagementScore = clampPercentScore(
+    Math.min(45, matchPerVisit * 95)
+    + Math.min(25, (activeGames / 3) * 25)
+    + Math.min(30, livePlayRatio * 60)
+  );
+
+  const monetizationScore = clampPercentScore(
+    Math.min(50, Math.log10(approvedHtg + 1) * 12)
+    + Math.min(30, approvedRatePct * 0.3)
+    + Math.min(20, signupToDepositRatePct * 0.67)
+  );
+
+  const retentionScore = clampPercentScore(
+    Math.min(45, activeRatePct * 0.55)
+    + Math.min(30, signupToActiveRatePct * 0.6)
+    + Math.min(25, signupToFidelizedRatePct * 0.8)
+  );
+
+  const frozenRatePct = totalAccounts > 0 ? ((frozenAccounts / totalAccounts) * 100) : 0;
+  const operationsScore = clampPercentScore(
+    100
+    - Math.min(22, pendingDeposits * 4)
+    - Math.min(18, pendingWithdrawals * 4)
+    - Math.min(24, rejectedRatePct * 0.45)
+    - Math.min(20, frozenRatePct * 1.15)
+    - Math.min(16, openDeletionReviewCount * 2)
+  );
+
+  const dimensions = [
+    { key: "traffic", label: "Trafic", score: Math.round(trafficScore) },
+    { key: "engagement", label: "Engagement", score: Math.round(engagementScore) },
+    { key: "monetization", label: "Monetisation", score: Math.round(monetizationScore) },
+    { key: "retention", label: "Retention", score: Math.round(retentionScore) },
+    { key: "operations", label: "Operations", score: Math.round(operationsScore) },
+  ];
+
+  const overallScore = Math.round(
+    dimensions.reduce((sum, item) => sum + safeInt(item.score), 0) / Math.max(1, dimensions.length)
+  );
+
+  let level = "avance";
+  let tone = "good";
+  if (overallScore < 35) {
+    level = "malade";
+    tone = "critical";
+  } else if (overallScore < 55) {
+    level = "amateur";
+    tone = "warning";
+  } else if (overallScore < 75) {
+    level = "moyen";
+    tone = "watch";
+  }
+
+  return {
+    overallScore,
+    level,
+    tone,
+    weakestDimensions: dimensions.slice().sort((left, right) => left.score - right.score).slice(0, 2),
+    strongestDimensions: dimensions.slice().sort((left, right) => right.score - left.score).slice(0, 2),
+    dimensions,
+  };
+}
+
+function buildAiAdvisorNarrative(snapshot = {}) {
+  const visitsSummary = snapshot.siteVisits?.summary || {};
+  const presenceSummary = snapshot.presence?.summary || {};
+  const gamesSummary = snapshot.games?.summary || {};
+  const acquisitionSummary = snapshot.acquisition?.summary || {};
+  const depositsSummary = snapshot.deposits?.summary || {};
+  const operationsSummary = snapshot.operations || {};
+  const health = snapshot.health || {};
+  const weakestLabels = Array.isArray(health.weakestDimensions)
+    ? health.weakestDimensions.map((item) => String(item.label || "").trim()).filter(Boolean)
+    : [];
+  const strongestLabels = Array.isArray(health.strongestDimensions)
+    ? health.strongestDimensions.map((item) => String(item.label || "").trim()).filter(Boolean)
+    : [];
+
+  const alerts = [];
+  const strengths = [];
+  const priorities = [];
+
+  if (safeInt(visitsSummary.rangeVisits) <= 0) {
+    alerts.push("Aucun trafic visiteur pertinent n'a ete mesure sur la fenetre selectionnee.");
+  }
+  if (safeInt(gamesSummary.totalMatches) <= 0) {
+    alerts.push("Aucune partie terminee n'a ete detectee: il faut verifier l'acquisition, l'entree en salle ou la qualite de conversion vers le jeu.");
+  }
+  if (Number(depositsSummary.approvedRatePct || 0) < 55 && safeInt(depositsSummary.requestedCount) >= 5) {
+    alerts.push("Le taux d'approbation des depots est faible: cela peut casser la confiance et ralentir la croissance.");
+  }
+  if (safeInt(depositsSummary.pendingCount) >= 3) {
+    alerts.push(`Il y a ${safeInt(depositsSummary.pendingCount)} depot(s) en attente, ce qui cree un risque operationnel.`);
+  }
+  if (safeInt(operationsSummary.pendingWithdrawalsCount) >= 3) {
+    alerts.push(`Il y a ${safeInt(operationsSummary.pendingWithdrawalsCount)} retrait(s) en attente, ce qui peut tendre le support et la satisfaction.`);
+  }
+  if (Number(acquisitionSummary.signupToDepositRatePct || 0) < 10 && safeInt(acquisitionSummary.signupsCount) >= 5) {
+    alerts.push("La conversion inscription vers premier depot est faible: il faut simplifier le tunnel, rassurer et mieux orienter le nouveau client.");
+  }
+  if (safeInt(acquisitionSummary.frozenAccounts) > 0) {
+    alerts.push(`Le site compte ${safeInt(acquisitionSummary.frozenAccounts)} compte(s) gele(s): surveiller les motifs de gel et leur impact sur l'image du service.`);
+  }
+  if (safeInt(operationsSummary.openDeletionReviewCount) > 0) {
+    alerts.push(`Des comptes inactifs sont en revue de suppression (${safeInt(operationsSummary.openDeletionReviewCount)} ouverts): pense a qualifier s'ils ont encore une valeur business.`);
+  }
+
+  if (safeInt(visitsSummary.rangeVisits) > 0 && safeInt(gamesSummary.totalMatches) > 0) {
+    strengths.push("Le site convertit deja une partie du trafic en activite de jeu mesurable.");
+  }
+  if (Number(depositsSummary.approvedRatePct || 0) >= 75 && safeInt(depositsSummary.approvedCount) > 0) {
+    strengths.push("Le traitement des depots approuves reste solide sur la periode observee.");
+  }
+  if (Number(acquisitionSummary.signupToActiveRatePct || 0) >= 35) {
+    strengths.push("Une part correcte des nouvelles inscriptions reste active apres l'entree sur le site.");
+  }
+  if (strongestLabels.length > 0) {
+    strengths.push(`Les zones les plus solides actuellement sont: ${strongestLabels.join(", ")}.`);
+  }
+
+  if (weakestLabels.includes("Trafic")) {
+    priorities.push("Priorite P1: relancer le trafic qualifie et la visibilite du site avant d'ajouter de nouvelles fonctionnalites.");
+  }
+  if (weakestLabels.includes("Engagement")) {
+    priorities.push("Priorite P1: augmenter l'entree en partie, la frequence de jeu et la repartition entre les jeux.");
+  }
+  if (weakestLabels.includes("Monetisation")) {
+    priorities.push("Priorite P1: travailler le tunnel inscription -> depot -> premiere partie jouee.");
+  }
+  if (weakestLabels.includes("Retention")) {
+    priorities.push("Priorite P1: renforcer le retour des nouveaux inscrits et la fidelisation des comptes actifs.");
+  }
+  if (weakestLabels.includes("Operations")) {
+    priorities.push("Priorite P1: fluidifier les traitements operations/support pour eviter que les frictions detruisent la conversion.");
+  }
+  if (priorities.length <= 0) {
+    priorities.push("Priorite P1: consolider ce qui marche deja et choisir 1 a 2 optimisations a fort impact au lieu de disperser les efforts.");
+  }
+
+  return {
+    alerts: alerts.slice(0, 6),
+    strengths: strengths.slice(0, 5),
+    priorities: priorities.slice(0, 4),
+  };
+}
+
+async function computeAiAdvisorSnapshot(options = {}) {
+  const nowMs = safeSignedInt(options.nowMs) || Date.now();
+  const reportConfig = getAiAdvisorReportConfig(options.reportType || options.mode || options.type || "daily");
+  const sharedOptions = {
+    window: reportConfig.analyticsWindow,
+    nowMs,
+  };
+
+  const clientsCollection = db.collection(CLIENTS_COLLECTION);
+  const [presenceResult, siteVisitsResult, gamesResult, acquisitionSnapshot, depositSnapshot, pendingWithdrawalsCount, deletionReviewPendingCount, deletionReviewContactedCount] = await Promise.all([
+    computePresenceAnalyticsSnapshot(sharedOptions),
+    computeSiteVisitsAnalyticsSnapshot(sharedOptions),
+    computeGamesVolumeAnalyticsSnapshot(sharedOptions),
+    computeClientAcquisitionSnapshot(sharedOptions),
+    computeDepositAnalyticsSnapshot(sharedOptions),
+    getAggregationCount(db.collectionGroup("withdrawals").where("status", "==", "pending")),
+    getAggregationCount(clientsCollection.where("deletionReviewStatus", "==", CLIENT_DELETION_REVIEW_PENDING_STATUS)),
+    getAggregationCount(clientsCollection.where("deletionReviewStatus", "==", CLIENT_DELETION_REVIEW_CONTACTED_STATUS)),
+  ]);
+
+  const snapshot = {
+    generatedAtMs: nowMs,
+    reportType: reportConfig.reportType,
+    reportLabel: reportConfig.label,
+    reportGoal: reportConfig.goal,
+    windows: {
+      analyticsWindow: reportConfig.analyticsWindow,
+    },
+    presence: {
+      summary: presenceResult?.snapshot?.summary || {},
+      trendDigest: buildAiTrendDigest(presenceResult?.snapshot?.trend || [], "peakVisitors"),
+    },
+    siteVisits: {
+      summary: siteVisitsResult?.snapshot?.summary || {},
+      trendDigest: buildAiTrendDigest(siteVisitsResult?.snapshot?.trend || [], "visitCount"),
+    },
+    games: {
+      summary: gamesResult?.snapshot?.summary || {},
+      mix: Array.isArray(gamesResult?.snapshot?.mix) ? gamesResult.snapshot.mix : [],
+      trendDigest: buildAiTrendDigest(gamesResult?.snapshot?.trend || [], "totalMatches"),
+    },
+    acquisition: {
+      summary: acquisitionSnapshot?.summary || {},
+      truncated: acquisitionSnapshot?.truncated === true,
+      trendDigest: buildAiTrendDigest(acquisitionSnapshot?.series?.signups || [], "value"),
+    },
+    deposits: {
+      summary: depositSnapshot?.summary || {},
+      truncated: depositSnapshot?.truncated === true,
+      trendDigest: buildAiTrendDigest(depositSnapshot?.series?.approvedHtg || [], "value"),
+    },
+    operations: {
+      pendingWithdrawalsCount: safeInt(pendingWithdrawalsCount),
+      deletionReviewPendingCount: safeInt(deletionReviewPendingCount),
+      deletionReviewContactedCount: safeInt(deletionReviewContactedCount),
+      openDeletionReviewCount: safeInt(deletionReviewPendingCount) + safeInt(deletionReviewContactedCount),
+    },
+  };
+
+  snapshot.health = computeAiAdvisorHealth(snapshot);
+  snapshot.narrative = buildAiAdvisorNarrative(snapshot);
+
+  return {
+    ok: true,
+    generatedAtMs: nowMs,
+    snapshot,
+  };
+}
+
 exports.getPresenceAnalyticsSnapshot = publicOnCall(
   "getPresenceAnalyticsSnapshot",
   async (request) => {
@@ -20820,6 +21142,18 @@ exports.getGamesVolumeAnalyticsSnapshot = publicOnCall(
     assertFinanceAdmin(request);
     const payload = request.data && typeof request.data === "object" ? request.data : {};
     return computeGamesVolumeAnalyticsSnapshot(payload);
+  },
+  {
+    memory: "1GiB",
+  }
+);
+
+exports.getAiAdvisorSnapshot = publicOnCall(
+  "getAiAdvisorSnapshot",
+  async (request) => {
+    assertFinanceAdmin(request);
+    const payload = request.data && typeof request.data === "object" ? request.data : {};
+    return computeAiAdvisorSnapshot(payload);
   },
   {
     memory: "1GiB",

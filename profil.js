@@ -1789,6 +1789,7 @@ export function mountProfilePage(options = {}) {
   const copyReferralCodeBtn = document.getElementById("profileCopyReferralCode");
   const copyReferralLinkBtn = document.getElementById("profileCopyReferralLink");
   const agentDashboardBtn = document.getElementById("profileAgentDashboardBtn");
+  const contactAgentBtn = document.getElementById("profileContactAgentBtn");
 
   const closeOverlay = (overlay) => {
     if (!overlay) return;
@@ -1921,6 +1922,17 @@ export function mountProfilePage(options = {}) {
     agentDashboardBtn.dataset.bound = "1";
     agentDashboardBtn.addEventListener("click", () => {
       window.location.href = "./agent-dashboard.html";
+    });
+  }
+
+  if (contactAgentBtn && contactAgentBtn.dataset.bound !== "1") {
+    contactAgentBtn.dataset.bound = "1";
+    contactAgentBtn.addEventListener("click", () => {
+      const url = buildSupportWhatsAppUrl("Bonjou agent, mwen bezwen asistans sou kont mwen tanpri.");
+      const popup = window.open(url, "_blank", "noopener,noreferrer");
+      if (!popup) {
+        window.location.href = url;
+      }
     });
   }
 
