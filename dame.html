@@ -1,0 +1,244 @@
+<!doctype html>
+<html lang="fr">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Jeu de dame | Does</title>
+    <link rel="icon" href="/favicon.ico" />
+    <link rel="stylesheet" href="/draughtsjs-master/draughts.css" />
+    <style>
+      :root {
+        --bg-1: #0f1b34;
+        --bg-2: #20365f;
+        --card: rgba(14, 29, 57, 0.82);
+        --line: rgba(255, 255, 255, 0.12);
+        --text: #f5f8ff;
+        --muted: rgba(235, 242, 255, 0.72);
+        --accent: #64d4ff;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      body {
+        margin: 0;
+        min-height: 100vh;
+        color: var(--text);
+        font-family: "Segoe UI", Tahoma, Geneva, Verdana, sans-serif !important;
+        background:
+          radial-gradient(1200px 680px at 10% 0%, rgba(91, 161, 255, 0.3), transparent 58%),
+          radial-gradient(1000px 560px at 100% 100%, rgba(78, 216, 255, 0.26), transparent 62%),
+          linear-gradient(150deg, var(--bg-1), var(--bg-2));
+        padding: 18px;
+      }
+
+      .game-shell {
+        width: min(1120px, 100%);
+        margin: 0 auto;
+      }
+
+      .game-topbar {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+        margin-bottom: 14px;
+      }
+
+      .back-btn {
+        border: 1px solid var(--line);
+        background: rgba(255, 255, 255, 0.12);
+        color: var(--text);
+        border-radius: 999px;
+        padding: 9px 14px;
+        font-weight: 600;
+        cursor: pointer;
+      }
+
+      .mode-badge {
+        border: 1px solid rgba(100, 212, 255, 0.5);
+        background: rgba(100, 212, 255, 0.12);
+        color: #d8f5ff;
+        padding: 7px 12px;
+        border-radius: 999px;
+        font-size: 13px;
+      }
+
+      .bot-status {
+        margin-top: 10px;
+        border: 1px solid rgba(150, 236, 255, 0.35);
+        background: rgba(79, 190, 255, 0.14);
+        color: #e9f9ff;
+        border-radius: 12px;
+        padding: 9px 10px;
+        font-size: 12px;
+      }
+
+      #draughts {
+        float: none;
+        display: grid;
+        grid-template-columns: minmax(0, 1fr);
+        gap: 14px;
+      }
+
+      #draughts > div {
+        float: none;
+      }
+
+      #board {
+        width: min(92vw, 560px);
+        height: min(92vw, 560px);
+        max-height: 70vh;
+        margin: 0 auto;
+        border: 2px solid rgba(255, 255, 255, 0.18);
+        border-radius: 18px;
+        overflow: hidden;
+        box-shadow: 0 22px 42px rgba(4, 11, 26, 0.45);
+      }
+
+      #dash {
+        margin: 0;
+        width: 100%;
+        border: 1px solid var(--line);
+        border-radius: 18px;
+        background: var(--card);
+        height: auto;
+        min-height: 160px;
+        display: flex;
+        overflow: hidden;
+      }
+
+      #dash > div {
+        float: none;
+        flex: 1;
+        width: auto;
+        padding: 12px;
+      }
+
+      #dash > .player0 {
+        border-right: 1px solid var(--line);
+      }
+
+      #dash > .player0 > h3,
+      #dash > .player1 > h3 {
+        margin: 0 0 10px;
+        text-align: left;
+        font-size: 15px;
+        color: var(--text);
+      }
+
+      #dash > div > div {
+        height: auto;
+        min-height: 54px;
+      }
+
+      #dash > div > div > div {
+        width: 34px;
+        height: 34px;
+      }
+
+      #banner-msg {
+        position: fixed;
+        z-index: 80;
+        top: 50%;
+        left: 50%;
+        margin: 0;
+        transform: translate(-50%, -50%);
+        border: 1px solid rgba(111, 232, 188, 0.55);
+        border-radius: 18px;
+        background: rgba(21, 44, 47, 0.94);
+        color: #e5fff4;
+        padding: 16px 20px;
+        text-align: center;
+        box-shadow: 0 16px 30px rgba(0, 0, 0, 0.42);
+      }
+
+      #options {
+        display: none;
+      }
+
+      .meta-card {
+        border: 1px solid var(--line);
+        border-radius: 16px;
+        padding: 12px 14px;
+        background: var(--card);
+        color: var(--muted);
+        font-size: 13px;
+        line-height: 1.5;
+        text-align: center;
+      }
+
+      @media (min-width: 980px) {
+        #draughts {
+          grid-template-columns: minmax(0, 1fr) 300px;
+          align-items: start;
+          column-gap: 16px;
+        }
+
+        #board {
+          margin: 0;
+        }
+
+        .meta-card {
+          text-align: left;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <main class="game-shell">
+      <header class="game-topbar">
+        <button class="back-btn" type="button" onclick="window.location.href='./index.html'">Retour accueil</button>
+        <span class="mode-badge">Jeu de dame vs bot local</span>
+      </header>
+
+      <section id="draughts">
+        <div id="board"></div>
+
+        <aside>
+          <div id="dash">
+            <div class="player0">
+              <h3>Joueur 1</h3>
+              <div class="captured"></div>
+            </div>
+            <div class="player1">
+              <h3>Joueur 2</h3>
+              <div class="captured"></div>
+            </div>
+          </div>
+          <div id="botStatus" class="bot-status">Bot la pare.</div>
+          <div class="meta-card" style="margin-top: 12px;">
+            Ou ap jwe kont yon bot lokal ki aktif otomatikman. Pa gen fonksyon anliy pou bot sa a, tout kalkil fet sou aparèy la.
+          </div>
+        </aside>
+
+        <div id="banner-msg" style="display: none;">
+          <h3>Felisitasyon</h3>
+          <h2></h2>
+          <h3>ou genyen pati a!</h3>
+        </div>
+
+        <div id="options" aria-hidden="true">
+          <div>
+            Fieldsize:
+            <select id="size">
+              <option value="8" selected>8</option>
+            </select>
+          </div>
+          <div>Force attack: <input type="checkbox" id="forceattack" value="1" checked /></div>
+          <div>Force hold piece: <input type="checkbox" id="forcehold" value="1" /></div>
+          <div>Backward attack: <input type="checkbox" id="backwardattack" value="1" /></div>
+          <div>Queen free run: <input type="checkbox" id="queenfreerun" value="1" checked /></div>
+          <div>Queen attack and run: <input type="checkbox" id="queenattackrun" value="1" /></div>
+          <div>Sounds: <input type="checkbox" id="sounds" value="1" /></div>
+        </div>
+      </section>
+    </main>
+
+    <script src="/draughtsjs-master/draughts.js"></script>
+    <script src="/draughts-bot/dame-bot-tablebase.js"></script>
+    <script src="/draughts-bot/dame-bot-engine.js"></script>
+    <script src="/draughts-bot/dame-bot-controller.js"></script>
+  </body>
+</html>

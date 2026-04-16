@@ -92,6 +92,14 @@ export async function updateClientProfileSecure(payload = {}) {
   return invokeCallable("updateClientProfileSecure", payload, "Impossible de mettre à jour le profil.");
 }
 
+export async function recordPongMatchResultSecure(payload = {}) {
+  return invokeCallable("recordPongMatchResultSecure", payload, "Impossible d'enregistrer le resultat Pong.");
+}
+
+export async function startPongWagerSecure(payload = {}) {
+  return invokeCallable("startPongWagerSecure", payload, "Impossible de demarrer le pari Pong.");
+}
+
 export async function createOrderSecure(payload = {}) {
   return invokeCallable("createOrderSecure", payload, "Impossible de créer la commande.");
 }
@@ -254,6 +262,14 @@ export async function listRecentMorpionWhatsappContactsSecure(payload = {}) {
 
 export async function getRecruitmentCampaignSnapshotSecure(payload = {}) {
   return invokeCallable("getRecruitmentCampaignSnapshotSecure", payload, "Impossible de charger la campagne de recrutement.");
+}
+
+export async function getPublicWhatsappModalConfigSecure(payload = {}) {
+  return invokeCallable("getPublicWhatsappModalConfigSecure", payload, "Impossible de charger la configuration WhatsApp.");
+}
+
+export async function setWhatsappModalConfigSecure(payload = {}) {
+  return invokeCallable("setWhatsappModalConfigSecure", payload, "Impossible de mettre à jour la configuration WhatsApp.");
 }
 
 export async function recordRecruitmentVisitSecure(payload = {}) {

@@ -1,0 +1,628 @@
+<!doctype html>
+<html lang="fr">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <title>Dominoes Lakay · Pong</title>
+    <style>
+      html,
+      body {
+        margin: 0;
+        width: 100%;
+        height: 100%;
+        background: #050b16;
+        overflow: hidden;
+        font-family: "Poppins", system-ui, sans-serif;
+      }
+
+      .shell {
+        position: fixed;
+        inset: 0;
+        display: flex;
+        flex-direction: column;
+      }
+
+      .topbar {
+        height: max(56px, calc(56px + env(safe-area-inset-top)));
+        padding-top: env(safe-area-inset-top);
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+        padding-inline: max(12px, env(safe-area-inset-left)) max(12px, env(safe-area-inset-right));
+        background: linear-gradient(180deg, rgba(8, 17, 34, 0.95), rgba(8, 17, 34, 0.72));
+        border-bottom: 1px solid rgba(173, 198, 255, 0.16);
+        color: #f3f7ff;
+      }
+
+      .title {
+        font-size: 0.96rem;
+        font-weight: 700;
+        letter-spacing: 0.02em;
+      }
+
+      .back-link {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        min-height: 36px;
+        padding: 0 14px;
+        border-radius: 10px;
+        border: 1px solid rgba(173, 198, 255, 0.24);
+        color: #f3f7ff;
+        text-decoration: none;
+        background: rgba(255, 255, 255, 0.06);
+        font-size: 0.86rem;
+        font-weight: 600;
+      }
+
+      .does-badge {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        min-height: 36px;
+        padding: 0 12px;
+        border-radius: 10px;
+        border: 1px solid rgba(255, 198, 110, 0.38);
+        background: rgba(245, 124, 0, 0.18);
+        color: #ffe8cf;
+        font-size: 0.82rem;
+        font-weight: 700;
+        white-space: nowrap;
+      }
+
+      .frame-wrap {
+        flex: 1;
+        min-height: 0;
+      }
+
+      iframe {
+        width: 100%;
+        height: 100%;
+        border: 0;
+        background: #000;
+        display: block;
+      }
+
+      .overlay {
+        position: fixed;
+        inset: 0;
+        z-index: 30;
+        display: none;
+        align-items: center;
+        justify-content: center;
+        background: rgba(0, 0, 0, 0.56);
+        backdrop-filter: blur(6px);
+        padding: 16px;
+      }
+
+      .overlay.active {
+        display: flex;
+      }
+
+      .panel {
+        width: min(420px, 100%);
+        border-radius: 24px;
+        border: 1px solid rgba(255, 255, 255, 0.16);
+        background: linear-gradient(180deg, rgba(58, 68, 98, 0.96), rgba(35, 44, 68, 0.96));
+        color: #f8fbff;
+        box-shadow: 0 18px 40px rgba(8, 12, 24, 0.45);
+        padding: 18px;
+      }
+
+      .panel h3 {
+        margin: 0;
+        font-size: 1.14rem;
+      }
+
+      .panel p {
+        margin: 8px 0 0;
+        font-size: 0.9rem;
+        color: rgba(239, 244, 255, 0.86);
+      }
+
+      .stake-grid {
+        margin-top: 14px;
+        display: grid;
+        gap: 10px;
+      }
+
+      .stake-btn {
+        min-height: 56px;
+        border-radius: 14px;
+        border: 1px solid rgba(255, 198, 110, 0.44);
+        background: linear-gradient(180deg, rgba(245, 124, 0, 0.96), rgba(200, 89, 0, 0.96));
+        color: #fff;
+        font-weight: 700;
+        cursor: pointer;
+      }
+
+      .stake-btn:disabled {
+        opacity: 0.62;
+        cursor: not-allowed;
+      }
+
+      .panel-note {
+        min-height: 18px;
+        margin-top: 10px;
+        font-size: 0.8rem;
+        color: rgba(255, 216, 179, 0.95);
+      }
+    </style>
+  </head>
+  <body>
+    <main class="shell">
+      <header class="topbar">
+        <a id="backLink" class="back-link" href="./index.html">Retour</a>
+        <div class="title">Pong · Jeu détaché</div>
+        <div id="doesBadge" class="does-badge">Does: --</div>
+      </header>
+      <section class="frame-wrap">
+        <iframe
+          id="pongFrame"
+          src="about:blank"
+          title="Pong"
+          loading="eager"
+          referrerpolicy="no-referrer"
+          allowfullscreen
+        ></iframe>
+      </section>
+    </main>
+
+    <div id="stakeOverlay" class="overlay active" role="dialog" aria-modal="true">
+      <div class="panel">
+        <h3>Choisis ta mise Pong</h3>
+        <p>Le gagnant prend 1.9x. La mise est engagée dès le lancement.</p>
+        <div class="stake-grid">
+          <button type="button" class="stake-btn" data-stake="1000">1000 Does · Gain 1900</button>
+          <button type="button" class="stake-btn" data-stake="5000">5000 Does · Gain 9500</button>
+        </div>
+        <div id="stakeNote" class="panel-note"></div>
+      </div>
+    </div>
+
+    <div id="searchOverlay" class="overlay" role="status" aria-live="polite">
+      <div class="panel">
+        <h3>Recherche d'un joueur...</h3>
+        <p>Connexion en cours. Prépare-toi.</p>
+      </div>
+    </div>
+
+    <script type="module">
+      import { auth, db, doc, getDoc, onAuthStateChanged } from "./firebase-init.js";
+      import { recordPongMatchResultSecure, startPongWagerSecure } from "./secure-functions.js";
+
+      const frame = document.getElementById("pongFrame");
+      const title = document.querySelector(".title");
+      const backLink = document.getElementById("backLink");
+      const doesBadge = document.getElementById("doesBadge");
+      const stakeOverlay = document.getElementById("stakeOverlay");
+      const searchOverlay = document.getElementById("searchOverlay");
+      const stakeNote = document.getElementById("stakeNote");
+      const stakeButtons = Array.from(document.querySelectorAll(".stake-btn"));
+      const VALID_AI = new Set(["ultra"]);
+      const PONG_LOCAL_STATS_KEY = "pong_stats_shadow_v1";
+      const PONG_FORFEIT_QUEUE_KEY = "pong_forfeit_queue_v1";
+      const PONG_ACTIVE_WAGER_KEY = "pong_active_wager_v1";
+
+      let currentUid = "";
+      let resolvedProfile = "ultra";
+      let activeWager = null;
+      let replaySearchTimer = null;
+      const recordedMatchIds = new Set();
+
+      function safeNumber(value, fallback = 0) {
+        const num = Number(value);
+        return Number.isFinite(num) ? num : fallback;
+      }
+
+      function formatDoes(value) {
+        return `${safeNumber(value).toLocaleString("fr-FR")} Does`;
+      }
+
+      function renderDoesBalance(value = null) {
+        if (!doesBadge) return;
+        const parsed = Number(value);
+        if (!Number.isFinite(parsed)) {
+          doesBadge.textContent = "Does: --";
+          return;
+        }
+        doesBadge.textContent = `Does: ${Math.max(0, Math.trunc(parsed)).toLocaleString("fr-FR")}`;
+      }
+
+      async function refreshDoesBalance(uid = "") {
+        const safeUid = String(uid || currentUid || "").trim();
+        if (!safeUid) {
+          renderDoesBalance(null);
+          return;
+        }
+        try {
+          const snap = await getDoc(doc(db, "clients", safeUid));
+          const data = snap.exists() ? (snap.data() || {}) : {};
+          renderDoesBalance(data?.doesBalance);
+        } catch (_) {
+          // keep current rendered balance on transient errors
+        }
+      }
+
+      function decideAiProfile(stats) {
+        return "ultra";
+      }
+
+      function readLocalPongStats() {
+        try {
+          const raw = window.localStorage.getItem(PONG_LOCAL_STATS_KEY);
+          if (!raw) return {};
+          const parsed = JSON.parse(raw);
+          return parsed && typeof parsed === "object" ? parsed : {};
+        } catch (_) {
+          return {};
+        }
+      }
+
+      function writeLocalPongStats(stats) {
+        try {
+          window.localStorage.setItem(PONG_LOCAL_STATS_KEY, JSON.stringify(stats || {}));
+        } catch (_) {}
+      }
+
+      function mergeLocalPongStatsWithMatch(payload = {}) {
+        const winner = payload?.winner === "user" ? "user" : "ai";
+        const current = readLocalPongStats();
+        const recent = Array.isArray(current.recentOutcomes)
+          ? current.recentOutcomes.filter((v) => v === "W" || v === "L").slice(-9)
+          : [];
+        const next = {
+          gamesPlayed: safeNumber(current.gamesPlayed) + 1,
+          userWins: safeNumber(current.userWins) + (winner === "user" ? 1 : 0),
+          aiWins: safeNumber(current.aiWins) + (winner === "ai" ? 1 : 0),
+          recentOutcomes: [...recent, winner === "user" ? "W" : "L"],
+          lastAiProfile: payload?.aiProfile || "ultra",
+          lastMatchId: String(payload?.matchId || ""),
+          lastMatchWinner: winner,
+          lastScore: `${safeNumber(payload?.leftScore)}-${safeNumber(payload?.rightScore)}`,
+          updatedAtMs: Date.now(),
+        };
+        writeLocalPongStats(next);
+        return next;
+      }
+
+      function readForfeitQueue() {
+        try {
+          const raw = window.localStorage.getItem(PONG_FORFEIT_QUEUE_KEY);
+          const parsed = JSON.parse(raw || "[]");
+          return Array.isArray(parsed) ? parsed : [];
+        } catch (_) {
+          return [];
+        }
+      }
+
+      function writeForfeitQueue(items = []) {
+        try {
+          const normalized = Array.isArray(items) ? items : [];
+          if (normalized.length > 0) {
+            window.localStorage.setItem(PONG_FORFEIT_QUEUE_KEY, JSON.stringify(normalized.slice(0, 12)));
+          } else {
+            window.localStorage.removeItem(PONG_FORFEIT_QUEUE_KEY);
+          }
+        } catch (_) {}
+      }
+
+      function enqueueForfeit(item = {}) {
+        const sessionId = String(item.sessionId || "").trim();
+        const uid = String(item.uid || "").trim();
+        if (!uid || !sessionId) return;
+        const existing = readForfeitQueue().filter((entry) => String(entry.sessionId || "").trim() !== sessionId);
+        existing.unshift({
+          uid,
+          sessionId,
+          aiProfile: VALID_AI.has(String(item.aiProfile || "").trim()) ? item.aiProfile : "ultra",
+          stakeDoes: safeNumber(item.stakeDoes),
+          reason: String(item.reason || "forfeit"),
+          createdAtMs: Date.now(),
+        });
+        writeForfeitQueue(existing);
+      }
+
+      function setActiveWager(next) {
+        activeWager = next && typeof next === "object" ? { ...next } : null;
+        try {
+          if (activeWager) {
+            window.localStorage.setItem(PONG_ACTIVE_WAGER_KEY, JSON.stringify(activeWager));
+          } else {
+            window.localStorage.removeItem(PONG_ACTIVE_WAGER_KEY);
+          }
+        } catch (_) {}
+      }
+
+      function readStoredActiveWager() {
+        try {
+          const raw = window.localStorage.getItem(PONG_ACTIVE_WAGER_KEY);
+          if (!raw) return null;
+          const parsed = JSON.parse(raw);
+          return parsed && typeof parsed === "object" ? parsed : null;
+        } catch (_) {
+          return null;
+        }
+      }
+
+      function setFrameForProfile(aiProfile, wagerSessionId = "") {
+        const normalized = VALID_AI.has(aiProfile) ? aiProfile : "ultra";
+        resolvedProfile = normalized;
+        const url = new URL("./Pong-Game-main/index.html", window.location.href);
+        url.searchParams.set("aiProfile", normalized);
+        if (wagerSessionId) {
+          url.searchParams.set("pongSessionId", String(wagerSessionId || ""));
+        }
+        frame.src = url.toString();
+        if (title) title.textContent = "Pong · Jeu détaché";
+      }
+
+      async function resolveProfileForCurrentUser(user) {
+        const uid = String(user?.uid || "").trim();
+        currentUid = uid;
+        if (!uid) {
+          resolvedProfile = decideAiProfile(readLocalPongStats());
+          renderDoesBalance(null);
+          return resolvedProfile;
+        }
+        try {
+          const snap = await getDoc(doc(db, "clients", uid));
+          const data = snap.exists() ? snap.data() : {};
+          renderDoesBalance(data?.doesBalance);
+          const fallbackLocal = readLocalPongStats();
+          resolvedProfile = decideAiProfile(data?.pongStats || fallbackLocal || {});
+        } catch (error) {
+          console.warn("[PONG] impossible de charger le profil IA depuis la base", error);
+          resolvedProfile = decideAiProfile(readLocalPongStats());
+        }
+        return resolvedProfile;
+      }
+
+      async function flushForfeitQueue(uid) {
+        const safeUid = String(uid || "").trim();
+        if (!safeUid || navigator.onLine === false) return;
+        const queue = readForfeitQueue();
+        if (!queue.length) return;
+        const pending = [];
+        for (const entry of queue) {
+          const entryUid = String(entry?.uid || "").trim();
+          if (entryUid && entryUid !== safeUid) {
+            pending.push(entry);
+            continue;
+          }
+          const sessionId = String(entry?.sessionId || "").trim();
+          if (!sessionId) continue;
+          const matchId = `forfeit_${sessionId}`;
+          try {
+            await recordPongMatchResultSecure({
+              matchId,
+              sessionId,
+              aiProfile: String(entry?.aiProfile || resolvedProfile || "ultra"),
+              winner: "ai",
+              leftScore: 0,
+              rightScore: 3,
+              reason: String(entry?.reason || "forfeit"),
+            });
+          } catch (_) {
+            pending.push(entry);
+          }
+        }
+        writeForfeitQueue(pending);
+      }
+
+      function setStakeUiBusy(busy, note = "") {
+        stakeButtons.forEach((btn) => {
+          btn.disabled = !!busy;
+        });
+        if (stakeNote) {
+          stakeNote.textContent = String(note || "");
+        }
+      }
+
+      function showReplaySearchModalThenStake() {
+        if (replaySearchTimer) {
+          window.clearTimeout(replaySearchTimer);
+          replaySearchTimer = null;
+        }
+        frame.src = "about:blank";
+        stakeOverlay.classList.remove("active");
+        searchOverlay.classList.add("active");
+        replaySearchTimer = window.setTimeout(() => {
+          searchOverlay.classList.remove("active");
+          stakeOverlay.classList.add("active");
+          replaySearchTimer = null;
+        }, 1400);
+      }
+
+      async function startWagerAndLaunch(stakeDoes) {
+        const uid = String(currentUid || auth.currentUser?.uid || "").trim();
+        if (!uid) {
+          setStakeUiBusy(false, "Connexion requise pour jouer.");
+          return;
+        }
+
+        setStakeUiBusy(true, "Verification du solde...");
+        const selectedStake = safeNumber(stakeDoes);
+        try {
+          const result = await startPongWagerSecure({ stakeDoes: selectedStake });
+          const sessionId = String(result?.sessionId || "").trim();
+          if (!sessionId) throw new Error("Session invalide");
+          renderDoesBalance(result?.does);
+
+          setActiveWager({
+            uid,
+            sessionId,
+            stakeDoes: selectedStake,
+            rewardDoes: safeNumber(result?.rewardDoes),
+            startedAtMs: Date.now(),
+            settled: false,
+          });
+
+          await resolveProfileForCurrentUser(auth.currentUser || null);
+          stakeOverlay.classList.remove("active");
+          searchOverlay.classList.add("active");
+          setStakeUiBusy(false, "");
+          await new Promise((resolve) => setTimeout(resolve, 1600 + Math.floor(Math.random() * 1200)));
+          searchOverlay.classList.remove("active");
+          setFrameForProfile(resolvedProfile, sessionId);
+        } catch (error) {
+          const message = String(error?.message || "");
+          if (message.toLowerCase().includes("insuffisant")) {
+            setStakeUiBusy(false, "Solde Does insuffisant.");
+          } else if (message.toLowerCase().includes("deja en cours")) {
+            setStakeUiBusy(false, "Une session est deja active. Reviens au menu.");
+          } else {
+            setStakeUiBusy(false, "Impossible de demarrer la partie pour le moment.");
+          }
+        }
+      }
+
+      async function settleMatchResult(payload = {}, reason = "match_end") {
+        const uid = String(currentUid || auth.currentUser?.uid || "").trim();
+        if (!uid) return;
+        const matchId = String(payload?.matchId || "").trim();
+        if (!matchId || recordedMatchIds.has(matchId)) return;
+        recordedMatchIds.add(matchId);
+
+        const aiProfile = VALID_AI.has(String(payload?.aiProfile || "").toLowerCase())
+          ? String(payload.aiProfile).toLowerCase()
+          : resolvedProfile;
+        const leftScore = safeNumber(payload?.leftScore);
+        const rightScore = safeNumber(payload?.rightScore);
+        const winner = payload?.winner === "user" ? "user" : "ai";
+        const sessionId = String(activeWager?.sessionId || payload?.sessionId || "").trim();
+
+        try {
+          await recordPongMatchResultSecure({
+            matchId,
+            sessionId,
+            aiProfile,
+            leftScore,
+            rightScore,
+            winner,
+            reason,
+          });
+          mergeLocalPongStatsWithMatch({
+            ...payload,
+            aiProfile,
+            leftScore,
+            rightScore,
+            winner,
+          });
+        } catch (error) {
+          recordedMatchIds.delete(matchId);
+          mergeLocalPongStatsWithMatch({
+            ...payload,
+            aiProfile,
+            leftScore,
+            rightScore,
+            winner,
+          });
+          if (sessionId) {
+            enqueueForfeit({
+              uid,
+              sessionId,
+              aiProfile,
+              stakeDoes: safeNumber(activeWager?.stakeDoes),
+              reason: "sync_retry",
+            });
+          }
+        } finally {
+          setActiveWager(null);
+          void refreshDoesBalance(uid);
+        }
+      }
+
+      function queueForfeitIfNeeded(reason = "forfeit") {
+        if (!activeWager || activeWager.settled === true) return;
+        const uid = String(currentUid || auth.currentUser?.uid || "").trim();
+        const sessionId = String(activeWager.sessionId || "").trim();
+        if (!uid || !sessionId) return;
+        enqueueForfeit({
+          uid,
+          sessionId,
+          aiProfile: resolvedProfile,
+          stakeDoes: safeNumber(activeWager.stakeDoes),
+          reason,
+        });
+        setActiveWager(null);
+      }
+
+      async function handleBackNavigation(targetHref) {
+        if (activeWager && activeWager.sessionId) {
+          queueForfeitIfNeeded("quit");
+          if (currentUid && navigator.onLine !== false) {
+            await flushForfeitQueue(currentUid);
+          }
+        }
+        window.location.href = targetHref;
+      }
+
+      stakeButtons.forEach((btn) => {
+        btn.addEventListener("click", () => {
+          const stake = safeNumber(btn.getAttribute("data-stake"));
+          void startWagerAndLaunch(stake);
+        });
+      });
+
+      window.addEventListener("message", (event) => {
+        if (event.origin !== window.location.origin) return;
+        const data = event?.data;
+        if (!data || typeof data !== "object") return;
+
+        if (data.type === "pong:playAgain") {
+          showReplaySearchModalThenStake();
+          return;
+        }
+
+        if (data.type !== "pong:matchResult") return;
+        void settleMatchResult(data.payload || {}, "match_end");
+      });
+
+      backLink?.addEventListener("click", (event) => {
+        event.preventDefault();
+        const href = String(backLink.getAttribute("href") || "./index.html");
+        void handleBackNavigation(href);
+      });
+
+      window.addEventListener("offline", () => {
+        queueForfeitIfNeeded("offline");
+      });
+
+      window.addEventListener("pagehide", () => {
+        queueForfeitIfNeeded("pagehide");
+      });
+
+      window.addEventListener("beforeunload", () => {
+        queueForfeitIfNeeded("beforeunload");
+      });
+
+      onAuthStateChanged(auth, (user) => {
+        const uid = String(user?.uid || "").trim();
+        currentUid = uid;
+        if (!uid) {
+          renderDoesBalance(null);
+          setStakeUiBusy(false, "Connexion requise pour jouer.");
+          return;
+        }
+
+        const stale = readStoredActiveWager();
+        if (stale && String(stale.uid || "").trim() === uid && String(stale.sessionId || "").trim()) {
+          enqueueForfeit({
+            uid,
+            sessionId: stale.sessionId,
+            aiProfile: resolvedProfile,
+            stakeDoes: safeNumber(stale.stakeDoes),
+            reason: "session_resume_forfeit",
+          });
+          setActiveWager(null);
+        }
+
+        void resolveProfileForCurrentUser(user).then(() => {
+          void flushForfeitQueue(uid).then(() => refreshDoesBalance(uid));
+        });
+      });
+    </script>
+  </body>
+</html>

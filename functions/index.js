@@ -265,6 +265,12 @@ const SURVEY_MAX_CHOICE_LABEL = 90;
 const SURVEY_MAX_TITLE = 140;
 const SURVEY_MAX_DESCRIPTION = 600;
 const SURVEY_MAX_TEXT_ANSWER = 500;
+const PONG_ALLOWED_AI_PROFILES = new Set(["soft", "normal", "ultra"]);
+const PONG_RECENT_OUTCOMES_LIMIT = 10;
+const PONG_RECENT_MATCH_IDS_LIMIT = 20;
+const PONG_ALLOWED_STAKES = new Set([1000, 5000]);
+const PONG_ODDS_NUMERATOR = 19;
+const PONG_ODDS_DENOMINATOR = 10;
 const DEFAULT_WHATSAPP_MODAL_CONTACTS = Object.freeze({
   support_default: "50940507232",
   rejected_order: "50940507232",
@@ -576,6 +582,8 @@ const APP_CHECK_BYPASS_CALLABLES = new Set([
   "resumeMorpionBotTestRoom",
   "getDashboardClientScopeSnapshot",
   "recordSiteVisitSecure",
+  "recordPongMatchResultSecure",
+  "startPongWagerSecure",
   "getSiteVisitsAnalyticsSnapshot",
   "getGamesVolumeAnalyticsSnapshot",
   "searchAgentDepositClientsSecure",
@@ -21571,6 +21579,226 @@ async function grantWelcomeBonusForClient(options = {}) {
     };
   });
 }
+
+exports.startPongWagerSecure = publicOnCall("startPongWagerSecure", async (request) => {
+  const { uid, email } = assertAuth(request);
+  const payload = request.data && typeof request.data === "object" ? request.data : {};
+  const stakeDoes = safeInt(payload.stakeDoes);
+
+  if (!PONG_ALLOWED_STAKES.has(stakeDoes)) {
+    throw new HttpsError("invalid-argument", "Mise Pong non autorisee.");
+  }
+
+  const nowMs = Date.now();
+  const requestedSessionId = sanitizeText(payload.sessionId || "", 120);
+  const sessionId = requestedSessionId || `pongw_${nowMs.toString(36)}_${crypto.randomBytes(4).toString("hex")}`;
+  const rewardDoes = Math.floor((stakeDoes * PONG_ODDS_NUMERATOR) / PONG_ODDS_DENOMINATOR);
+  const clientRef = walletRef(uid);
+
+  const result = await db.runTransaction(async (tx) => {
+    const clientSnap = await tx.get(clientRef);
+    const clientData = clientSnap.exists ? (clientSnap.data() || {}) : {};
+    const currentWager = clientData.pongWagerState && typeof clientData.pongWagerState === "object"
+      ? clientData.pongWagerState
+      : {};
+
+    const isActive = String(currentWager.status || "").trim().toLowerCase() === "active";
+    const activeSessionId = sanitizeText(currentWager.sessionId || "", 120);
+    if (isActive && activeSessionId) {
+      throw new HttpsError("failed-precondition", "Une mise Pong est deja en cours.", {
+        code: "active-pong-wager",
+        sessionId: activeSessionId,
+      });
+    }
+
+    const walletMutation = await applyWalletMutationTx(tx, {
+      uid,
+      email,
+      type: "game_entry",
+      note: `Mise Pong (${sessionId})`,
+      amountDoes: stakeDoes,
+      deltaDoes: -stakeDoes,
+      amountGourdes: 0,
+      deltaExchangedGourdes: 0,
+    });
+
+    tx.set(clientRef, {
+      uid,
+      pongWagerState: {
+        sessionId,
+        status: "active",
+        stakeDoes,
+        rewardDoes,
+        startedAtMs: nowMs,
+        lastEventAtMs: nowMs,
+        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      },
+      updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      lastSeenAt: admin.firestore.FieldValue.serverTimestamp(),
+      lastSeenAtMs: nowMs,
+    }, { merge: true });
+
+    return {
+      ok: true,
+      sessionId,
+      stakeDoes,
+      rewardDoes,
+      does: safeInt(walletMutation?.afterDoes),
+    };
+  });
+
+  return result;
+});
+
+exports.recordPongMatchResultSecure = publicOnCall("recordPongMatchResultSecure", async (request) => {
+  const { uid, email } = assertAuth(request);
+  const payload = request.data && typeof request.data === "object" ? request.data : {};
+
+  const matchId = sanitizeText(payload.matchId || "", 120);
+  if (!matchId) {
+    throw new HttpsError("invalid-argument", "matchId requis.");
+  }
+  const sessionId = sanitizeText(payload.sessionId || "", 120);
+  const settleReason = sanitizeText(payload.reason || "", 80);
+
+  const aiProfileRaw = sanitizeText(payload.aiProfile || "", 24).toLowerCase();
+  const aiProfile = PONG_ALLOWED_AI_PROFILES.has(aiProfileRaw) ? aiProfileRaw : "normal";
+
+  const leftScoreRaw = safeInt(payload.leftScore);
+  const rightScoreRaw = safeInt(payload.rightScore);
+  const leftScore = Math.min(99, leftScoreRaw);
+  const rightScore = Math.min(99, rightScoreRaw);
+  const winnerRaw = String(payload.winner || "").trim().toLowerCase();
+  const winner = winnerRaw === "user" || winnerRaw === "ai"
+    ? winnerRaw
+    : (leftScore > rightScore ? "user" : "ai");
+  const nowMs = Date.now();
+
+  const clientRef = walletRef(uid);
+
+  const result = await db.runTransaction(async (tx) => {
+    const clientSnap = await tx.get(clientRef);
+    const clientData = clientSnap.exists ? (clientSnap.data() || {}) : {};
+    const currentStats = clientData.pongStats && typeof clientData.pongStats === "object"
+      ? clientData.pongStats
+      : {};
+
+    const existingMatchIds = Array.isArray(currentStats.recentMatchIds)
+      ? currentStats.recentMatchIds.map((item) => sanitizeText(item || "", 120)).filter(Boolean)
+      : [];
+
+    if (existingMatchIds.includes(matchId)) {
+      return {
+        duplicate: true,
+        gamesPlayed: safeInt(currentStats.gamesPlayed),
+        userWins: safeInt(currentStats.userWins),
+        aiWins: safeInt(currentStats.aiWins),
+        rewardGranted: false,
+        rewardAmountDoes: 0,
+      };
+    }
+
+    const currentRecentOutcomes = Array.isArray(currentStats.recentOutcomes)
+      ? currentStats.recentOutcomes.map((item) => String(item || "")).filter((item) => item === "W" || item === "L")
+      : [];
+    const nextRecentOutcomes = [
+      ...currentRecentOutcomes.slice(-(PONG_RECENT_OUTCOMES_LIMIT - 1)),
+      winner === "user" ? "W" : "L",
+    ];
+
+    const nextRecentMatchIds = [
+      ...existingMatchIds.slice(-(PONG_RECENT_MATCH_IDS_LIMIT - 1)),
+      matchId,
+    ];
+
+    const gamesPlayed = safeInt(currentStats.gamesPlayed) + 1;
+    const userWins = safeInt(currentStats.userWins) + (winner === "user" ? 1 : 0);
+    const aiWins = safeInt(currentStats.aiWins) + (winner === "ai" ? 1 : 0);
+    let rewardGranted = false;
+    let rewardAmountDoes = 0;
+
+    const currentWager = clientData.pongWagerState && typeof clientData.pongWagerState === "object"
+      ? clientData.pongWagerState
+      : {};
+    const wagerStatus = String(currentWager.status || "").trim().toLowerCase();
+    const wagerSessionId = sanitizeText(currentWager.sessionId || "", 120);
+    const canSettleWager = sessionId && wagerStatus === "active" && wagerSessionId === sessionId;
+
+    if (canSettleWager) {
+      const configuredRewardDoes = safeInt(currentWager.rewardDoes);
+      if (winner === "user" && configuredRewardDoes > 0) {
+        const walletMutation = await applyWalletMutationTx(tx, {
+          uid,
+          email,
+          type: "game_reward",
+          note: `Gain Pong (${sessionId})`,
+          amountDoes: configuredRewardDoes,
+          deltaDoes: configuredRewardDoes,
+          amountGourdes: 0,
+          deltaExchangedGourdes: 0,
+        });
+        rewardGranted = true;
+        rewardAmountDoes = configuredRewardDoes;
+        if (walletMutation && typeof walletMutation.afterDoes === "number") {
+          // no-op: value already persisted by wallet mutation
+        }
+      }
+
+      tx.set(clientRef, {
+        uid,
+        pongWagerState: {
+          ...currentWager,
+          sessionId,
+          status: "settled",
+          outcome: winner,
+          settleReason: settleReason || "match_end",
+          settledAtMs: nowMs,
+          lastEventAtMs: nowMs,
+          matchId,
+          lastScore: `${leftScore}-${rightScore}`,
+          updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+        },
+      }, { merge: true });
+    }
+
+    tx.set(clientRef, {
+      uid,
+      pongStats: {
+        gamesPlayed,
+        userWins,
+        aiWins,
+        recentOutcomes: nextRecentOutcomes,
+        recentMatchIds: nextRecentMatchIds,
+        lastAiProfile: aiProfile,
+        lastMatchId: matchId,
+        lastMatchWinner: winner,
+        lastScore: `${leftScore}-${rightScore}`,
+        lastPlayedAtMs: nowMs,
+        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      },
+      updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      lastSeenAt: admin.firestore.FieldValue.serverTimestamp(),
+      lastSeenAtMs: nowMs,
+    }, { merge: true });
+
+    return {
+      duplicate: false,
+      gamesPlayed,
+      userWins,
+      aiWins,
+      rewardGranted,
+      rewardAmountDoes,
+    };
+  });
+
+  return {
+    ok: true,
+    ...result,
+    winner,
+    aiProfile,
+    matchId,
+  };
+});
 
 exports.updateClientProfileSecure = publicOnCall("updateClientProfileSecure", async (request) => {
   const { uid, email } = assertAuth(request);
