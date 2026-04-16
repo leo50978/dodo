@@ -961,6 +961,7 @@ function isPage2BlockingOverlayOpen() {
     "sharePromoSuccessOverlay",
     "userImportanceOverlay",
     "gameModeOverlay",
+    "comingSoonOverlay",
     "stakeSelectionOverlay",
     "morpionStakeOverlay",
     "morpionFriendModeOverlay",
@@ -1957,7 +1958,55 @@ export function renderPage2(user, options = {}) {
               </span>
               <i class="fa-solid fa-arrow-right text-white/72"></i>
             </button>
+            <button id="gameModeDameCard" type="button" class="flex w-full items-center justify-between gap-3 rounded-[22px] border border-[#9ef5c9]/28 bg-[linear-gradient(135deg,rgba(72,174,120,0.2),rgba(13,45,39,0.66))] px-4 py-4 text-left text-white shadow-[8px_8px_20px_rgba(16,52,43,0.3),-6px_-6px_14px_rgba(123,208,170,0.08)] transition hover:-translate-y-0.5 hover:border-[#9ef5c9]/42">
+              <span class="flex min-w-0 items-center gap-3">
+                <span class="grid h-12 w-12 shrink-0 place-items-center overflow-hidden rounded-2xl border border-white/14 bg-white/10">
+                  <img src="/dame.png" alt="Jeu de dame" class="h-full w-full object-contain p-1" decoding="async" />
+                </span>
+                <span class="min-w-0">
+                  <span class="block text-sm font-semibold text-white">Jeu de dame</span>
+                  <span class="mt-1 block text-xs leading-5 text-white/72">Un duel de strategie au tour par tour avec une interface premium.</span>
+                </span>
+              </span>
+              <i class="fa-solid fa-arrow-right text-white/72"></i>
+            </button>
+            <button id="gameModePongCard" type="button" class="flex w-full items-center justify-between gap-3 rounded-[22px] border border-[#ffd67d]/28 bg-[linear-gradient(135deg,rgba(255,183,0,0.18),rgba(66,40,11,0.66))] px-4 py-4 text-left text-white shadow-[8px_8px_20px_rgba(55,38,13,0.3),-6px_-6px_14px_rgba(244,201,97,0.08)] transition hover:-translate-y-0.5 hover:border-[#ffd67d]/42">
+              <span class="flex min-w-0 items-center gap-3">
+                <span class="grid h-12 w-12 shrink-0 place-items-center overflow-hidden rounded-2xl border border-white/14 bg-white/10">
+                  <img src="/pong.jpg" alt="Jeu Pong" class="h-full w-full object-cover" decoding="async" />
+                </span>
+                <span class="min-w-0">
+                  <span class="block text-sm font-semibold text-white">Pong</span>
+                  <span class="mt-1 block text-xs leading-5 text-white/72">Un classique arcade rapide en mode jeu indépendant.</span>
+                </span>
+              </span>
+              <i class="fa-solid fa-arrow-right text-white/72"></i>
+            </button>
           </div>
+        </div>
+      </div>
+    </div>
+  `);
+
+  pageShell.insertAdjacentHTML("beforeend", `
+    <div id="comingSoonOverlay" class="fixed inset-0 z-[3459] hidden items-center justify-center bg-[#12192b]/72 px-[max(12px,env(safe-area-inset-left))] py-[max(12px,env(safe-area-inset-top))] backdrop-blur-sm sm:px-4 sm:py-4">
+      <div id="comingSoonPanel" class="w-full max-w-md overflow-hidden rounded-[28px] border border-white/15 bg-[linear-gradient(180deg,rgba(82,94,132,0.98),rgba(55,65,95,0.98))] text-white shadow-[0_-16px_38px_rgba(12,18,31,0.42)] sm:rounded-[30px] sm:border-white/20 sm:shadow-[14px_14px_34px_rgba(16,23,40,0.5),-10px_-10px_24px_rgba(112,126,165,0.2)]">
+        <div class="px-5 pb-5 pt-5 sm:px-6 sm:pb-6 sm:pt-6">
+          <div class="flex items-start justify-between gap-3">
+            <div class="min-w-0 pr-2">
+              <p class="text-xs font-semibold uppercase tracking-[0.24em] text-white/66">Mise a jour produit</p>
+              <h3 id="comingSoonTitle" class="mt-2 text-[1.2rem] font-bold leading-tight sm:text-[1.45rem]">Jeu en developpement</h3>
+            </div>
+            <button id="comingSoonClose" type="button" class="grid h-10 w-10 shrink-0 place-items-center rounded-full border border-white/20 bg-white/10 text-white">
+              <i class="fa-solid fa-xmark"></i>
+            </button>
+          </div>
+          <p id="comingSoonCopy" class="mt-3 text-sm leading-6 text-white/84">
+            Ce jeu est actuellement en developpement et sera disponible bientot.
+          </p>
+          <button id="comingSoonOkBtn" type="button" class="mt-5 h-11 w-full rounded-2xl border border-white/20 bg-white/10 text-sm font-semibold text-white transition hover:-translate-y-0.5 hover:bg-white/15">
+            D'accord
+          </button>
         </div>
       </div>
     </div>
@@ -2465,6 +2514,14 @@ export function renderPage2(user, options = {}) {
   const gameModeClassicCard = document.getElementById("gameModeClassicCard");
   const gameModeDuelCard = document.getElementById("gameModeDuelCard");
   const gameModeMorpionCard = document.getElementById("gameModeMorpionCard");
+  const gameModeDameCard = document.getElementById("gameModeDameCard");
+  const gameModePongCard = document.getElementById("gameModePongCard");
+  const comingSoonOverlay = document.getElementById("comingSoonOverlay");
+  const comingSoonPanel = document.getElementById("comingSoonPanel");
+  const comingSoonTitle = document.getElementById("comingSoonTitle");
+  const comingSoonCopy = document.getElementById("comingSoonCopy");
+  const comingSoonClose = document.getElementById("comingSoonClose");
+  const comingSoonOkBtn = document.getElementById("comingSoonOkBtn");
   const tournamentIntroOverlay = document.getElementById("tournamentIntroOverlay");
   const tournamentIntroPanel = document.getElementById("tournamentIntroPanel");
   const tournamentIntroContinueBtn = document.getElementById("tournamentIntroContinueBtn");
@@ -3623,6 +3680,28 @@ export function renderPage2(user, options = {}) {
     }
   };
 
+  const openComingSoonModal = (gameLabel = "Ce jeu") => {
+    if (!comingSoonOverlay) return;
+    if (comingSoonTitle) {
+      comingSoonTitle.textContent = `${gameLabel} en developpement`;
+    }
+    if (comingSoonCopy) {
+      comingSoonCopy.textContent = `${gameLabel} est actuellement en developpement et sera disponible bientot. Merci pour ta patience.`;
+    }
+    comingSoonOverlay.classList.remove("hidden");
+    comingSoonOverlay.classList.add("flex");
+    document.body.classList.add("overflow-hidden");
+  };
+
+  const closeComingSoonModal = () => {
+    if (!comingSoonOverlay) return;
+    comingSoonOverlay.classList.add("hidden");
+    comingSoonOverlay.classList.remove("flex");
+    if (!isPage2BlockingOverlayOpen()) {
+      document.body.classList.remove("overflow-hidden");
+    }
+  };
+
   const openMorpionStakeSelection = () => {
     if (!morpionStakeOverlay) return;
     morpionStakeOverlay.classList.remove("hidden");
@@ -4325,6 +4404,16 @@ export function renderPage2(user, options = {}) {
     await handleMorpionEntry();
   });
 
+  gameModeDameCard?.addEventListener("click", () => {
+    closeGameModeSelection();
+    openComingSoonModal("Jeu de dame");
+  });
+
+  gameModePongCard?.addEventListener("click", () => {
+    closeGameModeSelection();
+    openComingSoonModal("Pong");
+  });
+
   morpionFriendModeOpenBtn?.addEventListener("click", () => {
     if (page2AccountFrozen) return;
     closeMorpionStakeSelection();
@@ -4980,6 +5069,12 @@ export function renderPage2(user, options = {}) {
     if (ev.target === gameModeOverlay) closeGameModeSelection();
   });
   gameModePanel?.addEventListener("click", (ev) => ev.stopPropagation());
+  if (comingSoonClose) comingSoonClose.addEventListener("click", closeComingSoonModal);
+  if (comingSoonOkBtn) comingSoonOkBtn.addEventListener("click", closeComingSoonModal);
+  comingSoonOverlay?.addEventListener("click", (ev) => {
+    if (ev.target === comingSoonOverlay) closeComingSoonModal();
+  });
+  comingSoonPanel?.addEventListener("click", (ev) => ev.stopPropagation());
   if (stakeSelectionOverlay) {
     stakeSelectionOverlay.addEventListener("click", (ev) => {
       if (ev.target === stakeSelectionOverlay) closeStakeSelection();

@@ -105,6 +105,7 @@ function isWelcomeBonusProgramActive(nowMs = Date.now()) {
 }
 const DPAYMENT_ADMIN_BOOTSTRAP_DOC = "dpayment_admin_bootstrap";
 const APP_PUBLIC_SETTINGS_DOC = "public_app_settings";
+const WHATSAPP_MODAL_SETTINGS_DOC = "whatsapp_modal_contacts_v1";
 const DASHBOARD_DEFAULT_NOTIFICATION_URL = "./Dpayment.html";
 const USERNAME_EMAIL_DOMAIN = "username.dominoeslakay.local";
 const PHONE_LOGIN_EMAIL_DOMAIN = "phone.dominoeslakay.local";
@@ -264,6 +265,14 @@ const SURVEY_MAX_CHOICE_LABEL = 90;
 const SURVEY_MAX_TITLE = 140;
 const SURVEY_MAX_DESCRIPTION = 600;
 const SURVEY_MAX_TEXT_ANSWER = 500;
+const DEFAULT_WHATSAPP_MODAL_CONTACTS = Object.freeze({
+  support_default: "50940507232",
+  rejected_order: "50940507232",
+  agent_deposit: "50940507232",
+  withdrawal_assistance: "50940507232",
+  welcome_deposit_modal: "50940507232",
+  recruitment_modal: "50940507232",
+});
 const PROVISIONAL_FUNDING_VERSION = 2;
 const PROVISIONAL_CREDIT_MODE = "provisional";
 const ACCOUNT_FREEZE_REJECT_THRESHOLD = 3;
@@ -3397,6 +3406,10 @@ function appPublicSettingsRef() {
   return db.collection("settings").doc(APP_PUBLIC_SETTINGS_DOC);
 }
 
+function whatsappModalSettingsRef() {
+  return db.collection("settings").doc(WHATSAPP_MODAL_SETTINGS_DOC);
+}
+
 function surveysCollection() {
   return db.collection(SURVEYS_COLLECTION);
 }
@@ -3627,6 +3640,39 @@ function normalizePublicAppSettings(rawData = {}) {
     provisionalDepositsEnabled: hasExplicitProvisionalToggle
       ? rawData.provisionalDepositsEnabled === true
       : DEFAULT_PUBLIC_SETTINGS.provisionalDepositsEnabled === true,
+  };
+}
+
+function sanitizeWhatsappDigits(value, fallback = "") {
+  const digits = String(value || "").replace(/\D/g, "").trim();
+  if (digits.length >= 8 && digits.length <= 20) return digits;
+  const fallbackDigits = String(fallback || "").replace(/\D/g, "").trim();
+  return fallbackDigits;
+}
+
+function normalizeWhatsappModalContacts(rawContacts = {}) {
+  const source = rawContacts && typeof rawContacts === "object" ? rawContacts : {};
+  return {
+    support_default: sanitizeWhatsappDigits(source.support_default, DEFAULT_WHATSAPP_MODAL_CONTACTS.support_default),
+    rejected_order: sanitizeWhatsappDigits(source.rejected_order, source.support_default || DEFAULT_WHATSAPP_MODAL_CONTACTS.rejected_order),
+    agent_deposit: sanitizeWhatsappDigits(source.agent_deposit, source.support_default || DEFAULT_WHATSAPP_MODAL_CONTACTS.agent_deposit),
+    withdrawal_assistance: sanitizeWhatsappDigits(source.withdrawal_assistance, source.support_default || DEFAULT_WHATSAPP_MODAL_CONTACTS.withdrawal_assistance),
+    welcome_deposit_modal: sanitizeWhatsappDigits(source.welcome_deposit_modal, source.support_default || DEFAULT_WHATSAPP_MODAL_CONTACTS.welcome_deposit_modal),
+    recruitment_modal: sanitizeWhatsappDigits(source.recruitment_modal, source.support_default || DEFAULT_WHATSAPP_MODAL_CONTACTS.recruitment_modal),
+  };
+}
+
+async function readWhatsappModalSettings() {
+  const snap = await whatsappModalSettingsRef().get();
+  const data = snap.exists ? (snap.data() || {}) : {};
+  const contacts = normalizeWhatsappModalContacts({
+    ...DEFAULT_WHATSAPP_MODAL_CONTACTS,
+    ...(data.contacts && typeof data.contacts === "object" ? data.contacts : {}),
+  });
+  return {
+    contacts,
+    version: String(data.version || "wmc-v1"),
+    updatedAtMs: safeSignedInt(data.updatedAtMs),
   };
 }
 
@@ -19785,6 +19831,46 @@ exports.getPublicRuntimeConfigSecure = publicOnCall("getPublicRuntimeConfigSecur
   };
 }, { minInstances: 1 });
 
+exports.getPublicWhatsappModalConfigSecure = publicOnCall("getPublicWhatsappModalConfigSecure", async () => {
+  const snapshot = await readWhatsappModalSettings();
+  return {
+    ok: true,
+    contacts: snapshot.contacts,
+    version: snapshot.version,
+    updatedAtMs: snapshot.updatedAtMs || 0,
+  };
+}, { minInstances: 1 });
+
+exports.setWhatsappModalConfigSecure = publicOnCall("setWhatsappModalConfigSecure", async (request) => {
+  const { uid, email } = assertFinanceAdmin(request);
+  const payload = request.data && typeof request.data === "object" ? request.data : {};
+  const incomingContacts = payload.contacts && typeof payload.contacts === "object" ? payload.contacts : {};
+  const current = await readWhatsappModalSettings();
+  const mergedContacts = normalizeWhatsappModalContacts({
+    ...current.contacts,
+    ...incomingContacts,
+  });
+  const nowMs = Date.now();
+
+  await whatsappModalSettingsRef().set({
+    contacts: mergedContacts,
+    version: "wmc-v1",
+    updatedAtMs: nowMs,
+    updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+    updatedBy: {
+      uid,
+      email: sanitizeEmail(email, 160),
+    },
+  }, { merge: true });
+
+  return {
+    ok: true,
+    contacts: mergedContacts,
+    version: "wmc-v1",
+    updatedAtMs: nowMs,
+  };
+});
+
 exports.getRecruitmentCampaignSnapshotSecure = publicOnCall("getRecruitmentCampaignSnapshotSecure", async () => {
   const snap = await db.collection(ANALYTICS_META_COLLECTION).doc(RECRUITMENT_CAMPAIGN_DOC).get();
   const data = snap.exists ? (snap.data() || {}) : {};
@@ -20815,6 +20901,44 @@ function getAiAdvisorReportConfig(rawReportType = "") {
       };
 }
 
+function normalizeAiAdvisorCustomRange(options = {}, nowMs = Date.now()) {
+  const requestedStartMs = safeSignedInt(options.startMs);
+  const requestedEndMs = safeSignedInt(options.endMs);
+  if (requestedStartMs <= 0 || requestedEndMs <= 0) {
+    return {
+      enabled: false,
+      startMs: 0,
+      endMs: 0,
+      label: "",
+    };
+  }
+
+  let endMs = Math.min(requestedEndMs, nowMs);
+  let startMs = Math.min(requestedStartMs, endMs);
+  if (startMs <= 0 || endMs <= 0 || endMs < startMs) {
+    return {
+      enabled: false,
+      startMs: 0,
+      endMs: 0,
+      label: "",
+    };
+  }
+
+  const maxRangeMs = 180 * 24 * 60 * 60 * 1000;
+  if ((endMs - startMs) > maxRangeMs) {
+    startMs = endMs - maxRangeMs;
+  }
+
+  const label = `${new Date(startMs).toLocaleDateString("fr-FR", { dateStyle: "medium" })} -> ${new Date(endMs).toLocaleDateString("fr-FR", { dateStyle: "medium" })}`;
+
+  return {
+    enabled: true,
+    startMs,
+    endMs,
+    label,
+  };
+}
+
 function buildAiTrendDigest(trend = [], key = "") {
   const rows = Array.isArray(trend) ? trend : [];
   const values = rows
@@ -21046,10 +21170,13 @@ function buildAiAdvisorNarrative(snapshot = {}) {
 async function computeAiAdvisorSnapshot(options = {}) {
   const nowMs = safeSignedInt(options.nowMs) || Date.now();
   const reportConfig = getAiAdvisorReportConfig(options.reportType || options.mode || options.type || "daily");
+  const customRange = normalizeAiAdvisorCustomRange(options, nowMs);
   const sharedOptions = {
     window: reportConfig.analyticsWindow,
     nowMs,
+    ...(customRange.enabled ? { startMs: customRange.startMs, endMs: customRange.endMs } : {}),
   };
+  const resolvedRange = getTimelineAnalyticsRange(sharedOptions, nowMs);
 
   const clientsCollection = db.collection(CLIENTS_COLLECTION);
   const [presenceResult, siteVisitsResult, gamesResult, acquisitionSnapshot, depositSnapshot, pendingWithdrawalsCount, deletionReviewPendingCount, deletionReviewContactedCount] = await Promise.all([
@@ -21070,6 +21197,10 @@ async function computeAiAdvisorSnapshot(options = {}) {
     reportGoal: reportConfig.goal,
     windows: {
       analyticsWindow: reportConfig.analyticsWindow,
+      startMs: safeSignedInt(resolvedRange.startMs),
+      endMs: safeSignedInt(resolvedRange.endMs) || nowMs,
+      customRangeApplied: customRange.enabled,
+      customRangeLabel: customRange.enabled ? customRange.label : "",
     },
     presence: {
       summary: presenceResult?.snapshot?.summary || {},
