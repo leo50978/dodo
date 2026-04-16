@@ -125,6 +125,7 @@ h1 {
     height: auto;
     max-height: min(70dvh, 580px);
     background: #0a1426;
+    touch-action: none;
 }
 
 .pong-actions {

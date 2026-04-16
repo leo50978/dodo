@@ -5,6 +5,7 @@ const rightScoreEl = document.getElementById("rightScore");
 const rightPlayerLabelEl = document.getElementById("rightPlayerLabel");
 const matchStatusEl = document.getElementById("matchStatus");
 const replayBtn = document.getElementById("replayBtn");
+const friendBtn = document.getElementById("friendBtn");
 
 const WIDTH = canvas.width;
 const HEIGHT = canvas.height;
@@ -447,14 +448,27 @@ function update(deltaMs) {
   moveAiPaddle();
 }
 
-canvas.addEventListener("mousemove", (event) => {
+function updatePlayerPaddleFromClientY(clientY) {
   const rect = canvas.getBoundingClientRect();
-  const mouseY = event.clientY - rect.top;
-  leftPaddle.y = clamp(mouseY - leftPaddle.height / 2, 0, HEIGHT - leftPaddle.height);
+  const localY = clientY - rect.top;
+  const scaledY = (localY / Math.max(1, rect.height)) * HEIGHT;
+  leftPaddle.y = clamp(scaledY - leftPaddle.height / 2, 0, HEIGHT - leftPaddle.height);
+}
+
+canvas.addEventListener("pointerdown", (event) => {
+  updatePlayerPaddleFromClientY(event.clientY);
+});
+
+canvas.addEventListener("pointermove", (event) => {
+  updatePlayerPaddleFromClientY(event.clientY);
 });
 
 replayBtn?.addEventListener("click", () => {
   window.parent?.postMessage({ type: "pong:playAgain" }, window.location.origin);
+});
+
+friendBtn?.addEventListener("click", () => {
+  updateMatchStatus("Fonctionnalite Jouer avec un ami pas encore disponible.");
 });
 
 window.addEventListener("message", (event) => {
