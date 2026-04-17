@@ -137,16 +137,6 @@
         cursor: pointer;
       }
 
-      .friend-stake-btn {
-        min-height: 46px;
-        border-radius: 12px;
-        border: 1px solid rgba(173, 198, 255, 0.34);
-        background: rgba(255, 255, 255, 0.08);
-        color: #f3f7ff;
-        font-weight: 600;
-        cursor: pointer;
-      }
-
       .stake-btn:disabled {
         opacity: 0.62;
         cursor: not-allowed;
@@ -186,7 +176,6 @@
         <div class="stake-grid">
           <button type="button" class="stake-btn" data-stake="1000">1000 Does · Gain 1900</button>
           <button type="button" class="stake-btn" data-stake="5000">5000 Does · Gain 9500</button>
-          <button id="friendPlayBtn" type="button" class="friend-stake-btn">Jouer avec un ami</button>
         </div>
         <div id="stakeNote" class="panel-note"></div>
       </div>
@@ -210,7 +199,6 @@
       const stakeOverlay = document.getElementById("stakeOverlay");
       const searchOverlay = document.getElementById("searchOverlay");
       const stakeNote = document.getElementById("stakeNote");
-      const friendPlayBtn = document.getElementById("friendPlayBtn");
       const stakeButtons = Array.from(document.querySelectorAll(".stake-btn"));
       const VALID_AI = new Set(["ultra"]);
       const PONG_LOCAL_STATS_KEY = "pong_stats_shadow_v1";
@@ -576,10 +564,6 @@
           const stake = safeNumber(btn.getAttribute("data-stake"));
           void startWagerAndLaunch(stake);
         });
-      });
-
-      friendPlayBtn?.addEventListener("click", () => {
-        setStakeUiBusy(false, "Jouer avec un ami n'est pas encore disponible.");
       });
 
       window.addEventListener("message", (event) => {

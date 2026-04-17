@@ -31,6 +31,7 @@ const DUEL_GAME_STATES_COLLECTION = "duelGameStates";
 const MORPION_ROOMS_COLLECTION = "morpionRooms";
 const MORPION_ROOM_RESULTS_COLLECTION = "morpionRoomResults";
 const MORPION_GAME_STATES_COLLECTION = "morpionGameStates";
+const PONG_MATCH_RESULTS_COLLECTION = "pongMatchResults";
 const CLIENTS_COLLECTION = "clients";
 const AGENTS_COLLECTION = "agents";
 const AGENT_LEDGER_SUBCOLLECTION = "ledger";
@@ -586,6 +587,7 @@ const APP_CHECK_BYPASS_CALLABLES = new Set([
   "startPongWagerSecure",
   "getSiteVisitsAnalyticsSnapshot",
   "getGamesVolumeAnalyticsSnapshot",
+  "getPongAnalyticsSnapshot",
   "searchAgentDepositClientsSecure",
   "getAgentDepositClientContextSecure",
   "creditAgentDepositSecure",
@@ -6066,6 +6068,209 @@ async function computeMorpionAnalyticsSnapshot(options = {}) {
       botMatchHumanWinRatePct: matchesWithBot > 0 ? botMatchHumanWins / matchesWithBot : 0,
     },
     compositionMix,
+    stakeMix,
+    trend,
+    recentResults: recentResults.slice(0, 12),
+  };
+}
+
+async function computePongAnalyticsSnapshot(options = {}) {
+  const nowMs = safeSignedInt(options.nowMs) || Date.now();
+  const range = getDuelAnalyticsRange(options, nowMs);
+  const aiProfileFilter = sanitizeText(options.aiProfile || "", 24).toLowerCase();
+  const winnerFilter = normalizeAnalyticsWinnerFilter(options.winnerType);
+  const stakeFilter = safeInt(options.stakeDoes);
+
+  let query = db.collection(PONG_MATCH_RESULTS_COLLECTION).orderBy("endedAtMs", "asc");
+  if (range.startMs > 0) {
+    query = query.where("endedAtMs", ">=", range.startMs);
+  }
+  if (range.endMs > 0) {
+    query = query.where("endedAtMs", "<=", range.endMs);
+  }
+
+  const querySnap = await safeAnalyticsQueryGet(
+    query,
+    db.collection(PONG_MATCH_RESULTS_COLLECTION),
+    "pongMatchResults"
+  );
+
+  let matchesPlayed = 0;
+  let botWins = 0;
+  let humanWins = 0;
+  let rewardedMatches = 0;
+  let totalStakeDoes = 0;
+  let totalRewardDoes = 0;
+  let totalDurationMs = 0;
+  let durationSamples = 0;
+  const trendMap = new Map();
+  const stakeMixMap = new Map();
+  const aiProfileMixMap = new Map();
+  const recentResults = [];
+
+  querySnap.forEach((docSnap) => {
+    const data = docSnap.data() || {};
+    const status = String(data.status || "").trim().toLowerCase();
+    const endedAtMs = safeSignedInt(data.endedAtMs);
+    if (status !== "ended" || endedAtMs <= 0) return;
+    if (range.startMs > 0 && endedAtMs < range.startMs) return;
+    if (range.endMs > 0 && endedAtMs > range.endMs) return;
+
+    const winnerRaw = String(data.winnerType || data.winner || "").trim().toLowerCase();
+    const winnerType = winnerRaw === "user"
+      ? "human"
+      : (winnerRaw === "ai" ? "bot" : winnerRaw);
+    if (winnerFilter !== "all" && winnerType !== winnerFilter) return;
+
+    const aiProfile = sanitizeText(data.aiProfile || "", 24).toLowerCase() || "normal";
+    if (aiProfileFilter && aiProfile !== aiProfileFilter) return;
+
+    const stakeDoes = safeInt(data.stakeDoes || data.entryCostDoes);
+    if (stakeFilter > 0 && stakeDoes !== stakeFilter) return;
+
+    const rewardAmountDoes = safeInt(data.rewardAmountDoes);
+    const rewardGranted = data.rewardGranted === true && rewardAmountDoes > 0;
+    const startedAtMs = safeSignedInt(data.startedAtMs);
+    const durationMs = startedAtMs > 0 && endedAtMs >= startedAtMs
+      ? Math.max(0, endedAtMs - startedAtMs)
+      : 0;
+
+    matchesPlayed += 1;
+    if (winnerType === "bot") botWins += 1;
+    if (winnerType === "human") humanWins += 1;
+    if (rewardGranted) rewardedMatches += 1;
+    totalStakeDoes += stakeDoes;
+    totalRewardDoes += rewardAmountDoes;
+    if (durationMs > 0) {
+      totalDurationMs += durationMs;
+      durationSamples += 1;
+    }
+
+    const aiEntry = aiProfileMixMap.get(aiProfile) || {
+      key: aiProfile,
+      label: aiProfile,
+      count: 0,
+    };
+    aiEntry.count += 1;
+    aiProfileMixMap.set(aiProfile, aiEntry);
+
+    const stakeEntry = stakeMixMap.get(String(stakeDoes)) || {
+      stakeDoes,
+      label: `${stakeDoes} Does`,
+      count: 0,
+    };
+    stakeEntry.count += 1;
+    stakeMixMap.set(String(stakeDoes), stakeEntry);
+
+    const bucketKey = getDuelAnalyticsBucketKey(range.granularity, endedAtMs);
+    const bucket = trendMap.get(bucketKey) || {
+      key: bucketKey,
+      label: getDuelAnalyticsBucketLabel(range.granularity, endedAtMs),
+      periodMs: endedAtMs,
+      matchesPlayed: 0,
+      botWins: 0,
+      humanWins: 0,
+      rewardedMatches: 0,
+      totalStakeDoes: 0,
+      totalRewardDoes: 0,
+      totalDurationMs: 0,
+      durationSamples: 0,
+    };
+    bucket.matchesPlayed += 1;
+    if (winnerType === "bot") bucket.botWins += 1;
+    if (winnerType === "human") bucket.humanWins += 1;
+    if (rewardGranted) bucket.rewardedMatches += 1;
+    bucket.totalStakeDoes += stakeDoes;
+    bucket.totalRewardDoes += rewardAmountDoes;
+    if (durationMs > 0) {
+      bucket.totalDurationMs += durationMs;
+      bucket.durationSamples += 1;
+    }
+    if (endedAtMs > safeSignedInt(bucket.periodMs)) {
+      bucket.periodMs = endedAtMs;
+      bucket.label = getDuelAnalyticsBucketLabel(range.granularity, endedAtMs);
+    }
+    trendMap.set(bucketKey, bucket);
+
+    recentResults.push({
+      id: String(docSnap.id || ""),
+      matchId: sanitizeText(data.matchId || "", 120),
+      sessionId: sanitizeText(data.sessionId || "", 120),
+      endedAtMs,
+      startedAtMs,
+      durationMs,
+      aiProfile,
+      winnerType,
+      leftScore: safeInt(data.leftScore),
+      rightScore: safeInt(data.rightScore),
+      stakeDoes,
+      rewardGranted,
+      rewardAmountDoes,
+      endedReason: sanitizeText(data.endedReason || "", 60),
+    });
+  });
+
+  recentResults.sort((left, right) => safeSignedInt(right.endedAtMs) - safeSignedInt(left.endedAtMs));
+
+  const trend = Array.from(trendMap.values())
+    .sort((left, right) => safeSignedInt(left.periodMs) - safeSignedInt(right.periodMs))
+    .map((bucket) => ({
+      key: bucket.key,
+      label: bucket.label,
+      periodMs: safeSignedInt(bucket.periodMs),
+      matchesPlayed: safeInt(bucket.matchesPlayed),
+      botWins: safeInt(bucket.botWins),
+      humanWins: safeInt(bucket.humanWins),
+      rewardedMatches: safeInt(bucket.rewardedMatches),
+      avgStakeDoes: safeInt(bucket.matchesPlayed) > 0 ? Math.round(bucket.totalStakeDoes / bucket.matchesPlayed) : 0,
+      avgRewardDoes: safeInt(bucket.matchesPlayed) > 0 ? Math.round(bucket.totalRewardDoes / bucket.matchesPlayed) : 0,
+      avgDurationMs: safeInt(bucket.durationSamples) > 0 ? Math.round(bucket.totalDurationMs / bucket.durationSamples) : 0,
+    }));
+
+  const stakeMix = Array.from(stakeMixMap.values())
+    .sort((left, right) => safeInt(left.stakeDoes) - safeInt(right.stakeDoes))
+    .map((item) => ({
+      stakeDoes: safeInt(item.stakeDoes),
+      label: String(item.label || `${safeInt(item.stakeDoes)} Does`),
+      count: safeInt(item.count),
+    }));
+
+  const aiProfileMix = Array.from(aiProfileMixMap.values())
+    .sort((left, right) => safeInt(right.count) - safeInt(left.count))
+    .map((item) => ({
+      key: String(item.key || ""),
+      label: String(item.label || ""),
+      count: safeInt(item.count),
+    }));
+
+  return {
+    ok: true,
+    generatedAtMs: nowMs,
+    filters: {
+      aiProfile: aiProfileFilter || "all",
+      winnerType: winnerFilter,
+      stakeDoes: stakeFilter,
+    },
+    range: {
+      window: range.windowKey,
+      startMs: range.startMs,
+      endMs: range.endMs,
+      granularity: range.granularity,
+      isGlobal: range.isGlobal,
+    },
+    summary: {
+      matchesPlayed,
+      botWins,
+      humanWins,
+      rewardedMatches,
+      avgDurationMs: durationSamples > 0 ? Math.round(totalDurationMs / durationSamples) : 0,
+      avgStakeDoes: matchesPlayed > 0 ? Math.round(totalStakeDoes / matchesPlayed) : 0,
+      avgRewardDoes: matchesPlayed > 0 ? Math.round(totalRewardDoes / matchesPlayed) : 0,
+      botWinRatePct: matchesPlayed > 0 ? botWins / matchesPlayed : 0,
+      humanWinRatePct: matchesPlayed > 0 ? humanWins / matchesPlayed : 0,
+      rewardedMatchRatePct: matchesPlayed > 0 ? rewardedMatches / matchesPlayed : 0,
+    },
+    aiProfileMix,
     stakeMix,
     trend,
     recentResults: recentResults.slice(0, 12),
@@ -12100,6 +12305,10 @@ function morpionGameStateRef(roomId = "") {
 
 function morpionRoomResultRef(roomId = "") {
   return db.collection(MORPION_ROOM_RESULTS_COLLECTION).doc(String(roomId || "").trim());
+}
+
+function pongMatchResultRef(matchKey = "") {
+  return db.collection(PONG_MATCH_RESULTS_COLLECTION).doc(String(matchKey || "").trim());
 }
 
 function morpionMatchmakingPoolRef(stakeConfigId = "", stakeDoes = 0) {
@@ -20753,6 +20962,18 @@ function inferClassicGameComposition(result = {}) {
   return botCount > 0 ? "with_bot" : "human_only";
 }
 
+function inferPongResultBotCount(result = {}) {
+  const explicit = safeInt(result.botCount);
+  if (explicit > 0) return explicit;
+  const aiProfile = String(result.aiProfile || "").trim().toLowerCase();
+  if (aiProfile) return 1;
+  const winnerRaw = String(result.winner || result.winnerType || "").trim().toLowerCase();
+  if (winnerRaw === "ai" || winnerRaw === "bot" || winnerRaw === "human" || winnerRaw === "user") {
+    return 1;
+  }
+  return 0;
+}
+
 async function computeGamesVolumeAnalyticsSnapshot(options = {}) {
   const nowMs = safeSignedInt(options.nowMs) || Date.now();
   const range = getTimelineAnalyticsRange(options, nowMs);
@@ -20760,22 +20981,26 @@ async function computeGamesVolumeAnalyticsSnapshot(options = {}) {
   let classicQuery = db.collection(ROOM_RESULTS_COLLECTION).orderBy("endedAtMs", "asc");
   let duelQuery = db.collection(DUEL_ROOM_RESULTS_COLLECTION).orderBy("endedAtMs", "asc");
   let morpionQuery = db.collection(MORPION_ROOM_RESULTS_COLLECTION).orderBy("endedAtMs", "asc");
+  let pongQuery = db.collection(PONG_MATCH_RESULTS_COLLECTION).orderBy("endedAtMs", "asc");
 
   if (range.startMs > 0) {
     classicQuery = classicQuery.where("endedAtMs", ">=", range.startMs);
     duelQuery = duelQuery.where("endedAtMs", ">=", range.startMs);
     morpionQuery = morpionQuery.where("endedAtMs", ">=", range.startMs);
+    pongQuery = pongQuery.where("endedAtMs", ">=", range.startMs);
   }
   if (range.endMs > 0) {
     classicQuery = classicQuery.where("endedAtMs", "<=", range.endMs);
     duelQuery = duelQuery.where("endedAtMs", "<=", range.endMs);
     morpionQuery = morpionQuery.where("endedAtMs", "<=", range.endMs);
+    pongQuery = pongQuery.where("endedAtMs", "<=", range.endMs);
   }
 
-  const [classicSnap, duelSnap, morpionSnap] = await Promise.all([
+  const [classicSnap, duelSnap, morpionSnap, pongSnap] = await Promise.all([
     safeAnalyticsQueryGet(classicQuery, db.collection(ROOM_RESULTS_COLLECTION), "classicRoomResults"),
     safeAnalyticsQueryGet(duelQuery, db.collection(DUEL_ROOM_RESULTS_COLLECTION), "duelRoomResults"),
     safeAnalyticsQueryGet(morpionQuery, db.collection(MORPION_ROOM_RESULTS_COLLECTION), "morpionRoomResults"),
+    safeAnalyticsQueryGet(pongQuery, db.collection(PONG_MATCH_RESULTS_COLLECTION), "pongMatchResults"),
   ]);
 
   const trendMap = new Map();
@@ -20786,9 +21011,11 @@ async function computeGamesVolumeAnalyticsSnapshot(options = {}) {
     classicMatches: 0,
     duelMatches: 0,
     morpionMatches: 0,
+    pongMatches: 0,
     classicWithBots: 0,
     duelWithBots: 0,
     morpionWithBots: 0,
+    pongWithBots: 0,
   };
 
   const addMatch = (gameKey, label, data = {}, docId = "") => {
@@ -20802,11 +21029,15 @@ async function computeGamesVolumeAnalyticsSnapshot(options = {}) {
     if (gameKey === "classic") summary.classicMatches += 1;
     if (gameKey === "duel") summary.duelMatches += 1;
     if (gameKey === "morpion") summary.morpionMatches += 1;
+    if (gameKey === "pong") summary.pongMatches += 1;
 
-    const botCount = safeInt(data.botCount);
+    const botCount = gameKey === "pong"
+      ? inferPongResultBotCount(data)
+      : safeInt(data.botCount);
     if (gameKey === "classic" && inferClassicGameComposition(data) === "with_bot") summary.classicWithBots += 1;
     if (gameKey === "duel" && botCount > 0) summary.duelWithBots += 1;
     if (gameKey === "morpion" && botCount > 0) summary.morpionWithBots += 1;
+    if (gameKey === "pong" && botCount > 0) summary.pongWithBots += 1;
 
     const bucketKey = getDuelAnalyticsBucketKey(range.granularity, endedAtMs);
     const bucket = trendMap.get(bucketKey) || {
@@ -20817,11 +21048,13 @@ async function computeGamesVolumeAnalyticsSnapshot(options = {}) {
       classicMatches: 0,
       duelMatches: 0,
       morpionMatches: 0,
+      pongMatches: 0,
     };
     bucket.totalMatches += 1;
     if (gameKey === "classic") bucket.classicMatches += 1;
     if (gameKey === "duel") bucket.duelMatches += 1;
     if (gameKey === "morpion") bucket.morpionMatches += 1;
+    if (gameKey === "pong") bucket.pongMatches += 1;
     if (endedAtMs > safeSignedInt(bucket.periodMs)) {
       bucket.periodMs = endedAtMs;
       bucket.label = getDuelAnalyticsBucketLabel(range.granularity, endedAtMs);
@@ -20842,6 +21075,7 @@ async function computeGamesVolumeAnalyticsSnapshot(options = {}) {
   classicSnap.forEach((docSnap) => addMatch("classic", "Domino classique", docSnap.data() || {}, docSnap.id));
   duelSnap.forEach((docSnap) => addMatch("duel", "Duel 2 joueurs", docSnap.data() || {}, docSnap.id));
   morpionSnap.forEach((docSnap) => addMatch("morpion", "Morpion 5", docSnap.data() || {}, docSnap.id));
+  pongSnap.forEach((docSnap) => addMatch("pong", "Pong", docSnap.data() || {}, docSnap.id));
 
   recentMatches.sort((left, right) => safeSignedInt(right.endedAtMs) - safeSignedInt(left.endedAtMs));
 
@@ -20855,6 +21089,7 @@ async function computeGamesVolumeAnalyticsSnapshot(options = {}) {
       classicMatches: safeInt(bucket.classicMatches),
       duelMatches: safeInt(bucket.duelMatches),
       morpionMatches: safeInt(bucket.morpionMatches),
+      pongMatches: safeInt(bucket.pongMatches),
     }));
 
   const peakBucket = trend
@@ -20877,6 +21112,7 @@ async function computeGamesVolumeAnalyticsSnapshot(options = {}) {
         { key: "classic", label: "Domino classique", count: summary.classicMatches },
         { key: "duel", label: "Duel 2 joueurs", count: summary.duelMatches },
         { key: "morpion", label: "Morpion 5", count: summary.morpionMatches },
+        { key: "pong", label: "Pong", count: summary.pongMatches },
       ],
       trend,
       recentMatches: recentMatches.slice(0, 12),
@@ -21019,6 +21255,7 @@ function computeAiAdvisorHealth(snapshot = {}) {
     safeInt(gamesSummary.classicMatches) > 0,
     safeInt(gamesSummary.duelMatches) > 0,
     safeInt(gamesSummary.morpionMatches) > 0,
+    safeInt(gamesSummary.pongMatches) > 0,
   ].filter(Boolean).length;
 
   const trafficScore = clampPercentScore(
@@ -21031,7 +21268,7 @@ function computeAiAdvisorHealth(snapshot = {}) {
   const livePlayRatio = peakVisitors > 0 ? (peakPlayers / peakVisitors) : 0;
   const engagementScore = clampPercentScore(
     Math.min(45, matchPerVisit * 95)
-    + Math.min(25, (activeGames / 3) * 25)
+    + Math.min(25, (activeGames / 4) * 25)
     + Math.min(30, livePlayRatio * 60)
   );
 
@@ -21321,6 +21558,22 @@ exports.getMorpionAnalyticsSnapshot = publicOnCall(
     assertFinanceAdmin(request);
     const payload = request.data && typeof request.data === "object" ? request.data : {};
     const snapshot = await computeMorpionAnalyticsSnapshot(payload);
+    return {
+      ok: true,
+      snapshot,
+    };
+  },
+  {
+    memory: "1GiB",
+  }
+);
+
+exports.getPongAnalyticsSnapshot = publicOnCall(
+  "getPongAnalyticsSnapshot",
+  async (request) => {
+    assertFinanceAdmin(request);
+    const payload = request.data && typeof request.data === "object" ? request.data : {};
+    const snapshot = await computePongAnalyticsSnapshot(payload);
     return {
       ok: true,
       snapshot,
@@ -21760,6 +22013,41 @@ exports.recordPongMatchResultSecure = publicOnCall("recordPongMatchResultSecure"
         },
       }, { merge: true });
     }
+
+    const resultDocId = `${uid}_${matchId}`;
+    const startedAtMsFromWager = safeSignedInt(currentWager.startedAtMs);
+    const startedAtMsFromPayload = safeSignedInt(payload.startedAtMs);
+    const startedAtMs = startedAtMsFromWager > 0
+      ? startedAtMsFromWager
+      : (startedAtMsFromPayload > 0 ? startedAtMsFromPayload : 0);
+
+    tx.set(pongMatchResultRef(resultDocId), {
+      id: resultDocId,
+      matchId,
+      sessionId,
+      uid,
+      status: "ended",
+      roomMode: "pong_solo",
+      winner,
+      winnerType: winner === "user" ? "human" : "bot",
+      humanCount: 1,
+      botCount: 1,
+      aiProfile,
+      leftScore,
+      rightScore,
+      scoreLabel: `${leftScore}-${rightScore}`,
+      stakeDoes: safeInt(currentWager.stakeDoes || payload.stakeDoes),
+      rewardExpectedDoes: safeInt(currentWager.rewardDoes),
+      rewardGranted,
+      rewardAmountDoes,
+      startedAtMs,
+      endedAtMs: nowMs,
+      endedReason: settleReason || "match_end",
+      archiveVersion: 1,
+      archivedAtMs: nowMs,
+      updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      createdAt: admin.firestore.FieldValue.serverTimestamp(),
+    }, { merge: true });
 
     tx.set(clientRef, {
       uid,
