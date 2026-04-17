@@ -4411,7 +4411,8 @@ export function renderPage2(user, options = {}) {
 
   gameModePongCard?.addEventListener("click", () => {
     closeGameModeSelection();
-    openComingSoonModal("Pong");
+    showGlobalLoading("Ouverture de Pong...");
+    window.location.href = "./pong.html";
   });
 
   morpionFriendModeOpenBtn?.addEventListener("click", () => {
