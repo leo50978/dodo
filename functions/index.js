@@ -6077,7 +6077,8 @@ async function computeMorpionAnalyticsSnapshot(options = {}) {
 async function computePongAnalyticsSnapshot(options = {}) {
   const nowMs = safeSignedInt(options.nowMs) || Date.now();
   const range = getDuelAnalyticsRange(options, nowMs);
-  const aiProfileFilter = sanitizeText(options.aiProfile || "", 24).toLowerCase();
+  const rawAiProfileFilter = sanitizeText(options.aiProfile || "", 24).toLowerCase();
+  const aiProfileFilter = rawAiProfileFilter === "all" ? "" : rawAiProfileFilter;
   const winnerFilter = normalizeAnalyticsWinnerFilter(options.winnerType);
   const stakeFilter = safeInt(options.stakeDoes);
 
