@@ -64,6 +64,30 @@ const TERMS_ROUTE = "./conditions-utilisation.html";
 const PRIVACY_ROUTE = "./politique-confidentialite.html";
 const LEGAL_ROUTE = "./mentions-legales.html";
 let page2ModulePromise = null;
+const PAGE1_DEBUG_VERSION = "page1-v4";
+
+console.info("[DLK_BOOTSTRAP][PAGE1] module:load", {
+  version: PAGE1_DEBUG_VERSION,
+  href: String(window.location?.href || ""),
+  buildHint: String(document.currentScript?.src || ""),
+});
+
+window.addEventListener("error", (event) => {
+  console.error("[DLK_BOOTSTRAP][PAGE1] window:error", {
+    message: String(event?.message || ""),
+    filename: String(event?.filename || ""),
+    lineno: Number(event?.lineno || 0),
+    colno: Number(event?.colno || 0),
+    version: PAGE1_DEBUG_VERSION,
+  });
+});
+
+window.addEventListener("unhandledrejection", (event) => {
+  console.error("[DLK_BOOTSTRAP][PAGE1] window:unhandledrejection", {
+    reason: event?.reason || null,
+    version: PAGE1_DEBUG_VERSION,
+  });
+});
 
 function pageAuthDebug(event, data = {}) {
   try {
@@ -208,7 +232,11 @@ function openForgotPasswordAssistModal(identifier = "") {
 
 async function ensurePage2Module() {
   if (!page2ModulePromise) {
-    page2ModulePromise = import("./page2.js?v=page2-hero-v4");
+    console.info("[DLK_BOOTSTRAP][PAGE1] page2:import:start", {
+      version: PAGE1_DEBUG_VERSION,
+      url: "./page2.js?v=page2-hero-v5",
+    });
+    page2ModulePromise = import("./page2.js?v=page2-hero-v5");
   }
   return page2ModulePromise;
 }

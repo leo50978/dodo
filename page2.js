@@ -34,6 +34,31 @@ import {
   refreshHomeHeroSlides,
 } from "./home-hero-config.js?v=page2-hero-config-v1";
 
+const PAGE2_DEBUG_VERSION = "page2-v5";
+
+console.info("[DLK_BOOTSTRAP][PAGE2] module:load", {
+  version: PAGE2_DEBUG_VERSION,
+  href: String(window.location?.href || ""),
+  moduleUrl: String(import.meta?.url || ""),
+});
+
+window.addEventListener("error", (event) => {
+  console.error("[DLK_BOOTSTRAP][PAGE2] window:error", {
+    message: String(event?.message || ""),
+    filename: String(event?.filename || ""),
+    lineno: Number(event?.lineno || 0),
+    colno: Number(event?.colno || 0),
+    version: PAGE2_DEBUG_VERSION,
+  });
+});
+
+window.addEventListener("unhandledrejection", (event) => {
+  console.error("[DLK_BOOTSTRAP][PAGE2] window:unhandledrejection", {
+    reason: event?.reason || null,
+    version: PAGE2_DEBUG_VERSION,
+  });
+});
+
 const CHAT_COLLECTION = "globalChannelMessages";
 const SUPPORT_THREADS_COLLECTION = "supportThreads";
 const AUTH_SUCCESS_NOTICE_STORAGE_KEY = "domino_auth_success_notice_v1";
@@ -1564,6 +1589,12 @@ function initAgentSupportAlert(user) {
 }
 
 export function renderPage2(user, options = {}) {
+  console.info("[DLK_BOOTSTRAP][PAGE2] renderPage2:enter", {
+    version: PAGE2_DEBUG_VERSION,
+    href: String(window.location?.href || ""),
+    uid: String(user?.uid || ""),
+    optimisticAuth: Boolean(options?.optimisticAuth),
+  });
   stopPage2ChatWatchers();
   stopPage2FinanceNoticeWatchers();
   stopPage2MorpionInvitePoll();

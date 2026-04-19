@@ -19,6 +19,32 @@ let homeHeroRotationTimer = null;
 const HOME_HERO_FALLBACK_SLIDES = [
   { name: "hero.jpg", alt: "Interface Dominoes Lakay" },
 ];
+const HOME_DEBUG_VERSION = "home-v4";
+const PAGE2_BOOTSTRAP_MODULE_URL = "./page2.js?v=page2-hero-v5";
+
+console.info("[DLK_BOOTSTRAP][HOME] module:load", {
+  version: HOME_DEBUG_VERSION,
+  href: String(window.location?.href || ""),
+  buildHint: String(document.currentScript?.src || ""),
+  page2ModuleUrl: PAGE2_BOOTSTRAP_MODULE_URL,
+});
+
+window.addEventListener("error", (event) => {
+  console.error("[DLK_BOOTSTRAP][HOME] window:error", {
+    message: String(event?.message || ""),
+    filename: String(event?.filename || ""),
+    lineno: Number(event?.lineno || 0),
+    colno: Number(event?.colno || 0),
+    version: HOME_DEBUG_VERSION,
+  });
+});
+
+window.addEventListener("unhandledrejection", (event) => {
+  console.error("[DLK_BOOTSTRAP][HOME] window:unhandledrejection", {
+    reason: event?.reason || null,
+    version: HOME_DEBUG_VERSION,
+  });
+});
 
 function homeDebug(event, data = {}) {
   try {
@@ -162,7 +188,11 @@ function hideHomeLoadingOverlay() {
 
 async function ensurePage2Module() {
   if (!page2ModulePromise) {
-    page2ModulePromise = import("./page2.js?v=page2-hero-v4");
+    console.info("[DLK_BOOTSTRAP][HOME] page2:import:start", {
+      url: PAGE2_BOOTSTRAP_MODULE_URL,
+      version: HOME_DEBUG_VERSION,
+    });
+    page2ModulePromise = import(PAGE2_BOOTSTRAP_MODULE_URL);
   }
   return page2ModulePromise;
 }
@@ -222,7 +252,7 @@ async function renderHomeFromAuth(user, options = {}) {
   if (!options?.force && stateKey === lastRenderedStateKey) return;
   lastRenderedStateKey = stateKey;
   const renderToken = ++homeRenderToken;
-  homeDebug("renderHomeFromAuth:loadPage2", { uid, optimistic, renderToken });
+  homeDebug("renderHomeFromAuth:loadPage2", { uid, optimistic, renderToken, page2ModuleUrl: PAGE2_BOOTSTRAP_MODULE_URL });
   try {
     const { renderPage2 } = await ensurePage2Module();
     if (renderToken !== homeRenderToken) {
@@ -230,10 +260,24 @@ async function renderHomeFromAuth(user, options = {}) {
       return;
     }
     hideHomeLoadingOverlay();
+    console.info("[DLK_BOOTSTRAP][HOME] page2:import:success", {
+      renderToken,
+      uid,
+      optimistic,
+      version: HOME_DEBUG_VERSION,
+    });
     homeDebug("renderHomeFromAuth:renderPage2", { uid, optimistic, renderToken });
     renderPage2(user || null, { optimisticAuth: optimistic });
   } catch (error) {
-    console.error("[AUTH_DEBUG][HOME] renderHomeFromAuth failed", error);
+    console.error("[DLK_BOOTSTRAP][HOME] page2:import:failed", {
+      renderToken,
+      uid,
+      optimistic,
+      version: HOME_DEBUG_VERSION,
+      name: String(error?.name || ""),
+      message: String(error?.message || ""),
+      stack: String(error?.stack || ""),
+    });
     hideHomeLoadingOverlay();
     const shell = getHomeShell();
     if (shell && !document.getElementById("homeBootstrapFallback")) {
