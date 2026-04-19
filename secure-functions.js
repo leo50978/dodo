@@ -52,6 +52,10 @@ export async function createFriendDameRoomSecure(payload = {}) {
   return createFriendRoomSecure(payload);
 }
 
+export async function joinFriendDameRoomByCodeSecure(payload = {}) {
+  return joinFriendRoomByCodeSecure(payload);
+}
+
 export async function joinFriendRoomByCodeSecure(payload = {}) {
   return invokeCallable("joinFriendRoomByCode", payload, "Impossible de rejoindre la partie entre amis.");
 }
