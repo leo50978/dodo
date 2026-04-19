@@ -126,7 +126,7 @@ const PAGE2_NON_CRITICAL_REFRESH_MS = 2 * 60 * 1000;
 const PAGE2_MORPION_INVITE_POLL_MS = 5000;
 const PAGE2_MORPION_STAKE_DOES = 500;
 const PAGE2_DAME_STAKE_DOES = 500;
-const ENABLE_DAME_MULTIPLAYER = true;
+const ENABLE_DAME_MULTIPLAYER = false;
 const PAGE2_BOARD_GAME_MORPION = "morpion";
 const PAGE2_BOARD_GAME_DAME = "dame";
 let page2MorpionInvitePollTimer = null;
@@ -4499,9 +4499,7 @@ export function renderPage2(user, options = {}) {
     }
     closeGameModeSelection();
     closeStakeSelection();
-    page2BoardGameSelection = PAGE2_BOARD_GAME_DAME;
-    await ensureMorpionStakeOptionsLoaded();
-    openMorpionStakeSelection();
+    openComingSoonModal("Jeu de dame");
   };
 
   if (startGameBtn) {
