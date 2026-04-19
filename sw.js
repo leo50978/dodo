@@ -1,4 +1,4 @@
-const CACHE_VERSION = "domino-static-v11";
+const CACHE_VERSION = "domino-static-v12";
 const PAGE_CACHE = `${CACHE_VERSION}-pages`;
 const ASSET_CACHE = `${CACHE_VERSION}-assets`;
 const MEDIA_CACHE = `${CACHE_VERSION}-media`;
