@@ -48,6 +48,10 @@ export async function createFriendRoomSecure(payload = {}) {
   return invokeCallable("createFriendRoom", payload, "Impossible de créer une partie entre amis.");
 }
 
+export async function createFriendDameRoomSecure(payload = {}) {
+  return createFriendRoomSecure(payload);
+}
+
 export async function joinFriendRoomByCodeSecure(payload = {}) {
   return invokeCallable("joinFriendRoomByCode", payload, "Impossible de rejoindre la partie entre amis.");
 }

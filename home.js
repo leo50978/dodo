@@ -223,14 +223,43 @@ async function renderHomeFromAuth(user, options = {}) {
   lastRenderedStateKey = stateKey;
   const renderToken = ++homeRenderToken;
   homeDebug("renderHomeFromAuth:loadPage2", { uid, optimistic, renderToken });
-  const { renderPage2 } = await ensurePage2Module();
-  if (renderToken !== homeRenderToken) {
-    homeDebug("renderHomeFromAuth:staleRenderAbort", { uid, optimistic, renderToken });
-    return;
+  try {
+    const { renderPage2 } = await ensurePage2Module();
+    if (renderToken !== homeRenderToken) {
+      homeDebug("renderHomeFromAuth:staleRenderAbort", { uid, optimistic, renderToken });
+      return;
+    }
+    hideHomeLoadingOverlay();
+    homeDebug("renderHomeFromAuth:renderPage2", { uid, optimistic, renderToken });
+    renderPage2(user || null, { optimisticAuth: optimistic });
+  } catch (error) {
+    console.error("[AUTH_DEBUG][HOME] renderHomeFromAuth failed", error);
+    hideHomeLoadingOverlay();
+    const shell = getHomeShell();
+    if (shell && !document.getElementById("homeBootstrapFallback")) {
+      const fallback = document.createElement("div");
+      fallback.id = "homeBootstrapFallback";
+      fallback.style.cssText = [
+        "position:fixed",
+        "inset:0",
+        "z-index:3600",
+        "display:flex",
+        "align-items:center",
+        "justify-content:center",
+        "padding:24px",
+        "background:rgba(15,23,42,.92)",
+        "color:white",
+        "backdrop-filter:blur(10px)",
+      ].join(";");
+      fallback.innerHTML = `
+        <div style="max-width:560px;width:100%;border:1px solid rgba(255,255,255,.12);border-radius:24px;padding:24px;background:rgba(255,255,255,.06);box-shadow:0 24px 60px rgba(0,0,0,.35);">
+          <div style="font-size:1.05rem;font-weight:800;margin-bottom:10px;">Chargement temporairement indisponible</div>
+          <div style="opacity:.82;line-height:1.55;">La page compte n'a pas pu se préparer correctement. Recharge la page, ou contacte le support si le problème persiste.</div>
+        </div>
+      `;
+      shell.appendChild(fallback);
+    }
   }
-  hideHomeLoadingOverlay();
-  homeDebug("renderHomeFromAuth:renderPage2", { uid, optimistic, renderToken });
-  renderPage2(user || null, { optimisticAuth: optimistic });
 }
 
 function renderHomeLoading(message = "Chargement...") {
