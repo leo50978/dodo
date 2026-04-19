@@ -162,7 +162,7 @@ function hideHomeLoadingOverlay() {
 
 async function ensurePage2Module() {
   if (!page2ModulePromise) {
-    page2ModulePromise = import("./page2.js?v=page2-hero-v3");
+    page2ModulePromise = import("./page2.js?v=page2-hero-v4");
   }
   return page2ModulePromise;
 }

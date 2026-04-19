@@ -208,7 +208,7 @@ function openForgotPasswordAssistModal(identifier = "") {
 
 async function ensurePage2Module() {
   if (!page2ModulePromise) {
-    page2ModulePromise = import("./page2.js");
+    page2ModulePromise = import("./page2.js?v=page2-hero-v4");
   }
   return page2ModulePromise;
 }
