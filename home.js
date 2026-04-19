@@ -1,5 +1,9 @@
 import "./firebase-init.js";
 import { auth, watchAuthState } from "./auth.js";
+import {
+  buildHomeHeroImagePath,
+  refreshHomeHeroSlides,
+} from "./home-hero-config.js?v=home-hero-v3";
 
 const AUTH_SUCCESS_NOTICE_STORAGE_KEY = "domino_auth_success_notice_v1";
 let lastRenderedStateKey = "__initial__";
@@ -12,11 +16,8 @@ const HOME_AUTH_BOOTSTRAP_TIMEOUT_MS = 900;
 const HOME_AUTH_SUCCESS_TIMEOUT_MS = 2600;
 const HOME_HERO_ROTATION_MS = 5000;
 let homeHeroRotationTimer = null;
-const HOME_HERO_REQUIRED_SLIDES = [
-  { src: "/hero.jpg", alt: "Interface Dominoes Lakay" },
-  { src: "/hero1.jpg", alt: "Interface Dominoes Lakay hero 1" },
-  { src: "/hero2.jpg", alt: "Interface Dominoes Lakay hero 2" },
-  { src: "/hero4.jpg", alt: "Interface Dominoes Lakay hero 4" },
+const HOME_HERO_FALLBACK_SLIDES = [
+  { name: "hero.jpg", alt: "Interface Dominoes Lakay" },
 ];
 
 function homeDebug(event, data = {}) {
@@ -55,45 +56,42 @@ function stopHomeHeroRotation() {
 }
 
 function normalizeHeroPath(value = "") {
-  return String(value || "").trim().replace(/^https?:\/\/[^/]+/i, "");
+  return String(value || "").trim().replace(/^https?:\/\/[^/]+/i, "").replace(/^\/+/, "");
 }
 
-function ensureRequiredHeroSlides() {
+function buildHomeHeroSlides(rawSlides = HOME_HERO_FALLBACK_SLIDES) {
   const track = document.querySelector("[data-home-hero-track]");
   if (!track) return [];
 
-  const existingSlides = Array.from(track.querySelectorAll("[data-home-hero-slide]"));
-  const existingSrc = new Set(
-    existingSlides
-      .map((slide) => normalizeHeroPath(slide.querySelector("img")?.getAttribute("src") || ""))
-      .filter(Boolean)
-  );
+  const slides = Array.isArray(rawSlides) ? rawSlides : HOME_HERO_FALLBACK_SLIDES;
+  track.replaceChildren();
 
-  HOME_HERO_REQUIRED_SLIDES.forEach((entry) => {
-    const source = normalizeHeroPath(entry.src);
-    if (!source || existingSrc.has(source)) return;
+  slides.forEach((entry, index) => {
+    const source = normalizeHeroPath(buildHomeHeroImagePath(entry?.name || entry?.src || ""));
+    if (!source) return;
 
     const slide = document.createElement("div");
     slide.className = "home-shell__hero-slide";
     slide.setAttribute("data-home-hero-slide", "");
+    if (index === 0) slide.classList.add("is-active");
     slide.innerHTML = `
       <img
         src="${source}"
-        alt="${entry.alt}"
+        alt="${String(entry?.alt || `Interface Dominoes Lakay hero ${index + 1}`)}"
         width="600"
         height="600"
+        fetchpriority="${index === 0 ? "high" : "auto"}"
         decoding="async"
       />
     `;
     track.appendChild(slide);
-    existingSrc.add(source);
   });
 
   return Array.from(track.querySelectorAll("[data-home-hero-slide]"));
 }
 
 function initHomeHeroRotation() {
-  const slides = ensureRequiredHeroSlides();
+  const slides = Array.from(document.querySelectorAll("[data-home-hero-slide]"));
   stopHomeHeroRotation();
   if (slides.length === 0) return;
 
@@ -113,6 +111,20 @@ function initHomeHeroRotation() {
     activeIndex = (activeIndex + 1) % slides.length;
     renderActiveSlide();
   }, HOME_HERO_ROTATION_MS);
+}
+
+async function refreshHomeHeroRotation() {
+  try {
+    const snapshot = await refreshHomeHeroSlides();
+    const enabledSlides = Array.isArray(snapshot?.slides)
+      ? snapshot.slides.filter((slide) => slide && slide.enabled === true)
+      : [];
+    buildHomeHeroSlides(enabledSlides.length ? enabledSlides : HOME_HERO_FALLBACK_SLIDES);
+  } catch (error) {
+    console.warn("[AUTH_DEBUG][HOME] hero config refresh failed", error);
+    buildHomeHeroSlides(HOME_HERO_FALLBACK_SLIDES);
+  }
+  initHomeHeroRotation();
 }
 
 function ensureHomeLoadingOverlay() {
@@ -150,7 +162,7 @@ function hideHomeLoadingOverlay() {
 
 async function ensurePage2Module() {
   if (!page2ModulePromise) {
-    page2ModulePromise = import("./page2.js");
+    page2ModulePromise = import("./page2.js?v=page2-hero-v3");
   }
   return page2ModulePromise;
 }
@@ -234,7 +246,7 @@ function clearHomeAuthBootstrapTimer() {
 homeDebug("bootstrap:start");
 schedulePwaSupportRegistration();
 warmPage2ModuleSoon();
-initHomeHeroRotation();
+void refreshHomeHeroRotation();
 const immediateUser = auth.currentUser || null;
 if (immediateUser?.uid) {
   homeDebug("bootstrap:currentUserImmediate", { uid: String(immediateUser.uid || "") });

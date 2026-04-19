@@ -1,4 +1,4 @@
-const CACHE_VERSION = "domino-static-v10";
+const CACHE_VERSION = "domino-static-v11";
 const PAGE_CACHE = `${CACHE_VERSION}-pages`;
 const ASSET_CACHE = `${CACHE_VERSION}-assets`;
 const MEDIA_CACHE = `${CACHE_VERSION}-media`;
@@ -17,6 +17,7 @@ const CORE_PRECACHE = [
   "/secure-functions.js",
   "/firebase-init.js",
   "/morpion-live-notice.js",
+  "/home-hero-config.js",
   "/jeu.html",
   "/jeu-duel.html",
   "/site.webmanifest",
@@ -29,7 +30,6 @@ const CORE_PRECACHE = [
   "/hero.jpg",
   "/hero1.jpg",
   "/hero2.jpg",
-  "/hero4.jpg",
   "/logo.png",
 ];
 

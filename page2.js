@@ -18,6 +18,8 @@ import {
   joinFriendDuelRoomByCodeSecure,
   createFriendMorpionRoomSecure,
   joinFriendMorpionRoomByCodeSecure,
+  createFriendDameRoomSecure,
+  joinFriendDameRoomByCodeSecure,
   getActiveSurveyForUserSecure,
   submitSurveyResponseSecure,
   ackClientFinanceNoticeSecure,
@@ -27,6 +29,10 @@ import {
 import { auth, db, collection, query, orderBy, limit, doc, getDoc, getDocs, setDoc, serverTimestamp, onSnapshot } from "./firebase-init.js";
 import { startMorpionLiveNotice } from "./morpion-live-notice.js";
 import { SUPPORT_WHATSAPP_PHONE, buildSupportWhatsAppUrl } from "./support-contact.js";
+import {
+  buildHomeHeroImagePath,
+  refreshHomeHeroSlides,
+} from "./home-hero-config.js?v=page2-hero-config-v1";
 
 const CHAT_COLLECTION = "globalChannelMessages";
 const SUPPORT_THREADS_COLLECTION = "supportThreads";
@@ -46,7 +52,7 @@ const WELCOME_BONUS_PROMPT_RETRY_MS = 1200;
 const DEFAULT_STAKE_REWARD_MULTIPLIER = 3;
 const PAGE2_BOOTSTRAP_MIN_MS = 650;
 const PAGE2_BOOTSTRAP_TIMEOUT_MS = 2600;
-const PAGE2_HERO_IMAGES = Object.freeze(["hero.jpg", "hero1.jpg", "hero2.jpg"]);
+const PAGE2_HERO_FALLBACK_IMAGES = Object.freeze(["hero.jpg"]);
 const PAGE2_HERO_ROTATION_MS = 10000;
 const SHARE_SITE_PROMO_TARGET = 5;
 const SHARE_SITE_PROMO_REWARD_DOES = 100;
@@ -119,10 +125,15 @@ const PAGE2_PRESENCE_TTL_MS = 70 * 1000;
 const PAGE2_NON_CRITICAL_REFRESH_MS = 2 * 60 * 1000;
 const PAGE2_MORPION_INVITE_POLL_MS = 5000;
 const PAGE2_MORPION_STAKE_DOES = 500;
+const PAGE2_DAME_STAKE_DOES = 500;
+const ENABLE_DAME_MULTIPLAYER = true;
+const PAGE2_BOARD_GAME_MORPION = "morpion";
+const PAGE2_BOARD_GAME_DAME = "dame";
 let page2MorpionInvitePollTimer = null;
 let page2MorpionInvitePollInFlight = false;
 let page2MorpionInviteActiveId = "";
 let page2MorpionInviteModal = null;
+let page2HeroImages = Array.from(PAGE2_HERO_FALLBACK_IMAGES);
 
 startMorpionLiveNotice();
 
@@ -375,6 +386,13 @@ function buildMorpionGameUrl(stakeDoes = 500) {
   return `./morpion.html?${params.toString()}`;
 }
 
+function buildDameGameUrl(stakeDoes = 500) {
+  const params = new URLSearchParams();
+  const parsedStake = Number.parseInt(String(stakeDoes ?? 500), 10);
+  params.set("stake", String(Number.isFinite(parsedStake) ? parsedStake : 500));
+  return `./dame.html?${params.toString()}`;
+}
+
 function buildMorpionBotTestGameUrl(roomId, seatIndex = 0) {
   const params = new URLSearchParams();
   params.set("autostart", "1");
@@ -396,6 +414,16 @@ function buildFriendMorpionGameUrl(roomId, seatIndex, stakeDoes) {
   params.set("seat", String(Math.max(0, Number.parseInt(String(seatIndex || 0), 10) || 0)));
   params.set("roomMode", "morpion_friends");
   return `./morpion.html?${params.toString()}`;
+}
+
+function buildFriendDameGameUrl(roomId, seatIndex, stakeDoes) {
+  const params = new URLSearchParams();
+  params.set("autostart", "1");
+  params.set("stake", String(Math.max(MORPION_FRIEND_FIXED_STAKE_DOES, Number.parseInt(String(stakeDoes || 0), 10) || MORPION_FRIEND_FIXED_STAKE_DOES)));
+  params.set("friendDameRoomId", String(roomId || "").trim());
+  params.set("seat", String(Math.max(0, Number.parseInt(String(seatIndex || 0), 10) || 0)));
+  params.set("roomMode", "dame_friends");
+  return `./dame.html?${params.toString()}`;
 }
 
 function hasSeenTournamentIntro() {
@@ -576,29 +604,63 @@ function stopPage2HeroRotation() {
   page2HeroRotationTimer = null;
 }
 
-function preloadPage2HeroImages() {
-  PAGE2_HERO_IMAGES.forEach((src) => {
+function normalizePage2HeroPath(value = "") {
+  return String(value || "").trim().replace(/^https?:\/\/[^/]+/i, "").replace(/^\/+/, "");
+}
+
+function preloadPage2HeroImages(images = PAGE2_HERO_FALLBACK_IMAGES) {
+  images.forEach((src) => {
     const img = new Image();
     img.src = src;
   });
 }
 
-function initPage2HeroRotation() {
+function applyPage2HeroSlides(rawSlides = []) {
+  const slides = Array.isArray(rawSlides) ? rawSlides : [];
+  const uniqueImages = [];
+  const seen = new Set();
+
+  slides.forEach((slide) => {
+    const source = normalizePage2HeroPath(buildHomeHeroImagePath(slide?.name || slide?.src || ""));
+    if (!source || seen.has(source)) return;
+    seen.add(source);
+    uniqueImages.push(source);
+  });
+
+  page2HeroImages = uniqueImages.length ? uniqueImages : Array.from(PAGE2_HERO_FALLBACK_IMAGES);
+}
+
+async function hydratePage2HeroImages() {
+  try {
+    const snapshot = await refreshHomeHeroSlides();
+    const enabledSlides = Array.isArray(snapshot?.slides)
+      ? snapshot.slides.filter((slide) => slide && slide.enabled === true)
+      : [];
+    applyPage2HeroSlides(enabledSlides);
+  } catch (error) {
+    console.warn("[PAGE2] hero config load failed", error);
+    page2HeroImages = Array.from(PAGE2_HERO_FALLBACK_IMAGES);
+  }
+}
+
+async function initPage2HeroRotation() {
   const heroImage = document.getElementById("page2HeroImage");
   stopPage2HeroRotation();
   if (!heroImage) return;
 
-  preloadPage2HeroImages();
+  await hydratePage2HeroImages();
+  const images = Array.isArray(page2HeroImages) && page2HeroImages.length ? page2HeroImages : Array.from(PAGE2_HERO_FALLBACK_IMAGES);
+  preloadPage2HeroImages(images);
   let activeIndex = 0;
-  heroImage.src = PAGE2_HERO_IMAGES[activeIndex];
+  heroImage.src = images[activeIndex];
 
-  if (PAGE2_HERO_IMAGES.length <= 1) return;
+  if (images.length <= 1) return;
 
   page2HeroRotationTimer = window.setInterval(() => {
     heroImage.style.opacity = "0";
     window.setTimeout(() => {
-      activeIndex = (activeIndex + 1) % PAGE2_HERO_IMAGES.length;
-      heroImage.src = PAGE2_HERO_IMAGES[activeIndex];
+      activeIndex = (activeIndex + 1) % images.length;
+      heroImage.src = images[activeIndex];
       heroImage.style.opacity = "1";
     }, 320);
   }, PAGE2_HERO_ROTATION_MS);
@@ -3784,6 +3846,13 @@ export function renderPage2(user, options = {}) {
     stakeDoes: MORPION_FRIEND_FIXED_STAKE_DOES,
     inviteCode: "",
   };
+  const dameFriendRoomDraft = {
+    roomId: "",
+    seatIndex: 0,
+    stakeDoes: MORPION_FRIEND_FIXED_STAKE_DOES,
+    inviteCode: "",
+  };
+  let page2BoardGameSelection = PAGE2_BOARD_GAME_MORPION;
 
   const morpionBotTestRoomDraft = {
     roomId: "",
@@ -3829,6 +3898,17 @@ export function renderPage2(user, options = {}) {
     }
     showGlobalLoading("Connexion du morpion prive en cours...");
     window.location.href = buildFriendMorpionGameUrl(nextRoomId, nextSeatIndex, nextStakeDoes);
+  };
+
+  const navigateToFriendDameRoom = (roomData = {}) => {
+    const nextRoomId = String(roomData?.roomId || dameFriendRoomDraft.roomId || "").trim();
+    const nextSeatIndex = Number.parseInt(String(roomData?.seatIndex ?? dameFriendRoomDraft.seatIndex ?? 0), 10) || 0;
+    const nextStakeDoes = Number.parseInt(String(roomData?.stakeDoes || dameFriendRoomDraft.stakeDoes || 0), 10) || MORPION_FRIEND_FIXED_STAKE_DOES;
+    if (!nextRoomId) {
+      throw new Error("Salle dame privee introuvable.");
+    }
+    showGlobalLoading("Connexion de la dame privee en cours...");
+    window.location.href = buildFriendDameGameUrl(nextRoomId, nextSeatIndex, nextStakeDoes);
   };
 
   const navigateToMorpionBotTestRoom = (roomData = {}) => {
@@ -4282,6 +4362,37 @@ export function renderPage2(user, options = {}) {
     window.location.href = buildMorpionGameUrl(normalizedStakeAmount);
   };
 
+  const continueToBoardGame = async (stakeAmount = 500) => {
+    if (page2BoardGameSelection === PAGE2_BOARD_GAME_DAME) {
+      const parsedStakeAmount = Number.parseInt(String(stakeAmount ?? PAGE2_DAME_STAKE_DOES), 10);
+      const normalizedStakeAmount = Number.isFinite(parsedStakeAmount) ? parsedStakeAmount : PAGE2_DAME_STAKE_DOES;
+      if (normalizedStakeAmount <= 0) {
+        closeMorpionStakeSelection();
+        showGlobalLoading("Ouverture de Dame...");
+        window.location.href = buildDameGameUrl(0);
+        return;
+      }
+      const xchangeMod = await loadXchangeModule().catch(() => null);
+      const state = xchangeMod?.getXchangeState?.() || {};
+      const playableDoesBalance = getPlayableDoesBalance(state);
+      if (playableDoesBalance < normalizedStakeAmount) {
+        closeMorpionStakeSelection();
+        if (doesRequiredOverlay) {
+          doesRequiredOverlay.classList.remove("hidden");
+          doesRequiredOverlay.classList.add("flex");
+          document.body.classList.add("overflow-hidden");
+        }
+        return;
+      }
+      closeMorpionStakeSelection();
+      showGlobalLoading("Ouverture de Dame...");
+      window.location.href = buildDameGameUrl(normalizedStakeAmount);
+      return;
+    }
+
+    await continueToMorpion(stakeAmount);
+  };
+
   let stakeOptionsHydrationPromise = null;
   const ensureStakeOptionsLoaded = () => {
     if (stakeOptionsHydrationPromise) return stakeOptionsHydrationPromise;
@@ -4367,6 +4478,28 @@ export function renderPage2(user, options = {}) {
     }
     closeGameModeSelection();
     closeStakeSelection();
+    page2BoardGameSelection = PAGE2_BOARD_GAME_MORPION;
+    await ensureMorpionStakeOptionsLoaded();
+    openMorpionStakeSelection();
+  };
+
+  const handleDameEntry = async () => {
+    if (page2AccountFrozen) return;
+    if (!isAuthenticated) {
+      showGlobalLoading("Redirection vers la connexion...");
+      window.location.href = "./auth.html";
+      return;
+    }
+    if (isOptimisticAuth) {
+      showGlobalLoading("Finalisation de la session...");
+      window.setTimeout(() => {
+        hideGlobalLoading();
+      }, 1600);
+      return;
+    }
+    closeGameModeSelection();
+    closeStakeSelection();
+    page2BoardGameSelection = PAGE2_BOARD_GAME_DAME;
     await ensureMorpionStakeOptionsLoaded();
     openMorpionStakeSelection();
   };
@@ -4405,8 +4538,12 @@ export function renderPage2(user, options = {}) {
   });
 
   gameModeDameCard?.addEventListener("click", () => {
-    closeGameModeSelection();
-    openComingSoonModal("Jeu de dame");
+    if (!ENABLE_DAME_MULTIPLAYER) {
+      closeGameModeSelection();
+      openComingSoonModal("Jeu de dame");
+      return;
+    }
+    void handleDameEntry();
   });
 
   gameModePongCard?.addEventListener("click", () => {
@@ -4699,11 +4836,18 @@ export function renderPage2(user, options = {}) {
           return;
         }
 
-        const result = await createFriendMorpionRoomSecure({ stakeDoes: stakeAmount });
+        const isDameMode = page2BoardGameSelection === PAGE2_BOARD_GAME_DAME;
+        const result = isDameMode
+          ? await createFriendDameRoomSecure({ stakeDoes: stakeAmount })
+          : await createFriendMorpionRoomSecure({ stakeDoes: stakeAmount });
         morpionFriendRoomDraft.roomId = String(result?.roomId || "");
         morpionFriendRoomDraft.seatIndex = Number.parseInt(String(result?.seatIndex || 0), 10) || 0;
         morpionFriendRoomDraft.stakeDoes = Number.parseInt(String(result?.stakeDoes || stakeAmount), 10) || stakeAmount;
         morpionFriendRoomDraft.inviteCode = String(result?.inviteCode || "").trim();
+        dameFriendRoomDraft.roomId = morpionFriendRoomDraft.roomId;
+        dameFriendRoomDraft.seatIndex = morpionFriendRoomDraft.seatIndex;
+        dameFriendRoomDraft.stakeDoes = morpionFriendRoomDraft.stakeDoes;
+        dameFriendRoomDraft.inviteCode = morpionFriendRoomDraft.inviteCode;
 
         if (morpionFriendCodeValue) {
           morpionFriendCodeValue.textContent = morpionFriendRoomDraft.inviteCode || "------";
@@ -4729,7 +4873,7 @@ export function renderPage2(user, options = {}) {
         const roomStatus = String(error?.status || "").trim().toLowerCase();
         const nextStake = Number.parseInt(String(error?.stakeDoes || stakeAmount), 10) || stakeAmount;
         closeMorpionFriendCreate();
-        if (roomMode === "morpion_friends") {
+        if (roomMode === "morpion_friends" || roomMode === "dame_friends") {
           morpionFriendRoomDraft.roomId = String(error.roomId || "");
           morpionFriendRoomDraft.seatIndex = Number.parseInt(String(error?.seatIndex || 0), 10) || 0;
           morpionFriendRoomDraft.stakeDoes = nextStake;
@@ -4748,11 +4892,20 @@ export function renderPage2(user, options = {}) {
             openMorpionFriendCode();
             return;
           }
-          navigateToFriendMorpionRoom(morpionFriendRoomDraft);
+          if (page2BoardGameSelection === PAGE2_BOARD_GAME_DAME) {
+            navigateToFriendDameRoom(dameFriendRoomDraft);
+          } else {
+            navigateToFriendMorpionRoom(morpionFriendRoomDraft);
+          }
           return;
         }
-        showGlobalLoading("Ouverture du Morpion...");
-        window.location.href = buildMorpionGameUrl(nextStake);
+        if (page2BoardGameSelection === PAGE2_BOARD_GAME_DAME) {
+          showGlobalLoading("Ouverture de Dame...");
+          window.location.href = buildDameGameUrl(nextStake);
+        } else {
+          showGlobalLoading("Ouverture du Morpion...");
+          window.location.href = buildMorpionGameUrl(nextStake);
+        }
         return;
       }
       if (morpionFriendCreateHint) {
@@ -4774,7 +4927,11 @@ export function renderPage2(user, options = {}) {
 
   morpionFriendCodeContinueBtn?.addEventListener("click", () => {
     closeMorpionFriendCode();
-    navigateToFriendMorpionRoom(morpionFriendRoomDraft);
+    if (page2BoardGameSelection === PAGE2_BOARD_GAME_DAME) {
+      navigateToFriendDameRoom(dameFriendRoomDraft);
+    } else {
+      navigateToFriendMorpionRoom(morpionFriendRoomDraft);
+    }
   });
 
   morpionFriendJoinCodeInput?.addEventListener("input", () => {
@@ -4800,13 +4957,24 @@ export function renderPage2(user, options = {}) {
 
     try {
       await withButtonLoading(morpionFriendJoinSubmitBtn, async () => {
-        const result = await joinFriendMorpionRoomByCodeSecure({ inviteCode });
+        const isDameMode = page2BoardGameSelection === PAGE2_BOARD_GAME_DAME;
+        const result = isDameMode
+          ? await joinFriendDameRoomByCodeSecure({ inviteCode })
+          : await joinFriendMorpionRoomByCodeSecure({ inviteCode });
         morpionFriendRoomDraft.roomId = String(result?.roomId || "");
         morpionFriendRoomDraft.seatIndex = Number.parseInt(String(result?.seatIndex || 0), 10) || 0;
         morpionFriendRoomDraft.stakeDoes = Number.parseInt(String(result?.stakeDoes || 0), 10) || 500;
         morpionFriendRoomDraft.inviteCode = String(result?.inviteCode || inviteCode).trim();
+        dameFriendRoomDraft.roomId = morpionFriendRoomDraft.roomId;
+        dameFriendRoomDraft.seatIndex = morpionFriendRoomDraft.seatIndex;
+        dameFriendRoomDraft.stakeDoes = morpionFriendRoomDraft.stakeDoes;
+        dameFriendRoomDraft.inviteCode = morpionFriendRoomDraft.inviteCode;
         closeMorpionFriendJoin();
-        navigateToFriendMorpionRoom(morpionFriendRoomDraft);
+        if (isDameMode) {
+          navigateToFriendDameRoom(dameFriendRoomDraft);
+        } else {
+          navigateToFriendMorpionRoom(morpionFriendRoomDraft);
+        }
       }, { loadingLabel: "Connexion..." });
     } catch (error) {
       console.error("[MORPION_FRIEND_ROOM] join failed", error);
@@ -4817,15 +4985,27 @@ export function renderPage2(user, options = {}) {
         const roomMode = String(error?.roomMode || "");
         const nextStake = Number.parseInt(String(error?.stakeDoes || morpionFriendRoomDraft.stakeDoes || 500), 10) || 500;
         closeMorpionFriendJoin();
-        if (roomMode === "morpion_friends") {
+        if (roomMode === "morpion_friends" || roomMode === "dame_friends") {
           morpionFriendRoomDraft.roomId = String(error.roomId || "");
           morpionFriendRoomDraft.seatIndex = Number.parseInt(String(error?.seatIndex || 0), 10) || 0;
           morpionFriendRoomDraft.stakeDoes = nextStake;
-          navigateToFriendMorpionRoom(morpionFriendRoomDraft);
+          if (page2BoardGameSelection === PAGE2_BOARD_GAME_DAME) {
+            dameFriendRoomDraft.roomId = morpionFriendRoomDraft.roomId;
+            dameFriendRoomDraft.seatIndex = morpionFriendRoomDraft.seatIndex;
+            dameFriendRoomDraft.stakeDoes = morpionFriendRoomDraft.stakeDoes;
+            navigateToFriendDameRoom(dameFriendRoomDraft);
+          } else {
+            navigateToFriendMorpionRoom(morpionFriendRoomDraft);
+          }
           return;
         }
-        showGlobalLoading("Ouverture du Morpion...");
-        window.location.href = buildMorpionGameUrl(nextStake);
+        if (page2BoardGameSelection === PAGE2_BOARD_GAME_DAME) {
+          showGlobalLoading("Ouverture de Dame...");
+          window.location.href = buildDameGameUrl(nextStake);
+        } else {
+          showGlobalLoading("Ouverture du Morpion...");
+          window.location.href = buildMorpionGameUrl(nextStake);
+        }
         return;
       }
       if (String(error?.message || "").toLowerCase().includes("solde does insuffisant")) {
@@ -5109,7 +5289,7 @@ export function renderPage2(user, options = {}) {
     const parsedStakeAmount = Number.parseInt(String(btn.getAttribute("data-stake") ?? 500), 10);
     const stakeAmount = Number.isFinite(parsedStakeAmount) ? parsedStakeAmount : 500;
     await withButtonLoading(btn, async () => {
-      await continueToMorpion(stakeAmount);
+      await continueToBoardGame(stakeAmount);
     }, { loadingLabel: "Verification..." });
   });
   if (morpionFriendModeClose) morpionFriendModeClose.addEventListener("click", closeMorpionFriendMode);

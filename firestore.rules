@@ -61,6 +61,17 @@ service cloud.firestore {
         && request.auth.uid in morpionRoomDoc(roomId).data.playerUids;
     }
 
+    function dameRoomDoc(roomId) {
+      return get(/databases/$(database)/documents/dameRooms/$(roomId));
+    }
+
+    function isDameRoomParticipant(roomId) {
+      return signedIn()
+        && dameRoomDoc(roomId).data != null
+        && dameRoomDoc(roomId).data.playerUids is list
+        && request.auth.uid in dameRoomDoc(roomId).data.playerUids;
+    }
+
     function isSafeClientPresenceCreate(uid) {
       return isOwner(uid)
         && request.resource.data.keys().hasOnly([
@@ -218,6 +229,29 @@ service cloud.firestore {
       allow write: if false;
     }
 
+    match /dameRooms/{roomId} {
+      allow read: if isFinanceAdmin()
+        || (signedIn()
+          && resource.data.playerUids is list
+          && request.auth.uid in resource.data.playerUids);
+      allow write: if false;
+
+      match /actions/{actionId} {
+        allow read: if isFinanceAdmin() || isDameRoomParticipant(roomId);
+        allow write: if false;
+      }
+
+      match /settlements/{uid} {
+        allow read: if isFinanceAdmin() || isOwner(uid);
+        allow write: if false;
+      }
+    }
+
+    match /dameGameStates/{roomId} {
+      allow read: if isFinanceAdmin() || isDameRoomParticipant(roomId);
+      allow write: if false;
+    }
+
     match /paymentMethods/{docId} {
       allow read, write: if isFinanceAdmin();
     }
@@ -226,6 +260,11 @@ service cloud.firestore {
       allow read: if false;
       allow create: if canCreateDpaymentBootstrap();
       allow update, delete: if isFinanceAdmin();
+    }
+
+    match /settings/home_hero_slides_v1 {
+      allow read: if true;
+      allow write: if isFinanceAdmin();
     }
 
     match /settings/{docId} {

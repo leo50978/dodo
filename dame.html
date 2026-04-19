@@ -169,6 +169,79 @@
         text-align: center;
       }
 
+      .production-lock {
+        position: fixed;
+        inset: 0;
+        z-index: 120;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        padding: 18px;
+        background: rgba(4, 10, 22, 0.72);
+        backdrop-filter: blur(10px);
+      }
+
+      .production-lock__card {
+        width: min(520px, 100%);
+        border-radius: 24px;
+        border: 1px solid rgba(148, 214, 255, 0.24);
+        background: linear-gradient(180deg, rgba(21, 37, 66, 0.98), rgba(12, 24, 46, 0.98));
+        box-shadow: 0 24px 48px rgba(4, 10, 22, 0.42);
+        padding: 22px;
+        text-align: center;
+      }
+
+      .production-lock__badge {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        min-height: 32px;
+        padding: 0 12px;
+        border-radius: 999px;
+        border: 1px solid rgba(100, 212, 255, 0.46);
+        background: rgba(100, 212, 255, 0.12);
+        color: #d8f5ff;
+        font-size: 12px;
+        font-weight: 700;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+      }
+
+      .production-lock__title {
+        margin: 14px 0 8px;
+        font-size: clamp(1.5rem, 4vw, 2.05rem);
+        line-height: 1.1;
+      }
+
+      .production-lock__text {
+        margin: 0;
+        color: rgba(235, 242, 255, 0.84);
+        line-height: 1.65;
+        font-size: 15px;
+      }
+
+      .production-lock__actions {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 10px;
+        justify-content: center;
+        margin-top: 18px;
+      }
+
+      .production-lock__btn {
+        min-height: 46px;
+        padding: 0 16px;
+        border-radius: 12px;
+        border: 1px solid rgba(255, 255, 255, 0.16);
+        background: rgba(255, 255, 255, 0.08);
+        color: #f5f8ff;
+        text-decoration: none;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        font-weight: 700;
+      }
+
       @media (min-width: 980px) {
         #draughts {
           grid-template-columns: minmax(0, 1fr) 300px;
@@ -190,7 +263,7 @@
     <main class="game-shell">
       <header class="game-topbar">
         <button class="back-btn" type="button" onclick="window.location.href='./index.html'">Retour accueil</button>
-        <span class="mode-badge">Jeu de dame vs bot local</span>
+        <span class="mode-badge">Jeu de dame · 2 joueurs humains</span>
       </header>
 
       <section id="draughts">
@@ -207,9 +280,9 @@
               <div class="captured"></div>
             </div>
           </div>
-          <div id="botStatus" class="bot-status">Bot la pare.</div>
+          <div id="botStatus" class="bot-status">Mode local humain-humain actif.</div>
           <div class="meta-card" style="margin-top: 12px;">
-            Ou ap jwe kont yon bot lokal ki aktif otomatikman. Pa gen fonksyon anliy pou bot sa a, tout kalkil fet sou aparèy la.
+            Ce jeu de dame est en mode 2 joueurs humains. Le bot local est desactive.
           </div>
         </aside>
 
@@ -236,9 +309,23 @@
       </section>
     </main>
 
+    <div class="production-lock" role="dialog" aria-modal="true" aria-labelledby="dameProductionTitle">
+      <div class="production-lock__card">
+        <div class="production-lock__badge">En production</div>
+        <h2 id="dameProductionTitle" class="production-lock__title">Jeu de dame temporairement indisponible</h2>
+        <p class="production-lock__text">
+          Nous finalisons encore le mode de jeu. Cette version est en production et n'est pas encore ouverte aux joueurs.
+        </p>
+        <p class="production-lock__text" style="margin-top:10px;">
+          Reviens un peu plus tard ou retourne a l'accueil pour jouer aux autres modes disponibles.
+        </p>
+        <div class="production-lock__actions">
+          <a class="production-lock__btn" href="./index.html">Retour accueil</a>
+        </div>
+      </div>
+    </div>
+
     <script src="/draughtsjs-master/draughts.js"></script>
-    <script src="/draughts-bot/dame-bot-tablebase.js"></script>
-    <script src="/draughts-bot/dame-bot-engine.js"></script>
-    <script src="/draughts-bot/dame-bot-controller.js"></script>
+    <script type="module" src="/logiquejeu-dame.js"></script>
   </body>
 </html>

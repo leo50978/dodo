@@ -142,6 +142,37 @@
         cursor: not-allowed;
       }
 
+      .stake-btn-alt {
+        border: 1px solid rgba(141, 231, 255, 0.4);
+        background: linear-gradient(180deg, rgba(33, 145, 212, 0.92), rgba(12, 80, 138, 0.96));
+      }
+
+      .friend-code {
+        margin-top: 8px;
+        padding: 10px 12px;
+        border-radius: 12px;
+        background: rgba(8, 17, 34, 0.68);
+        border: 1px solid rgba(141, 231, 255, 0.28);
+        letter-spacing: 0.18em;
+        font-weight: 700;
+        text-align: center;
+      }
+
+      .friend-input {
+        width: 100%;
+        min-height: 48px;
+        margin-top: 8px;
+        border-radius: 12px;
+        border: 1px solid rgba(173, 198, 255, 0.24);
+        background: rgba(8, 17, 34, 0.76);
+        color: #f3f7ff;
+        font: inherit;
+        font-weight: 700;
+        letter-spacing: 0.22em;
+        text-transform: uppercase;
+        text-align: center;
+      }
+
       .panel-note {
         min-height: 18px;
         margin-top: 10px;
@@ -174,10 +205,53 @@
         <h3>Choisis ta mise Pong</h3>
         <p>Le gagnant prend 1.9x. La mise est engagée dès le lancement.</p>
         <div class="stake-grid">
+          <button type="button" class="stake-btn" data-stake="100">100 Does · Gain 190</button>
+          <button type="button" class="stake-btn" data-stake="500">500 Does · Gain 950</button>
           <button type="button" class="stake-btn" data-stake="1000">1000 Does · Gain 1900</button>
           <button type="button" class="stake-btn" data-stake="5000">5000 Does · Gain 9500</button>
+          <button type="button" id="friendInviteBtn" class="stake-btn stake-btn-alt">Inviter un ami</button>
         </div>
         <div id="stakeNote" class="panel-note"></div>
+      </div>
+    </div>
+
+    <div id="friendOverlay" class="overlay" role="dialog" aria-modal="true">
+      <div class="panel">
+        <h3 id="friendTitle">Pong entre amis</h3>
+        <p id="friendCopy">Crée un code ou rejoins un code d'ami. Cette étape est séparée de la partie solo.</p>
+
+        <div id="friendModeActions" class="stake-grid">
+          <button type="button" id="friendJoinOpenBtn" class="stake-btn stake-btn-alt">J'ai ete invite</button>
+          <button type="button" id="friendCreateOpenBtn" class="stake-btn">Creer une salle</button>
+          <button type="button" id="friendCloseBtn" class="stake-btn">Fermer</button>
+        </div>
+
+        <div id="friendCreateBlock" class="stake-grid" style="display:none;">
+          <button type="button" class="stake-btn" data-friend-create-stake="100">Creer · 100 Does</button>
+          <button type="button" class="stake-btn" data-friend-create-stake="500">Creer · 500 Does</button>
+          <button type="button" class="stake-btn" data-friend-create-stake="1000">Creer · 1000 Does</button>
+          <button type="button" class="stake-btn" data-friend-create-stake="5000">Creer · 5000 Does</button>
+          <button type="button" id="friendCreateBackBtn" class="stake-btn stake-btn-alt">Retour</button>
+        </div>
+
+        <div id="friendJoinBlock" class="stake-grid" style="display:none;">
+          <input id="friendJoinCodeInput" class="friend-input" type="text" maxlength="12" placeholder="ABC123" />
+          <button type="button" id="friendJoinSubmitBtn" class="stake-btn stake-btn-alt">Rejoindre</button>
+          <button type="button" id="friendJoinBackBtn" class="stake-btn">Retour</button>
+        </div>
+
+        <div id="friendCodeBlock" class="stake-grid" style="display:none;">
+          <p id="friendCodeIntro">Code à partager</p>
+          <div id="friendCodeValue" class="friend-code">------</div>
+          <p id="friendRoomStatusLine">En attente de l'autre joueur...</p>
+          <p id="friendRoomStatusMeta" class="panel-note"></p>
+          <button type="button" id="friendStartBtn" class="stake-btn" disabled>Commencer la partie</button>
+          <button type="button" id="friendCodeCopyBtn" class="stake-btn stake-btn-alt">Copier le code</button>
+          <button type="button" id="friendCodeRecreateBtn" class="stake-btn stake-btn-alt">Nouvelle salle</button>
+          <button type="button" id="friendCodeCloseBtn" class="stake-btn">Fermer</button>
+        </div>
+
+        <div id="friendNote" class="panel-note"></div>
       </div>
     </div>
 
@@ -190,7 +264,14 @@
 
     <script type="module">
       import { auth, db, doc, getDoc, onAuthStateChanged } from "./firebase-init.js";
-      import { recordPongMatchResultSecure, startPongWagerSecure } from "./secure-functions.js";
+      import {
+        recordPongMatchResultSecure,
+        startPongWagerSecure,
+        createFriendPongRoomSecure,
+        joinFriendPongRoomByCodeSecure,
+        resumeFriendPongRoomSecure,
+        leaveFriendPongRoomSecure,
+      } from "./secure-functions.js";
 
       const frame = document.getElementById("pongFrame");
       const title = document.querySelector(".title");
@@ -199,7 +280,31 @@
       const stakeOverlay = document.getElementById("stakeOverlay");
       const searchOverlay = document.getElementById("searchOverlay");
       const stakeNote = document.getElementById("stakeNote");
-      const stakeButtons = Array.from(document.querySelectorAll(".stake-btn"));
+      const stakeButtons = Array.from(document.querySelectorAll(".stake-btn[data-stake]"));
+      const friendInviteBtn = document.getElementById("friendInviteBtn");
+      const friendOverlay = document.getElementById("friendOverlay");
+      const friendTitle = document.getElementById("friendTitle");
+      const friendCopy = document.getElementById("friendCopy");
+      const friendModeActions = document.getElementById("friendModeActions");
+      const friendCreateOpenBtn = document.getElementById("friendCreateOpenBtn");
+      const friendCreateBlock = document.getElementById("friendCreateBlock");
+      const friendCreateBackBtn = document.getElementById("friendCreateBackBtn");
+      const friendJoinOpenBtn = document.getElementById("friendJoinOpenBtn");
+      const friendJoinBlock = document.getElementById("friendJoinBlock");
+      const friendJoinCodeInput = document.getElementById("friendJoinCodeInput");
+      const friendJoinSubmitBtn = document.getElementById("friendJoinSubmitBtn");
+      const friendJoinBackBtn = document.getElementById("friendJoinBackBtn");
+      const friendCodeBlock = document.getElementById("friendCodeBlock");
+      const friendCodeValue = document.getElementById("friendCodeValue");
+      const friendCodeIntro = document.getElementById("friendCodeIntro");
+      const friendRoomStatusLine = document.getElementById("friendRoomStatusLine");
+      const friendRoomStatusMeta = document.getElementById("friendRoomStatusMeta");
+      const friendStartBtn = document.getElementById("friendStartBtn");
+      const friendCodeCopyBtn = document.getElementById("friendCodeCopyBtn");
+      const friendCodeRecreateBtn = document.getElementById("friendCodeRecreateBtn");
+      const friendCodeCloseBtn = document.getElementById("friendCodeCloseBtn");
+      const friendCloseBtn = document.getElementById("friendCloseBtn");
+      const friendNote = document.getElementById("friendNote");
       const VALID_AI = new Set(["ultra"]);
       const PONG_LOCAL_STATS_KEY = "pong_stats_shadow_v1";
       const PONG_FORFEIT_QUEUE_KEY = "pong_forfeit_queue_v1";
@@ -208,7 +313,10 @@
       let currentUid = "";
       let resolvedProfile = "ultra";
       let activeWager = null;
+      let currentGameMode = "solo";
       let replaySearchTimer = null;
+      let friendRoomDraft = null;
+      let friendRoomPollTimer = null;
       const recordedMatchIds = new Set();
 
       function safeNumber(value, fallback = 0) {
@@ -358,6 +466,28 @@
         if (title) title.textContent = "Pong · Jeu détaché";
       }
 
+      function getFriendOpponentName(roomData = {}) {
+        const seatIndex = safeNumber(friendRoomDraft?.seatIndex, 0) === 1 ? 1 : 0;
+        const opponentSeat = seatIndex === 0 ? 1 : 0;
+        const names = Array.isArray(roomData?.playerNames) ? roomData.playerNames : [];
+        const fallbackName = opponentSeat === 0 ? "Joueur X" : "Joueur O";
+        const name = String(names[opponentSeat] || "").trim();
+        return name || fallbackName;
+      }
+
+      function setFrameForFriendRoom(roomData = {}) {
+        const url = new URL("./Pong-Game-main/index.html", window.location.href);
+        url.searchParams.set("aiProfile", "ultra");
+        url.searchParams.set("friendMode", "1");
+        const opponentName = getFriendOpponentName(roomData);
+        if (opponentName) {
+          url.searchParams.set("opponentName", opponentName);
+        }
+        frame.src = url.toString();
+        currentGameMode = "friend";
+        if (title) title.textContent = "Pong · Salle entre amis";
+      }
+
       async function resolveProfileForCurrentUser(user) {
         const uid = String(user?.uid || "").trim();
         currentUid = uid;
@@ -415,8 +545,258 @@
         stakeButtons.forEach((btn) => {
           btn.disabled = !!busy;
         });
+        if (friendInviteBtn) {
+          friendInviteBtn.disabled = !!busy;
+        }
         if (stakeNote) {
           stakeNote.textContent = String(note || "");
+        }
+      }
+
+      function normalizeInviteCode(value = "") {
+        return String(value || "")
+          .toUpperCase()
+          .replace(/[^A-Z0-9]/g, "")
+          .slice(0, 12);
+      }
+
+      function setFriendNote(message = "") {
+        if (!friendNote) return;
+        friendNote.textContent = String(message || "");
+      }
+
+      function setFriendUiBusy(busy) {
+        const disabled = !!busy;
+        friendOverlay?.querySelectorAll("button").forEach((btn) => {
+          if (btn === friendStartBtn && !disabled) return;
+          btn.disabled = disabled;
+        });
+        if (friendJoinCodeInput) {
+          friendJoinCodeInput.disabled = disabled;
+        }
+      }
+
+      function stopFriendRoomPolling() {
+        if (!friendRoomPollTimer) return;
+        window.clearInterval(friendRoomPollTimer);
+        friendRoomPollTimer = null;
+      }
+
+      function updateFriendWaitingUi(room = {}) {
+        const status = String(room?.status || "").trim().toLowerCase();
+        const humanCount = Math.max(0, safeNumber(room?.humanCount, 0));
+        const requiredHumans = Math.max(2, safeNumber(room?.requiredHumans, 2));
+        if (friendRoomStatusLine) {
+          if (humanCount >= requiredHumans || status === "ready") {
+            friendRoomStatusLine.textContent = "Les deux joueurs sont connectes. La partie peut commencer.";
+          } else {
+            friendRoomStatusLine.textContent = "En attente de l'autre joueur...";
+          }
+        }
+        if (friendRoomStatusMeta) {
+          friendRoomStatusMeta.textContent = `Joueurs connectes: ${Math.min(humanCount, requiredHumans)}/${requiredHumans}`;
+        }
+        if (friendStartBtn) {
+          friendStartBtn.disabled = !(humanCount >= requiredHumans || status === "ready");
+        }
+      }
+
+      function showFriendModeView() {
+        stopFriendRoomPolling();
+        if (friendModeActions) friendModeActions.style.display = "grid";
+        if (friendCreateBlock) friendCreateBlock.style.display = "none";
+        if (friendJoinBlock) friendJoinBlock.style.display = "none";
+        if (friendCodeBlock) friendCodeBlock.style.display = "none";
+        if (friendTitle) friendTitle.textContent = "Pong entre amis";
+        if (friendCopy) friendCopy.textContent = "Choisis comment tu veux entrer dans la salle privee.";
+        setFriendNote("");
+      }
+
+      function showFriendCreateView() {
+        stopFriendRoomPolling();
+        if (friendModeActions) friendModeActions.style.display = "none";
+        if (friendCreateBlock) friendCreateBlock.style.display = "grid";
+        if (friendJoinBlock) friendJoinBlock.style.display = "none";
+        if (friendCodeBlock) friendCodeBlock.style.display = "none";
+        if (friendTitle) friendTitle.textContent = "Creer une salle Pong";
+        if (friendCopy) friendCopy.textContent = "Choisis la mise et genere un code pour ton ami.";
+        setFriendNote("");
+      }
+
+      function showFriendJoinView() {
+        stopFriendRoomPolling();
+        if (friendModeActions) friendModeActions.style.display = "none";
+        if (friendCreateBlock) friendCreateBlock.style.display = "none";
+        if (friendJoinBlock) friendJoinBlock.style.display = "grid";
+        if (friendCodeBlock) friendCodeBlock.style.display = "none";
+        if (friendTitle) friendTitle.textContent = "Rejoindre une salle Pong";
+        if (friendCopy) friendCopy.textContent = "Entre le code envoyé par ton ami.";
+        if (friendJoinCodeInput) {
+          friendJoinCodeInput.value = "";
+          friendJoinCodeInput.focus();
+        }
+        setFriendNote("");
+      }
+
+      function showFriendCodeView(code = "", room = {}) {
+        if (friendModeActions) friendModeActions.style.display = "none";
+        if (friendCreateBlock) friendCreateBlock.style.display = "none";
+        if (friendJoinBlock) friendJoinBlock.style.display = "none";
+        if (friendCodeBlock) friendCodeBlock.style.display = "grid";
+        if (friendTitle) friendTitle.textContent = "Salle Pong créée";
+        if (friendCopy) friendCopy.textContent = "Partage ce code avec ton ami pour qu'il te rejoigne.";
+        if (friendCodeIntro) friendCodeIntro.textContent = "Code de la salle";
+        if (friendCodeValue) friendCodeValue.textContent = String(code || "------");
+        updateFriendWaitingUi(room || {});
+        setFriendNote("");
+      }
+
+      async function refreshFriendRoomState() {
+        const roomId = String(friendRoomDraft?.roomId || "").trim();
+        if (!roomId) return;
+        try {
+          const result = await resumeFriendPongRoomSecure({ roomId });
+          friendRoomDraft = {
+            ...friendRoomDraft,
+            roomId: String(result?.roomId || roomId).trim(),
+            seatIndex: safeNumber(result?.seatIndex, safeNumber(friendRoomDraft?.seatIndex, 0)),
+            stakeDoes: safeNumber(result?.stakeDoes, safeNumber(friendRoomDraft?.stakeDoes, 0)),
+            inviteCode: String(result?.inviteCode || friendRoomDraft?.inviteCode || "").trim(),
+            status: String(result?.status || "").trim().toLowerCase(),
+            humanCount: safeNumber(result?.humanCount, 0),
+            requiredHumans: safeNumber(result?.requiredHumans, 2),
+            playerNames: Array.isArray(result?.playerNames) ? result.playerNames : [],
+          };
+          showFriendCodeView(friendRoomDraft.inviteCode, friendRoomDraft);
+        } catch (error) {
+          setFriendNote(error?.message || "Impossible de verifier la salle pour le moment.");
+        }
+      }
+
+      function startFriendRoomPolling() {
+        stopFriendRoomPolling();
+        void refreshFriendRoomState();
+        friendRoomPollTimer = window.setInterval(() => {
+          void refreshFriendRoomState();
+        }, 2200);
+      }
+
+      function openFriendOverlay() {
+        if (!friendOverlay) return;
+        showFriendModeView();
+        friendOverlay.classList.add("active");
+      }
+
+      function closeFriendOverlay() {
+        if (!friendOverlay) return;
+        friendOverlay.classList.remove("active");
+        setFriendUiBusy(false);
+        stopFriendRoomPolling();
+      }
+
+      async function launchFriendMatchIfReady() {
+        const roomId = String(friendRoomDraft?.roomId || "").trim();
+        if (!roomId) return;
+        try {
+          const result = await resumeFriendPongRoomSecure({ roomId });
+          const status = String(result?.status || "").trim().toLowerCase();
+          const humanCount = safeNumber(result?.humanCount, 0);
+          const requiredHumans = Math.max(2, safeNumber(result?.requiredHumans, 2));
+          if (status !== "ready" && humanCount < requiredHumans) {
+            updateFriendWaitingUi({ status, humanCount, requiredHumans });
+            setFriendNote("La partie demarre quand les deux joueurs sont presents.");
+            return;
+          }
+          stakeOverlay.classList.remove("active");
+          closeFriendOverlay();
+          setFrameForFriendRoom({
+            ...friendRoomDraft,
+            ...result,
+            playerNames: Array.isArray(result?.playerNames) ? result.playerNames : friendRoomDraft?.playerNames,
+          });
+        } catch (error) {
+          setFriendNote(error?.message || "Impossible de demarrer la salle.");
+        }
+      }
+
+      async function createFriendRoom(stakeDoes) {
+        const uid = String(currentUid || auth.currentUser?.uid || "").trim();
+        if (!uid) {
+          setFriendNote("Connexion requise pour inviter un ami.");
+          return;
+        }
+        setFriendUiBusy(true);
+        setFriendNote("Creation de la salle...");
+        try {
+          const result = await createFriendPongRoomSecure({ stakeDoes: safeNumber(stakeDoes) });
+          friendRoomDraft = {
+            roomId: String(result?.roomId || "").trim(),
+            seatIndex: safeNumber(result?.seatIndex),
+            stakeDoes: safeNumber(result?.stakeDoes),
+            inviteCode: String(result?.inviteCode || "").trim(),
+            status: String(result?.status || "waiting").trim().toLowerCase(),
+            humanCount: safeNumber(result?.humanCount, 1),
+            requiredHumans: safeNumber(result?.requiredHumans, 2),
+            playerNames: Array.isArray(result?.playerNames) ? result.playerNames : [],
+          };
+          showFriendCodeView(friendRoomDraft.inviteCode, friendRoomDraft);
+          startFriendRoomPolling();
+        } catch (error) {
+          const reason = String(error?.details?.code || error?.code || "").toLowerCase();
+          if (reason.includes("active-room-exists") && error?.details?.roomId) {
+            friendRoomDraft = {
+              roomId: String(error?.details?.roomId || "").trim(),
+              seatIndex: safeNumber(error?.details?.seatIndex),
+              stakeDoes: safeNumber(error?.details?.stakeDoes),
+              inviteCode: String(error?.details?.inviteCode || "").trim(),
+              status: String(error?.details?.status || "waiting").trim().toLowerCase(),
+              humanCount: safeNumber(error?.details?.humanCount, 1),
+              requiredHumans: 2,
+            };
+            showFriendCodeView(friendRoomDraft.inviteCode, friendRoomDraft);
+            startFriendRoomPolling();
+          } else {
+            setFriendNote("Impossible de creer la salle Pong privee pour le moment.");
+          }
+        } finally {
+          setFriendUiBusy(false);
+        }
+      }
+
+      async function joinFriendRoomByCode() {
+        const uid = String(currentUid || auth.currentUser?.uid || "").trim();
+        if (!uid) {
+          setFriendNote("Connexion requise pour rejoindre une salle.");
+          return;
+        }
+        const inviteCode = normalizeInviteCode(friendJoinCodeInput?.value || "");
+        if (!inviteCode) {
+          setFriendNote("Entre un code valide.");
+          friendJoinCodeInput?.focus();
+          return;
+        }
+
+        setFriendUiBusy(true);
+        setFriendNote("Connexion a la salle...");
+        try {
+          const result = await joinFriendPongRoomByCodeSecure({ inviteCode });
+          friendRoomDraft = {
+            roomId: String(result?.roomId || "").trim(),
+            seatIndex: safeNumber(result?.seatIndex),
+            stakeDoes: safeNumber(result?.stakeDoes),
+            inviteCode: String(result?.inviteCode || inviteCode).trim(),
+            status: String(result?.status || "waiting").trim().toLowerCase(),
+            humanCount: safeNumber(result?.humanCount, 0),
+            requiredHumans: safeNumber(result?.requiredHumans, 2),
+            playerNames: Array.isArray(result?.playerNames) ? result.playerNames : [],
+          };
+          showFriendCodeView(friendRoomDraft.inviteCode, friendRoomDraft);
+          startFriendRoomPolling();
+          setFriendNote("Salle rejointe. En attente de l'autre joueur.");
+        } catch (error) {
+          setFriendNote(error?.message || "Impossible de rejoindre cette salle Pong.");
+        } finally {
+          setFriendUiBusy(false);
         }
       }
 
@@ -425,6 +805,7 @@
           window.clearTimeout(replaySearchTimer);
           replaySearchTimer = null;
         }
+        currentGameMode = "solo";
         frame.src = "about:blank";
         stakeOverlay.classList.remove("active");
         searchOverlay.classList.add("active");
@@ -465,6 +846,7 @@
           setStakeUiBusy(false, "");
           await new Promise((resolve) => setTimeout(resolve, 1600 + Math.floor(Math.random() * 1200)));
           searchOverlay.classList.remove("active");
+          currentGameMode = "solo";
           setFrameForProfile(resolvedProfile, sessionId);
         } catch (error) {
           const message = String(error?.message || "");
@@ -479,6 +861,7 @@
       }
 
       async function settleMatchResult(payload = {}, reason = "match_end") {
+        if (currentGameMode !== "solo") return;
         const uid = String(currentUid || auth.currentUser?.uid || "").trim();
         if (!uid) return;
         const matchId = String(payload?.matchId || "").trim();
@@ -535,6 +918,7 @@
       }
 
       function queueForfeitIfNeeded(reason = "forfeit") {
+        if (currentGameMode !== "solo") return;
         if (!activeWager || activeWager.settled === true) return;
         const uid = String(currentUid || auth.currentUser?.uid || "").trim();
         const sessionId = String(activeWager.sessionId || "").trim();
@@ -550,6 +934,14 @@
       }
 
       async function handleBackNavigation(targetHref) {
+        const friendRoomId = String(friendRoomDraft?.roomId || "").trim();
+        if (currentGameMode === "friend" && friendRoomId) {
+          try {
+            await leaveFriendPongRoomSecure({ roomId: friendRoomId });
+          } catch (_) {
+            // ignore leave race conditions
+          }
+        }
         if (activeWager && activeWager.sessionId) {
           queueForfeitIfNeeded("quit");
           if (currentUid && navigator.onLine !== false) {
@@ -566,12 +958,100 @@
         });
       });
 
+      friendInviteBtn?.addEventListener("click", () => {
+        openFriendOverlay();
+      });
+
+      friendModeActions?.addEventListener("click", (event) => {
+        const target = event.target;
+        if (target === friendJoinOpenBtn) {
+          showFriendJoinView();
+          return;
+        }
+        if (target === friendCreateOpenBtn) {
+          showFriendCreateView();
+        }
+      });
+
+      friendCreateBlock?.addEventListener("click", (event) => {
+        const target = event.target.closest("[data-friend-create-stake]");
+        if (!target || !friendCreateBlock.contains(target)) return;
+        const stakeDoes = safeNumber(target.getAttribute("data-friend-create-stake"));
+        void createFriendRoom(stakeDoes);
+      });
+
+      friendCreateBackBtn?.addEventListener("click", () => {
+        showFriendModeView();
+      });
+
+      friendJoinCodeInput?.addEventListener("input", () => {
+        friendJoinCodeInput.value = normalizeInviteCode(friendJoinCodeInput.value);
+      });
+
+      friendJoinCodeInput?.addEventListener("keydown", (event) => {
+        if (event.key === "Enter") {
+          event.preventDefault();
+          void joinFriendRoomByCode();
+        }
+      });
+
+      friendJoinSubmitBtn?.addEventListener("click", () => {
+        void joinFriendRoomByCode();
+      });
+
+      friendJoinBackBtn?.addEventListener("click", () => {
+        showFriendModeView();
+      });
+
+      friendCodeCopyBtn?.addEventListener("click", async () => {
+        const code = String(friendRoomDraft?.inviteCode || "").trim();
+        if (!code) return;
+        try {
+          await navigator.clipboard.writeText(code);
+          setFriendNote("Code copie.");
+        } catch (_) {
+          setFriendNote("Copie impossible sur cet appareil.");
+        }
+      });
+
+      friendStartBtn?.addEventListener("click", () => {
+        void launchFriendMatchIfReady();
+      });
+
+      friendCodeRecreateBtn?.addEventListener("click", () => {
+        showFriendCreateView();
+      });
+
+      friendCodeCloseBtn?.addEventListener("click", () => {
+        closeFriendOverlay();
+      });
+
+      friendCloseBtn?.addEventListener("click", () => {
+        closeFriendOverlay();
+      });
+
+      friendOverlay?.addEventListener("click", (event) => {
+        if (event.target === friendOverlay) {
+          closeFriendOverlay();
+        }
+      });
+
       window.addEventListener("message", (event) => {
         if (event.origin !== window.location.origin) return;
         const data = event?.data;
         if (!data || typeof data !== "object") return;
 
         if (data.type === "pong:playAgain") {
+          if (currentGameMode === "friend") {
+            openFriendOverlay();
+            if (friendRoomDraft?.inviteCode) {
+              showFriendCodeView(friendRoomDraft.inviteCode, friendRoomDraft);
+              startFriendRoomPolling();
+            } else {
+              showFriendModeView();
+            }
+            return;
+          }
           showReplaySearchModalThenStake();
           return;
         }

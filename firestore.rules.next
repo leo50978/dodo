@@ -184,6 +184,11 @@ service cloud.firestore {
       allow update, delete: if isFinanceAdmin();
     }
 
+    match /settings/home_hero_slides_v1 {
+      allow read: if true;
+      allow write: if isFinanceAdmin();
+    }
+
     match /settings/{docId} {
       allow read, write: if isFinanceAdmin();
     }

@@ -31,7 +31,12 @@ const DUEL_GAME_STATES_COLLECTION = "duelGameStates";
 const MORPION_ROOMS_COLLECTION = "morpionRooms";
 const MORPION_ROOM_RESULTS_COLLECTION = "morpionRoomResults";
 const MORPION_GAME_STATES_COLLECTION = "morpionGameStates";
+const DAME_ROOMS_COLLECTION = "dameRooms";
+const DAME_GAME_STATES_COLLECTION = "dameGameStates";
+const DAME_MATCHMAKING_POOLS_COLLECTION = "dameMatchmakingPools";
+const DAME_ROOM_RESULTS_COLLECTION = "dameRoomResults";
 const PONG_MATCH_RESULTS_COLLECTION = "pongMatchResults";
+const PONG_FRIEND_ROOMS_COLLECTION = "pongFriendRooms";
 const CLIENTS_COLLECTION = "clients";
 const AGENTS_COLLECTION = "agents";
 const AGENT_LEDGER_SUBCOLLECTION = "ledger";
@@ -107,6 +112,7 @@ function isWelcomeBonusProgramActive(nowMs = Date.now()) {
 const DPAYMENT_ADMIN_BOOTSTRAP_DOC = "dpayment_admin_bootstrap";
 const APP_PUBLIC_SETTINGS_DOC = "public_app_settings";
 const WHATSAPP_MODAL_SETTINGS_DOC = "whatsapp_modal_contacts_v1";
+const HOME_HERO_SETTINGS_DOC = "home_hero_slides_v1";
 const DASHBOARD_DEFAULT_NOTIFICATION_URL = "./Dpayment.html";
 const USERNAME_EMAIL_DOMAIN = "username.dominoeslakay.local";
 const PHONE_LOGIN_EMAIL_DOMAIN = "phone.dominoeslakay.local";
@@ -269,7 +275,7 @@ const SURVEY_MAX_TEXT_ANSWER = 500;
 const PONG_ALLOWED_AI_PROFILES = new Set(["soft", "normal", "ultra"]);
 const PONG_RECENT_OUTCOMES_LIMIT = 10;
 const PONG_RECENT_MATCH_IDS_LIMIT = 20;
-const PONG_ALLOWED_STAKES = new Set([1000, 5000]);
+const PONG_ALLOWED_STAKES = new Set([100, 1000, 5000]);
 const PONG_ODDS_NUMERATOR = 19;
 const PONG_ODDS_DENOMINATOR = 10;
 const DEFAULT_WHATSAPP_MODAL_CONTACTS = Object.freeze({
@@ -280,6 +286,11 @@ const DEFAULT_WHATSAPP_MODAL_CONTACTS = Object.freeze({
   welcome_deposit_modal: "50940507232",
   recruitment_modal: "50940507232",
 });
+const DEFAULT_HOME_HERO_SLIDES = Object.freeze([
+  Object.freeze({ name: "hero.jpg", enabled: true, sortOrder: 10 }),
+  Object.freeze({ name: "hero1.jpg", enabled: true, sortOrder: 20 }),
+  Object.freeze({ name: "hero2.jpg", enabled: true, sortOrder: 30 }),
+]);
 const PROVISIONAL_FUNDING_VERSION = 2;
 const PROVISIONAL_CREDIT_MODE = "provisional";
 const ACCOUNT_FREEZE_REJECT_THRESHOLD = 3;
@@ -584,10 +595,24 @@ const APP_CHECK_BYPASS_CALLABLES = new Set([
   "getDashboardClientScopeSnapshot",
   "recordSiteVisitSecure",
   "recordPongMatchResultSecure",
+  "recordDameMatchResultSecure",
+  "joinMatchmakingDame",
+  "createFriendDameRoom",
+  "joinFriendDameRoomByCode",
+  "resumeFriendDameRoom",
+  "ensureRoomReadyDame",
+  "touchRoomPresenceDame",
+  "leaveRoomDame",
+  "submitActionDame",
   "startPongWagerSecure",
+  "createFriendPongRoom",
+  "joinFriendPongRoomByCode",
+  "resumeFriendPongRoom",
+  "leaveFriendPongRoom",
   "getSiteVisitsAnalyticsSnapshot",
   "getGamesVolumeAnalyticsSnapshot",
   "getPongAnalyticsSnapshot",
+  "getDameAnalyticsSnapshot",
   "searchAgentDepositClientsSecure",
   "getAgentDepositClientContextSecure",
   "creditAgentDepositSecure",
@@ -3660,6 +3685,60 @@ function sanitizeWhatsappDigits(value, fallback = "") {
   return fallbackDigits;
 }
 
+function normalizeHomeHeroName(value, fallback = "") {
+  const cleaned = String(value || "")
+    .trim()
+    .replace(/^https?:\/\/[^/]+/i, "")
+    .replace(/^\/+/, "");
+  return sanitizeText(cleaned || fallback || "", 120);
+}
+
+function normalizeHomeHeroSlides(rawSlides = []) {
+  const source = Array.isArray(rawSlides) && rawSlides.length ? rawSlides : DEFAULT_HOME_HERO_SLIDES;
+  const out = [];
+  const usedNames = new Set();
+
+  source.forEach((raw, index) => {
+    const rawName = typeof raw === "string"
+      ? raw
+      : raw?.name || raw?.src || raw?.file || raw?.image || "";
+    const name = normalizeHomeHeroName(rawName, "");
+    if (!name) return;
+
+    const key = name.toLowerCase();
+    if (usedNames.has(key)) return;
+    usedNames.add(key);
+
+    const sortOrderRaw = Number(raw?.sortOrder);
+    const sortOrder = Number.isFinite(sortOrderRaw) ? Math.trunc(sortOrderRaw) : ((index + 1) * 10);
+    const enabled = raw?.enabled === undefined ? true : raw?.enabled === true;
+
+    out.push({
+      name,
+      enabled,
+      sortOrder,
+    });
+  });
+
+  out.sort((left, right) => {
+    if (left.sortOrder !== right.sortOrder) return left.sortOrder - right.sortOrder;
+    return left.name.localeCompare(right.name);
+  });
+
+  return out;
+}
+
+async function readHomeHeroSettings() {
+  const snap = await db.collection("settings").doc(HOME_HERO_SETTINGS_DOC).get();
+  const data = snap.exists ? (snap.data() || {}) : {};
+  const slides = normalizeHomeHeroSlides(data.slides || data.images || data.items || DEFAULT_HOME_HERO_SLIDES);
+  return {
+    slides,
+    version: String(data.version || "hhs-v1"),
+    updatedAtMs: safeSignedInt(data.updatedAtMs),
+  };
+}
+
 function normalizeWhatsappModalContacts(rawContacts = {}) {
   const source = rawContacts && typeof rawContacts === "object" ? rawContacts : {};
   return {
@@ -3684,6 +3763,10 @@ async function readWhatsappModalSettings() {
     version: String(data.version || "wmc-v1"),
     updatedAtMs: safeSignedInt(data.updatedAtMs),
   };
+}
+
+function homeHeroSettingsRef() {
+  return db.collection("settings").doc(HOME_HERO_SETTINGS_DOC);
 }
 
 async function readRawPublicAppSettings() {
@@ -6068,6 +6151,184 @@ async function computeMorpionAnalyticsSnapshot(options = {}) {
       botMatchHumanWinRatePct: matchesWithBot > 0 ? botMatchHumanWins / matchesWithBot : 0,
     },
     compositionMix,
+    stakeMix,
+    trend,
+    recentResults: recentResults.slice(0, 12),
+  };
+}
+
+async function computeDameAnalyticsSnapshot(options = {}) {
+  const nowMs = safeSignedInt(options.nowMs) || Date.now();
+  const range = getDuelAnalyticsRange(options, nowMs);
+  const winnerFilter = normalizeAnalyticsWinnerFilter(options.winnerType);
+  const stakeFilter = safeInt(options.stakeDoes);
+
+  let query = db.collection(DAME_ROOM_RESULTS_COLLECTION).orderBy("endedAtMs", "asc");
+  if (range.startMs > 0) {
+    query = query.where("endedAtMs", ">=", range.startMs);
+  }
+  if (range.endMs > 0) {
+    query = query.where("endedAtMs", "<=", range.endMs);
+  }
+
+  const querySnap = await safeAnalyticsQueryGet(
+    query,
+    db.collection(DAME_ROOM_RESULTS_COLLECTION),
+    "dameRoomResults"
+  );
+
+  let matchesPlayed = 0;
+  let matchesWithBot = 0;
+  let matchesHumanOnly = 0;
+  let botWins = 0;
+  let humanWins = 0;
+  let totalDurationMs = 0;
+  let durationSamples = 0;
+  let totalStakeDoes = 0;
+  const trendMap = new Map();
+  const stakeMixMap = new Map();
+  const recentResults = [];
+
+  querySnap.forEach((docSnap) => {
+    const data = docSnap.data() || {};
+    const status = String(data.status || "").trim().toLowerCase();
+    const endedAtMs = safeSignedInt(data.endedAtMs);
+    if (status !== "ended" || endedAtMs <= 0) return;
+    if (range.startMs > 0 && endedAtMs < range.startMs) return;
+    if (range.endMs > 0 && endedAtMs > range.endMs) return;
+
+    const winnerType = String(data.winnerType || "").trim().toLowerCase();
+    if (winnerFilter !== "all" && winnerType !== winnerFilter) return;
+
+    const stakeDoes = safeInt(data.entryCostDoes || data.stakeDoes);
+    if (stakeFilter > 0 && stakeDoes !== stakeFilter) return;
+
+    const botCount = safeInt(data.botCount);
+    const humanCount = Math.max(0, safeInt(data.humanCount, 2));
+    const startedAtMs = safeSignedInt(data.startedAtMs);
+    const durationMs = startedAtMs > 0 && endedAtMs >= startedAtMs
+      ? Math.max(0, endedAtMs - startedAtMs)
+      : 0;
+
+    matchesPlayed += 1;
+    totalStakeDoes += stakeDoes;
+    if (botCount > 0) matchesWithBot += 1;
+    if (botCount <= 0) matchesHumanOnly += 1;
+    if (winnerType === "bot") botWins += 1;
+    if (winnerType === "human") humanWins += 1;
+    if (durationMs > 0) {
+      totalDurationMs += durationMs;
+      durationSamples += 1;
+    }
+
+    const stakeEntry = stakeMixMap.get(String(stakeDoes)) || {
+      stakeDoes,
+      label: `${stakeDoes} Does`,
+      count: 0,
+    };
+    stakeEntry.count += 1;
+    stakeMixMap.set(String(stakeDoes), stakeEntry);
+
+    const bucketKey = getDuelAnalyticsBucketKey(range.granularity, endedAtMs);
+    const bucket = trendMap.get(bucketKey) || {
+      key: bucketKey,
+      label: getDuelAnalyticsBucketLabel(range.granularity, endedAtMs),
+      periodMs: endedAtMs,
+      matchesPlayed: 0,
+      matchesWithBot: 0,
+      matchesHumanOnly: 0,
+      botWins: 0,
+      humanWins: 0,
+      totalStakeDoes: 0,
+      totalDurationMs: 0,
+      durationSamples: 0,
+    };
+    bucket.matchesPlayed += 1;
+    if (botCount > 0) bucket.matchesWithBot += 1;
+    if (botCount <= 0) bucket.matchesHumanOnly += 1;
+    if (winnerType === "bot") bucket.botWins += 1;
+    if (winnerType === "human") bucket.humanWins += 1;
+    bucket.totalStakeDoes += stakeDoes;
+    if (durationMs > 0) {
+      bucket.totalDurationMs += durationMs;
+      bucket.durationSamples += 1;
+    }
+    if (endedAtMs > safeSignedInt(bucket.periodMs)) {
+      bucket.periodMs = endedAtMs;
+      bucket.label = getDuelAnalyticsBucketLabel(range.granularity, endedAtMs);
+    }
+    trendMap.set(bucketKey, bucket);
+
+    recentResults.push({
+      roomId: docSnap.id,
+      endedAtMs,
+      startedAtMs,
+      durationMs,
+      stakeDoes,
+      humanCount,
+      botCount,
+      winnerType,
+      winnerSeat: safeSignedInt(data.winnerSeat),
+      endedReason: String(data.endedReason || "").trim(),
+    });
+  });
+
+  recentResults.sort((left, right) => safeSignedInt(right.endedAtMs) - safeSignedInt(left.endedAtMs));
+
+  const trend = Array.from(trendMap.values())
+    .sort((left, right) => safeSignedInt(left.periodMs) - safeSignedInt(right.periodMs))
+    .map((bucket) => ({
+      key: bucket.key,
+      label: bucket.label,
+      periodMs: safeSignedInt(bucket.periodMs),
+      matchesPlayed: safeInt(bucket.matchesPlayed),
+      matchesWithBot: safeInt(bucket.matchesWithBot),
+      matchesHumanOnly: safeInt(bucket.matchesHumanOnly),
+      botWins: safeInt(bucket.botWins),
+      humanWins: safeInt(bucket.humanWins),
+      avgStakeDoes: safeInt(bucket.matchesPlayed) > 0 ? Math.round(bucket.totalStakeDoes / bucket.matchesPlayed) : 0,
+      avgDurationMs: safeInt(bucket.durationSamples) > 0 ? Math.round(bucket.totalDurationMs / bucket.durationSamples) : 0,
+    }));
+
+  const stakeMix = Array.from(stakeMixMap.values())
+    .sort((left, right) => safeInt(left.stakeDoes) - safeInt(right.stakeDoes))
+    .map((item) => ({
+      stakeDoes: safeInt(item.stakeDoes),
+      label: String(item.label || `${safeInt(item.stakeDoes)} Does`),
+      count: safeInt(item.count),
+    }));
+
+  return {
+    ok: true,
+    generatedAtMs: nowMs,
+    filters: {
+      winnerType: winnerFilter,
+      stakeDoes: stakeFilter,
+    },
+    range: {
+      window: range.windowKey,
+      startMs: range.startMs,
+      endMs: range.endMs,
+      granularity: range.granularity,
+      isGlobal: range.isGlobal,
+    },
+    summary: {
+      matchesPlayed,
+      matchesWithBot,
+      matchesHumanOnly,
+      botWins,
+      humanWins,
+      avgDurationMs: durationSamples > 0 ? Math.round(totalDurationMs / durationSamples) : 0,
+      avgStakeDoes: matchesPlayed > 0 ? Math.round(totalStakeDoes / matchesPlayed) : 0,
+      withBotRatePct: matchesPlayed > 0 ? matchesWithBot / matchesPlayed : 0,
+      humanOnlyRatePct: matchesPlayed > 0 ? matchesHumanOnly / matchesPlayed : 0,
+      botWinRatePct: matchesPlayed > 0 ? botWins / matchesPlayed : 0,
+      humanWinRatePct: matchesPlayed > 0 ? humanWins / matchesPlayed : 0,
+    },
+    compositionMix: [
+      { key: "human_only", label: "2 humains", count: matchesHumanOnly },
+      { key: "with_bot", label: "1 humain + 1 bot", count: matchesWithBot },
+    ],
     stakeMix,
     trend,
     recentResults: recentResults.slice(0, 12),
@@ -9855,6 +10116,14 @@ function isFriendMorpionRoom(room = {}) {
   return String(room?.roomMode || "").trim() === "morpion_friends";
 }
 
+function isFriendDameRoom(room = {}) {
+  return String(room?.roomMode || "").trim() === "dame_friends";
+}
+
+function isFriendPongRoom(room = {}) {
+  return String(room?.roomMode || "").trim() === "pong_friends";
+}
+
 function isMorpionBotTestRoom(room = {}) {
   const mode = String(room?.roomMode || "").trim();
   if (mode === "morpion_bot_test") return true;
@@ -9927,6 +10196,30 @@ function clearMatchmakingPool(tx, poolRef) {
     openRoomId: "",
     updatedAt: admin.firestore.FieldValue.serverTimestamp(),
   }, { merge: true });
+}
+
+function resolveDameFriendStakeDoes(value) {
+  const stakeDoes = safeInt(value);
+  if (stakeDoes < 500) {
+    throw new HttpsError("invalid-argument", "Mise dame invalide. Minimum 500 Does.");
+  }
+  if ((stakeDoes % 100) !== 0) {
+    throw new HttpsError("invalid-argument", "La mise dame doit etre un multiple de 100.");
+  }
+  if (stakeDoes > MAX_FRIEND_MORPION_STAKE_DOES) {
+    throw new HttpsError("invalid-argument", "Mise dame trop elevee.");
+  }
+  return stakeDoes;
+}
+
+function resolveDameWaitingDeadlineMs(room = {}, nowMs = Date.now()) {
+  const explicit = safeSignedInt(room.waitingDeadlineMs);
+  if (explicit > 0) return explicit;
+  const createdAtMs = resolveRoomCreatedAtMs(room);
+  if (createdAtMs > 0) {
+    return createdAtMs + (isFriendDameRoom(room) ? FRIEND_ROOM_WAIT_MS : ROOM_WAIT_MS);
+  }
+  return nowMs + (isFriendDameRoom(room) ? FRIEND_ROOM_WAIT_MS : ROOM_WAIT_MS);
 }
 
 async function findActiveRoomForUser(uid) {
@@ -10021,6 +10314,36 @@ async function generateUniqueFriendMorpionInviteCode(size = FRIEND_ROOM_CODE_SIZ
     if (existing.empty) return candidate;
   }
   throw new HttpsError("aborted", "Impossible de générer un code morpion unique.");
+}
+
+async function generateUniqueFriendDameInviteCode(size = FRIEND_ROOM_CODE_SIZE, maxAttempts = 18) {
+  const targetSize = Math.max(4, safeInt(size) || FRIEND_ROOM_CODE_SIZE);
+  for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
+    const candidate = normalizeCode(randomCode(targetSize));
+    if (!candidate) continue;
+    const existing = await db
+      .collection(DAME_ROOMS_COLLECTION)
+      .where("inviteCodeNormalized", "==", candidate)
+      .limit(1)
+      .get();
+    if (existing.empty) return candidate;
+  }
+  throw new HttpsError("aborted", "Impossible de generer un code dame unique.");
+}
+
+async function generateUniqueFriendPongInviteCode(size = FRIEND_ROOM_CODE_SIZE, maxAttempts = 18) {
+  const targetSize = Math.max(4, safeInt(size) || FRIEND_ROOM_CODE_SIZE);
+  for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
+    const candidate = normalizeCode(randomCode(targetSize));
+    if (!candidate) continue;
+    const existing = await db
+      .collection(PONG_FRIEND_ROOMS_COLLECTION)
+      .where("inviteCodeNormalized", "==", candidate)
+      .limit(1)
+      .get();
+    if (existing.empty) return candidate;
+  }
+  throw new HttpsError("aborted", "Impossible de generer un code Pong unique.");
 }
 
 async function chargeRoomEntriesTx(tx, room = {}, playerUids = [], stakeDoes = 0) {
@@ -12304,12 +12627,35 @@ function morpionGameStateRef(roomId = "") {
   return db.collection(MORPION_GAME_STATES_COLLECTION).doc(String(roomId || "").trim());
 }
 
+function dameRoomRef(roomId = "") {
+  const safeRoomId = String(roomId || "").trim();
+  return safeRoomId
+    ? db.collection(DAME_ROOMS_COLLECTION).doc(safeRoomId)
+    : db.collection(DAME_ROOMS_COLLECTION).doc();
+}
+
+function dameGameStateRef(roomId = "") {
+  return db.collection(DAME_GAME_STATES_COLLECTION).doc(String(roomId || "").trim());
+}
+
+function dameMatchmakingPoolRef(stakeConfigId = "", stakeDoes = 0) {
+  const cleanStakeConfigId = String(stakeConfigId || "").trim() || `dame_${safeInt(stakeDoes)}`;
+  return db.collection(DAME_MATCHMAKING_POOLS_COLLECTION).doc(`${cleanStakeConfigId}_${safeInt(stakeDoes)}`);
+}
+
 function morpionRoomResultRef(roomId = "") {
   return db.collection(MORPION_ROOM_RESULTS_COLLECTION).doc(String(roomId || "").trim());
 }
 
 function pongMatchResultRef(matchKey = "") {
   return db.collection(PONG_MATCH_RESULTS_COLLECTION).doc(String(matchKey || "").trim());
+}
+
+function pongFriendRoomRef(roomId = "") {
+  const safeRoomId = String(roomId || "").trim();
+  return safeRoomId
+    ? db.collection(PONG_FRIEND_ROOMS_COLLECTION).doc(safeRoomId)
+    : db.collection(PONG_FRIEND_ROOMS_COLLECTION).doc();
 }
 
 function morpionMatchmakingPoolRef(stakeConfigId = "", stakeDoes = 0) {
@@ -12516,6 +12862,22 @@ function clearMorpionMatchmakingPool(tx, poolRef) {
   }, { merge: true });
 }
 
+function setDameMatchmakingPoolOpen(tx, poolRef, roomId, stakeConfigId = "", stakeDoes = 0) {
+  tx.set(poolRef, {
+    openRoomId: String(roomId || "").trim(),
+    stakeConfigId: String(stakeConfigId || "").trim(),
+    stakeDoes: safeInt(stakeDoes),
+    updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+  }, { merge: true });
+}
+
+function clearDameMatchmakingPool(tx, poolRef) {
+  tx.set(poolRef, {
+    openRoomId: "",
+    updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+  }, { merge: true });
+}
+
 function resolveMorpionWaitingDeadlineMs(room = {}, nowMs = Date.now()) {
   if (isFriendMorpionRoom(room)) return 0;
   const explicit = safeSignedInt(room.waitingDeadlineMs);
@@ -12534,6 +12896,49 @@ function buildPrivateMorpionRewardDoes(stakeDoes = 0) {
   const safeStakeDoes = safeInt(stakeDoes);
   if (safeStakeDoes <= 0) return 0;
   return Math.max(1, Math.round(safeStakeDoes * 1.8));
+}
+
+function buildStartedDameRoomTransaction(tx, roomRefDoc, room = {}, options = {}) {
+  const nowMs = safeSignedInt(options.nowMs, Date.now()) || Date.now();
+  const roomId = String(roomRefDoc?.id || "").trim();
+  const playerUids = Array.isArray(room.playerUids) ? room.playerUids.slice(0, 2).map((item) => String(item || "").trim()) : ["", ""];
+  const playerNames = Array.isArray(room.playerNames) ? room.playerNames.slice(0, 2).map((item) => String(item || "").trim()) : ["", ""];
+  const seats = room.seats && typeof room.seats === "object" ? { ...room.seats } : {};
+  const humanCount = playerUids.filter(Boolean).length;
+  const startedAtMs = safeSignedInt(room.startedAtMs) > 0 ? safeSignedInt(room.startedAtMs) : nowMs;
+  const currentPlayer = safeSignedInt(room.currentPlayer, 1) === 0 ? 0 : 1;
+  const lastActionSeq = Math.max(0, safeInt(room.lastActionSeq));
+  const nextActionSeq = Math.max(lastActionSeq, safeInt(room.nextActionSeq, lastActionSeq));
+
+  tx.set(roomRefDoc, {
+    status: "playing",
+    startedAt: admin.firestore.FieldValue.serverTimestamp(),
+    startedAtMs,
+    endedAtMs: 0,
+    waitingDeadlineMs: admin.firestore.FieldValue.delete(),
+    updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+    playerUids,
+    playerNames,
+    seats,
+    humanCount,
+    botCount: 0,
+    allowBots: false,
+    requiredHumans: 2,
+    currentPlayer,
+    lastActionSeq,
+    nextActionSeq,
+  }, { merge: true });
+
+  return {
+    ok: true,
+    started: true,
+    roomId,
+    status: "playing",
+    startedAtMs,
+    waitingDeadlineMs: 0,
+    humanCount,
+    botCount: 0,
+  };
 }
 
 function parseStrictWholePositiveDoes(value, fallback = 0) {
@@ -12623,6 +13028,114 @@ async function findActiveMorpionRoomForUser(uid) {
     seatIndex,
     stakeDoes: safeInt(data.entryCostDoes || data.stakeDoes),
     roomMode: String(data.roomMode || "morpion_2p"),
+    inviteCode: String(data.inviteCode || "").trim(),
+  };
+}
+
+async function findActiveDameRoomForUser(uid) {
+  const rooms = db.collection(DAME_ROOMS_COLLECTION);
+  const membershipSnap = await rooms
+    .where("playerUids", "array-contains", uid)
+    .limit(8)
+    .get();
+
+  if (membershipSnap.empty) return null;
+
+  const candidate = membershipSnap.docs
+    .filter((docSnap) => {
+      const data = docSnap.data() || {};
+      if (getBlockedRejoinSet(data).has(uid)) return false;
+      const status = String(data.status || "");
+      return status === "playing" || status === "waiting";
+    })
+    .sort((left, right) => {
+      const leftData = left.data() || {};
+      const rightData = right.data() || {};
+      const statusScore = (value) => (String(value || "") === "playing" ? 2 : 1);
+      const statusDelta = statusScore(rightData.status) - statusScore(leftData.status);
+      if (statusDelta !== 0) return statusDelta;
+      const rightUpdated = Math.max(
+        safeSignedInt(rightData.updatedAtMs),
+        safeSignedInt(rightData.startedAtMs),
+        safeSignedInt(rightData.createdAtMs),
+      );
+      const leftUpdated = Math.max(
+        safeSignedInt(leftData.updatedAtMs),
+        safeSignedInt(leftData.startedAtMs),
+        safeSignedInt(leftData.createdAtMs),
+      );
+      return rightUpdated - leftUpdated;
+    })[0] || null;
+
+  if (!candidate) return null;
+
+  const data = candidate.data() || {};
+  const seats = data.seats && typeof data.seats === "object" ? data.seats : {};
+  const seatIndex = typeof seats[uid] === "number" ? seats[uid] : -1;
+
+  return {
+    roomId: candidate.id,
+    status: String(data.status || ""),
+    seatIndex,
+    stakeDoes: safeInt(data.entryCostDoes || data.stakeDoes),
+    roomMode: String(data.roomMode || "dame_2p"),
+    inviteCode: String(data.inviteCode || "").trim(),
+  };
+}
+
+async function findActivePongFriendRoomForUser(uid) {
+  const safeUid = String(uid || "").trim();
+  if (!safeUid) return null;
+
+  const roomsSnap = await db
+    .collection(PONG_FRIEND_ROOMS_COLLECTION)
+    .where("playerUids", "array-contains", safeUid)
+    .limit(8)
+    .get();
+
+  if (roomsSnap.empty) return null;
+
+  const candidate = roomsSnap.docs
+    .filter((docSnap) => {
+      const data = docSnap.data() || {};
+      if (!isFriendPongRoom(data)) return false;
+      if (getBlockedRejoinSet(data).has(safeUid)) return false;
+      const status = String(data.status || "").trim().toLowerCase();
+      return status === "waiting" || status === "ready" || status === "playing";
+    })
+    .sort((left, right) => {
+      const leftData = left.data() || {};
+      const rightData = right.data() || {};
+      const statusScore = (value) => {
+        const status = String(value || "").trim().toLowerCase();
+        if (status === "playing") return 3;
+        if (status === "ready") return 2;
+        return 1;
+      };
+      const statusDelta = statusScore(rightData.status) - statusScore(leftData.status);
+      if (statusDelta !== 0) return statusDelta;
+      const rightUpdated = Math.max(
+        safeSignedInt(rightData.updatedAtMs),
+        safeSignedInt(rightData.startedAtMs),
+        safeSignedInt(rightData.createdAtMs),
+      );
+      const leftUpdated = Math.max(
+        safeSignedInt(leftData.updatedAtMs),
+        safeSignedInt(leftData.startedAtMs),
+        safeSignedInt(leftData.createdAtMs),
+      );
+      return rightUpdated - leftUpdated;
+    })[0] || null;
+
+  if (!candidate) return null;
+
+  const data = candidate.data() || {};
+  return {
+    roomId: candidate.id,
+    status: String(data.status || "").trim().toLowerCase(),
+    seatIndex: getSeatForUser(data, safeUid),
+    stakeDoes: safeInt(data.entryCostDoes || data.stakeDoes),
+    roomMode: "pong_friends",
     inviteCode: String(data.inviteCode || "").trim(),
   };
 }
@@ -16183,6 +16696,815 @@ exports.getPublicMorpionStakeOptionsSecure = publicOnCall("getPublicMorpionStake
       sortOrder: item.sortOrder,
     })),
   };
+}, { invoker: "public" });
+
+exports.createFriendDameRoom = publicOnCall("createFriendDameRoom", async (request) => {
+  const { uid, email } = assertAuth(request);
+  const payload = request.data && typeof request.data === "object" ? request.data : {};
+  const stakeDoes = resolveDameFriendStakeDoes(payload.stakeDoes ?? payload.amountDoes ?? payload.amount);
+
+  const activeRoom = await findActiveDameRoomForUser(uid);
+  if (activeRoom) {
+    throw new HttpsError("failed-precondition", "Tu participes deja a une salle dame active.", {
+      code: "active-room-exists",
+      roomId: activeRoom.roomId,
+      status: String(activeRoom.status || ""),
+      seatIndex: safeInt(activeRoom.seatIndex, 0),
+      roomMode: String(activeRoom.roomMode || "dame_2p"),
+      stakeDoes: safeInt(activeRoom.stakeDoes),
+      inviteCode: String(activeRoom.inviteCode || "").trim(),
+    });
+  }
+
+  const inviteCode = await generateUniqueFriendDameInviteCode();
+  const rewardAmountDoes = buildPrivateMorpionRewardDoes(stakeDoes);
+  const roomRefDoc = dameRoomRef();
+
+  return db.runTransaction(async (tx) => {
+    const walletSnap = await tx.get(walletRef(uid));
+    const walletData = walletSnap.exists ? (walletSnap.data() || {}) : {};
+    assertWalletNotFrozen(walletData);
+    if (safeInt(walletData.doesBalance) < stakeDoes) {
+      throw new HttpsError("failed-precondition", "Solde Does insuffisant.");
+    }
+
+    const nowMs = Date.now();
+    const waitingDeadlineMs = nowMs + FRIEND_ROOM_WAIT_MS;
+    tx.set(roomRefDoc, {
+      status: "waiting",
+      createdAt: admin.firestore.FieldValue.serverTimestamp(),
+      createdAtMs: nowMs,
+      updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      ownerUid: uid,
+      roomMode: "dame_friends",
+      gameMode: "dame_classic",
+      engineVersion: 1,
+      isPrivate: true,
+      allowBots: false,
+      requiredHumans: 2,
+      inviteCode,
+      inviteCodeNormalized: normalizeCode(inviteCode),
+      playerUids: [uid, ""],
+      playerNames: [sanitizePlayerLabel(email || uid, 0), ""],
+      seats: { [uid]: 0 },
+      roomPresenceMs: { [uid]: nowMs },
+      blockedRejoinUids: [],
+      entryFundingByUid: {},
+      humanCount: 1,
+      botCount: 0,
+      waitingDeadlineMs,
+      startedAtMs: 0,
+      endedAtMs: 0,
+      currentPlayer: 1,
+      lastActionSeq: 0,
+      nextActionSeq: 0,
+      stakeDoes,
+      entryCostDoes: stakeDoes,
+      rewardAmountDoes,
+      stakeConfigId: `dame_friends_${stakeDoes}`,
+    });
+
+    return {
+      ok: true,
+      roomId: roomRefDoc.id,
+      seatIndex: 0,
+      status: "waiting",
+      roomMode: "dame_friends",
+      charged: false,
+      inviteCode,
+      requiredHumans: 2,
+      waitingDeadlineMs,
+      stakeDoes,
+      rewardAmountDoes,
+    };
+  });
+}, { invoker: "public" });
+
+exports.resumeFriendDameRoom = publicOnCall("resumeFriendDameRoom", async (request) => {
+  const { uid } = assertAuth(request);
+  const payload = request.data && typeof request.data === "object" ? request.data : {};
+  const roomId = String(payload.roomId || "").trim();
+  if (!roomId) {
+    throw new HttpsError("invalid-argument", "roomId requis.");
+  }
+
+  const roomSnap = await dameRoomRef(roomId).get();
+  if (!roomSnap.exists) {
+    throw new HttpsError("not-found", "Salle dame introuvable.");
+  }
+  const room = roomSnap.data() || {};
+  if (!isFriendDameRoom(room)) {
+    throw new HttpsError("failed-precondition", "Cette salle dame n'est pas une salle privee valide.");
+  }
+  if (getBlockedRejoinSet(room).has(uid)) {
+    throw new HttpsError("permission-denied", "Tu ne peux plus rejoindre cette salle dame.");
+  }
+
+  const seatIndex = getSeatForUser(room, uid);
+  if (seatIndex < 0) {
+    throw new HttpsError("permission-denied", "Tu ne fais pas partie de cette salle dame.");
+  }
+
+  const status = String(room.status || "").trim().toLowerCase();
+  const nowMs = Date.now();
+  const waitingDeadlineMs = resolveDameWaitingDeadlineMs(room, nowMs);
+  const humans = Array.isArray(room.playerUids)
+    ? room.playerUids.map((item) => String(item || "").trim()).filter(Boolean).length
+    : safeInt(room.humanCount);
+
+  if (status === "closed") {
+    throw new HttpsError("failed-precondition", "Cette salle dame n'est plus disponible.");
+  }
+  if (status === "waiting" && waitingDeadlineMs > 0 && humans < 2 && nowMs >= waitingDeadlineMs) {
+    throw new HttpsError("failed-precondition", "Cette salle dame a expire.");
+  }
+
+  return {
+    ok: true,
+    roomId,
+    seatIndex,
+    status,
+    roomMode: "dame_friends",
+    stakeDoes: safeInt(room.entryCostDoes || room.stakeDoes),
+    rewardAmountDoes: safeInt(room.rewardAmountDoes || buildPrivateMorpionRewardDoes(room.entryCostDoes || room.stakeDoes)),
+    inviteCode: String(room.inviteCode || "").trim(),
+    waitingDeadlineMs,
+  };
+}, { invoker: "public" });
+
+exports.joinFriendDameRoomByCode = publicOnCall("joinFriendDameRoomByCode", async (request) => {
+  const { uid, email } = assertAuth(request);
+  const payload = request.data && typeof request.data === "object" ? request.data : {};
+  const inviteCodeNormalized = normalizeCode(payload.inviteCode || payload.code || "");
+  if (!inviteCodeNormalized) {
+    throw new HttpsError("invalid-argument", "Code de salle requis.");
+  }
+
+  const activeRoom = await findActiveDameRoomForUser(uid);
+  if (activeRoom) {
+    throw new HttpsError("failed-precondition", "Tu participes deja a une salle dame active.", {
+      code: "active-room-exists",
+      roomId: activeRoom.roomId,
+      status: String(activeRoom.status || ""),
+      seatIndex: safeInt(activeRoom.seatIndex, 0),
+      roomMode: String(activeRoom.roomMode || "dame_2p"),
+      stakeDoes: safeInt(activeRoom.stakeDoes),
+      inviteCode: String(activeRoom.inviteCode || "").trim(),
+    });
+  }
+
+  const matchingSnap = await db
+    .collection(DAME_ROOMS_COLLECTION)
+    .where("inviteCodeNormalized", "==", inviteCodeNormalized)
+    .limit(6)
+    .get();
+  const roomDoc = matchingSnap.docs.find((docSnap) => isFriendDameRoom(docSnap.data() || {})) || null;
+  if (!roomDoc) {
+    throw new HttpsError("not-found", "Code de dame introuvable.");
+  }
+
+  const roomRefDoc = roomDoc.ref;
+  const result = await db.runTransaction(async (tx) => {
+    const [roomSnap, walletSnap] = await Promise.all([
+      tx.get(roomRefDoc),
+      tx.get(walletRef(uid)),
+    ]);
+    if (!roomSnap.exists) {
+      throw new HttpsError("not-found", "Salle dame introuvable.");
+    }
+
+    const room = roomSnap.data() || {};
+    if (!isFriendDameRoom(room)) {
+      throw new HttpsError("failed-precondition", "Cette salle dame n'est pas disponible.");
+    }
+    const roomStatus = String(room.status || "");
+    const nowMs = Date.now();
+    const waitingDeadlineMs = resolveDameWaitingDeadlineMs(room, nowMs);
+    const playerUids = Array.from({ length: 2 }, (_, idx) => String((room.playerUids || [])[idx] || ""));
+    const humans = playerUids.filter(Boolean).length;
+    const roomStakeDoes = safeInt(room.entryCostDoes || room.stakeDoes);
+    const roomRewardAmountDoes = safeInt(room.rewardAmountDoes || buildPrivateMorpionRewardDoes(roomStakeDoes));
+    const roomInviteCode = String(room.inviteCode || inviteCodeNormalized || "").trim();
+
+    const walletData = walletSnap.exists ? (walletSnap.data() || {}) : {};
+    assertWalletNotFrozen(walletData);
+
+    if (playerUids.includes(uid)) {
+      const seatIndex = getSeatForUser(room, uid);
+      const nextPresence = room.roomPresenceMs && typeof room.roomPresenceMs === "object" ? { ...room.roomPresenceMs } : {};
+      nextPresence[uid] = nowMs;
+      tx.update(roomRefDoc, {
+        roomPresenceMs: nextPresence,
+        waitingDeadlineMs,
+        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      });
+      return {
+        ok: true,
+        resumed: true,
+        charged: false,
+        roomId: roomRefDoc.id,
+        seatIndex: seatIndex >= 0 ? seatIndex : 0,
+        status: roomStatus,
+        roomMode: "dame_friends",
+        stakeDoes: roomStakeDoes,
+        rewardAmountDoes: roomRewardAmountDoes,
+        inviteCode: roomInviteCode,
+        waitingDeadlineMs,
+      };
+    }
+
+    if (roomStatus === "playing") {
+      throw new HttpsError("failed-precondition", "Cette salle dame a deja demarre.");
+    }
+    if (roomStatus !== "waiting") {
+      throw new HttpsError("failed-precondition", "Cette salle dame n'est plus disponible.");
+    }
+    if (getBlockedRejoinSet(room).has(uid)) {
+      throw new HttpsError("permission-denied", "Tu ne peux plus rejoindre cette salle dame.");
+    }
+    if (waitingDeadlineMs > 0 && nowMs >= waitingDeadlineMs && humans < 2) {
+      tx.set(roomRefDoc, {
+        status: "closed",
+        endedReason: "expired",
+        endedAt: admin.firestore.FieldValue.serverTimestamp(),
+        endedAtMs: nowMs,
+        waitingDeadlineMs: admin.firestore.FieldValue.delete(),
+        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      }, { merge: true });
+      return { ok: false, expired: true, roomId: roomRefDoc.id };
+    }
+    if (safeInt(walletData.doesBalance) < roomStakeDoes) {
+      throw new HttpsError("failed-precondition", "Solde Does insuffisant.");
+    }
+
+    const currentSeats = room.seats && typeof room.seats === "object" ? room.seats : {};
+    const usedSeats = new Set(
+      Object.values(currentSeats)
+        .map((seat) => Number(seat))
+        .filter((seat) => Number.isFinite(seat) && seat >= 0 && seat < 2)
+    );
+    const seatIndex = [0, 1].find((seat) => !usedSeats.has(seat));
+    if (typeof seatIndex !== "number" || humans >= 2) {
+      throw new HttpsError("failed-precondition", "Cette salle dame est complete.");
+    }
+
+    const nextPlayerUids = playerUids.slice();
+    nextPlayerUids[seatIndex] = uid;
+    const currentNames = Array.from({ length: 2 }, (_, idx) => String((room.playerNames || [])[idx] || ""));
+    const nextPlayerNames = currentNames.slice();
+    nextPlayerNames[seatIndex] = sanitizePlayerLabel(email || uid, seatIndex);
+    const nextSeats = { ...currentSeats, [uid]: seatIndex };
+    const nextPresence = room.roomPresenceMs && typeof room.roomPresenceMs === "object" ? { ...room.roomPresenceMs } : {};
+    nextPresence[uid] = nowMs;
+    const nextHumans = nextPlayerUids.filter(Boolean).length;
+
+    if (nextHumans >= 2) {
+      const chargeResult = await chargeRoomEntriesTx(tx, room, nextPlayerUids, roomStakeDoes);
+      tx.set(roomRefDoc, {
+        playerUids: nextPlayerUids,
+        playerNames: nextPlayerNames,
+        seats: nextSeats,
+        roomPresenceMs: nextPresence,
+        humanCount: nextHumans,
+        botCount: 0,
+        entryFundingByUid: chargeResult.entryFundingByUid,
+        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      }, { merge: true });
+
+      return {
+        ok: true,
+        resumed: false,
+        charged: true,
+        roomId: roomRefDoc.id,
+        seatIndex,
+        does: safeInt(chargeResult.afterDoesByUid[uid]),
+        roomMode: "dame_friends",
+        inviteCode: roomInviteCode,
+        stakeDoes: roomStakeDoes,
+        rewardAmountDoes: roomRewardAmountDoes,
+        ...buildStartedDameRoomTransaction(tx, roomRefDoc, {
+          ...room,
+          playerUids: nextPlayerUids,
+          playerNames: nextPlayerNames,
+          seats: nextSeats,
+          roomPresenceMs: nextPresence,
+          humanCount: nextHumans,
+          botCount: 0,
+          entryFundingByUid: chargeResult.entryFundingByUid,
+          waitingDeadlineMs,
+        }, { nowMs }),
+      };
+    }
+
+    tx.update(roomRefDoc, {
+      playerUids: nextPlayerUids,
+      playerNames: nextPlayerNames,
+      seats: nextSeats,
+      roomPresenceMs: nextPresence,
+      humanCount: nextHumans,
+      botCount: 0,
+      waitingDeadlineMs,
+      updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+    });
+    return {
+      ok: true,
+      resumed: false,
+      charged: false,
+      roomId: roomRefDoc.id,
+      seatIndex,
+      status: "waiting",
+      roomMode: "dame_friends",
+      inviteCode: roomInviteCode,
+      stakeDoes: roomStakeDoes,
+      rewardAmountDoes: roomRewardAmountDoes,
+      waitingDeadlineMs,
+    };
+  });
+
+  if (result?.expired === true) {
+    throw new HttpsError("failed-precondition", "Ce code a expire.");
+  }
+  return result;
+}, { invoker: "public" });
+
+exports.joinMatchmakingDame = publicOnCall("joinMatchmakingDame", async (request) => {
+  const { uid, email } = assertAuth(request);
+  const payload = request.data && typeof request.data === "object" ? request.data : {};
+  const stakeDoes = safeInt(payload.stakeDoes);
+  const selectedStakeConfig = getMorpionStakeConfigByAmount(stakeDoes);
+  if (!selectedStakeConfig) {
+    throw new HttpsError("invalid-argument", "Mise dame non autorisee.");
+  }
+
+  const activeRoom = await findActiveDameRoomForUser(uid);
+  if (activeRoom) {
+    return {
+      ok: true,
+      resumed: true,
+      charged: false,
+      roomId: activeRoom.roomId,
+      seatIndex: activeRoom.seatIndex,
+      status: activeRoom.status,
+      stakeDoes: safeInt(activeRoom.stakeDoes),
+      roomMode: String(activeRoom.roomMode || "dame_2p"),
+      inviteCode: String(activeRoom.inviteCode || "").trim(),
+    };
+  }
+
+  const rewardAmountDoes = selectedStakeConfig.rewardDoes;
+  const poolRef = dameMatchmakingPoolRef(selectedStakeConfig.id, stakeDoes);
+
+  return db.runTransaction(async (tx) => {
+    const nowMs = Date.now();
+    const [poolSnap, walletSnap] = await Promise.all([
+      tx.get(poolRef),
+      tx.get(walletRef(uid)),
+    ]);
+    const walletData = walletSnap.exists ? (walletSnap.data() || {}) : {};
+    assertWalletNotFrozen(walletData);
+    if (stakeDoes > 0 && safeInt(walletData.doesBalance) < stakeDoes) {
+      throw new HttpsError("failed-precondition", "Solde Does insuffisant.");
+    }
+
+    const existingOpenRoomId = String(poolSnap.exists ? (poolSnap.data() || {}).openRoomId || "" : "").trim();
+    if (existingOpenRoomId) {
+      const openRoomRef = dameRoomRef(existingOpenRoomId);
+      const roomSnap = await tx.get(openRoomRef);
+      if (roomSnap.exists) {
+        const room = roomSnap.data() || {};
+        const status = String(room.status || "");
+        const roomEntryCostDoes = safeInt(room.entryCostDoes || room.stakeDoes);
+        const roomRewardAmountDoes = safeInt(room.rewardAmountDoes || 0);
+        const playerUids = Array.from({ length: 2 }, (_, idx) => String((room.playerUids || [])[idx] || ""));
+        const waitingDeadlineMs = resolveDameWaitingDeadlineMs(room, nowMs);
+        const humans = playerUids.filter(Boolean).length;
+
+        if (
+          status === "waiting"
+          && !getBlockedRejoinSet(room).has(uid)
+          && roomEntryCostDoes === stakeDoes
+          && roomRewardAmountDoes === rewardAmountDoes
+        ) {
+          const currentSeats = room.seats && typeof room.seats === "object" ? room.seats : {};
+          const usedSeats = new Set(
+            Object.values(currentSeats)
+              .map((seat) => Number(seat))
+              .filter((seat) => Number.isFinite(seat) && seat >= 0 && seat < 2)
+          );
+          const seatIndex = [0, 1].find((seat) => !usedSeats.has(seat));
+          if (typeof seatIndex === "number" && humans < 2) {
+            const nextPlayerUids = playerUids.slice();
+            nextPlayerUids[seatIndex] = uid;
+            const currentNames = Array.from({ length: 2 }, (_, idx) => String((room.playerNames || [])[idx] || ""));
+            const nextPlayerNames = currentNames.slice();
+            nextPlayerNames[seatIndex] = sanitizePlayerLabel(email || uid, seatIndex);
+            const nextSeats = { ...currentSeats, [uid]: seatIndex };
+            const nextHumans = nextPlayerUids.filter(Boolean).length;
+            const nextPresence = room.roomPresenceMs && typeof room.roomPresenceMs === "object" ? { ...room.roomPresenceMs } : {};
+            nextPresence[uid] = nowMs;
+
+            if (nextHumans >= 2) {
+              const chargeResult = await chargeRoomEntriesTx(tx, room, nextPlayerUids, stakeDoes);
+              tx.set(openRoomRef, {
+                playerUids: nextPlayerUids,
+                playerNames: nextPlayerNames,
+                seats: nextSeats,
+                roomPresenceMs: nextPresence,
+                humanCount: nextHumans,
+                botCount: 0,
+                entryFundingByUid: chargeResult.entryFundingByUid,
+                updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+              }, { merge: true });
+              clearDameMatchmakingPool(tx, poolRef);
+              return {
+                ok: true,
+                resumed: false,
+                charged: stakeDoes > 0,
+                roomId: openRoomRef.id,
+                seatIndex,
+                does: safeInt(chargeResult.afterDoesByUid[uid]),
+                roomMode: "dame_2p",
+                ...buildStartedDameRoomTransaction(tx, openRoomRef, {
+                  ...room,
+                  playerUids: nextPlayerUids,
+                  playerNames: nextPlayerNames,
+                  seats: nextSeats,
+                  roomPresenceMs: nextPresence,
+                  humanCount: nextHumans,
+                  botCount: 0,
+                  entryFundingByUid: chargeResult.entryFundingByUid,
+                  waitingDeadlineMs,
+                }, { nowMs }),
+              };
+            }
+          }
+        }
+      }
+    }
+
+    const newRoomRef = dameRoomRef();
+    tx.set(newRoomRef, {
+      status: "waiting",
+      createdAt: admin.firestore.FieldValue.serverTimestamp(),
+      createdAtMs: nowMs,
+      updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      ownerUid: uid,
+      roomMode: "dame_2p",
+      gameMode: "dame_classic",
+      engineVersion: 1,
+      isPrivate: false,
+      allowBots: false,
+      requiredHumans: 2,
+      playerUids: [uid, ""],
+      playerNames: [sanitizePlayerLabel(email || uid, 0), ""],
+      seats: { [uid]: 0 },
+      roomPresenceMs: { [uid]: nowMs },
+      blockedRejoinUids: [],
+      entryFundingByUid: {},
+      humanCount: 1,
+      botCount: 0,
+      waitingDeadlineMs: nowMs + ROOM_WAIT_MS,
+      startedAtMs: 0,
+      endedAtMs: 0,
+      currentPlayer: 1,
+      lastActionSeq: 0,
+      nextActionSeq: 0,
+      stakeDoes,
+      entryCostDoes: stakeDoes,
+      rewardAmountDoes,
+      stakeConfigId: selectedStakeConfig.id,
+    });
+    setDameMatchmakingPoolOpen(tx, poolRef, newRoomRef.id, selectedStakeConfig.id, stakeDoes);
+
+    return {
+      ok: true,
+      resumed: false,
+      charged: false,
+      roomId: newRoomRef.id,
+      seatIndex: 0,
+      status: "waiting",
+      roomMode: "dame_2p",
+      waitingDeadlineMs: nowMs + ROOM_WAIT_MS,
+      stakeDoes,
+      rewardAmountDoes,
+      humanCount: 1,
+      botCount: 0,
+    };
+  });
+}, { invoker: "public" });
+
+exports.ensureRoomReadyDame = publicOnCall("ensureRoomReadyDame", async (request) => {
+  const { uid } = assertAuth(request);
+  const payload = request.data && typeof request.data === "object" ? request.data : {};
+  const roomId = String(payload.roomId || "").trim();
+  if (!roomId) {
+    throw new HttpsError("invalid-argument", "roomId requis.");
+  }
+
+  const roomRefDoc = dameRoomRef(roomId);
+  return db.runTransaction(async (tx) => {
+    const roomSnap = await tx.get(roomRefDoc);
+    if (!roomSnap.exists) {
+      throw new HttpsError("not-found", "Salle dame introuvable.");
+    }
+    const room = roomSnap.data() || {};
+    const seatIndex = getSeatForUser(room, uid);
+    if (seatIndex < 0) {
+      throw new HttpsError("permission-denied", "Tu ne fais pas partie de cette salle dame.");
+    }
+
+    const status = String(room.status || "");
+    if (status !== "waiting") {
+      return {
+        ok: true,
+        started: false,
+        status,
+        waitingDeadlineMs: safeSignedInt(room.waitingDeadlineMs),
+        humanCount: safeInt(room.humanCount),
+        botCount: safeInt(room.botCount),
+      };
+    }
+
+    const nowMs = Date.now();
+    const humans = Array.isArray(room.playerUids) ? room.playerUids.filter(Boolean).length : safeInt(room.humanCount);
+    const waitingDeadlineMs = resolveDameWaitingDeadlineMs(room, nowMs);
+    if (safeSignedInt(room.waitingDeadlineMs) !== waitingDeadlineMs) {
+      tx.update(roomRefDoc, { waitingDeadlineMs, updatedAt: admin.firestore.FieldValue.serverTimestamp() });
+    }
+
+    if (humans < 2) {
+      if (!isFriendDameRoom(room) && waitingDeadlineMs > 0 && nowMs >= waitingDeadlineMs) {
+        tx.set(roomRefDoc, {
+          status: "closed",
+          endedReason: "expired",
+          endedAt: admin.firestore.FieldValue.serverTimestamp(),
+          endedAtMs: nowMs,
+          waitingDeadlineMs: admin.firestore.FieldValue.delete(),
+          updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+        }, { merge: true });
+        return {
+          ok: true,
+          started: false,
+          expired: true,
+          status: "closed",
+          waitingDeadlineMs: 0,
+          humanCount: humans,
+          botCount: 0,
+        };
+      }
+      return {
+        ok: true,
+        started: false,
+        status: "waiting",
+        waitingDeadlineMs,
+        humanCount: humans,
+        botCount: 0,
+      };
+    }
+
+    const playerUids = Array.isArray(room.playerUids) ? room.playerUids.slice(0, 2) : ["", ""];
+    let entryFundingByUid = room.entryFundingByUid && typeof room.entryFundingByUid === "object"
+      ? { ...room.entryFundingByUid }
+      : null;
+    let afterDoesForCaller = 0;
+    if (!entryFundingByUid || Object.keys(entryFundingByUid).length < humans) {
+      const chargeResult = await chargeRoomEntriesTx(tx, room, playerUids, safeInt(room.entryCostDoes || room.stakeDoes));
+      entryFundingByUid = chargeResult.entryFundingByUid;
+      afterDoesForCaller = safeInt(chargeResult.afterDoesByUid[uid]);
+      tx.set(roomRefDoc, {
+        entryFundingByUid,
+        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      }, { merge: true });
+    }
+
+    if (!isFriendDameRoom(room)) {
+      clearDameMatchmakingPool(tx, dameMatchmakingPoolRef(String(room.stakeConfigId || ""), safeInt(room.entryCostDoes || room.stakeDoes)));
+    }
+    return {
+      does: afterDoesForCaller,
+      charged: true,
+      ...buildStartedDameRoomTransaction(tx, roomRefDoc, {
+        ...room,
+        entryFundingByUid,
+        humanCount: humans,
+        botCount: 0,
+        waitingDeadlineMs,
+      }, { nowMs }),
+    };
+  });
+}, { invoker: "public" });
+
+exports.touchRoomPresenceDame = publicOnCall("touchRoomPresenceDame", async (request) => {
+  const { uid } = assertAuth(request);
+  const payload = request.data && typeof request.data === "object" ? request.data : {};
+  const roomId = String(payload.roomId || "").trim();
+  if (!roomId) {
+    throw new HttpsError("invalid-argument", "roomId requis.");
+  }
+
+  const roomRefDoc = dameRoomRef(roomId);
+  return db.runTransaction(async (tx) => {
+    const roomSnap = await tx.get(roomRefDoc);
+    if (!roomSnap.exists) {
+      throw new HttpsError("not-found", "Salle dame introuvable.");
+    }
+    const room = roomSnap.data() || {};
+    const seatIndex = getSeatForUser(room, uid);
+    if (seatIndex < 0) {
+      throw new HttpsError("permission-denied", "Tu ne fais pas partie de cette salle dame.");
+    }
+
+    const nowMs = Date.now();
+    const nextPresence = room.roomPresenceMs && typeof room.roomPresenceMs === "object" ? { ...room.roomPresenceMs } : {};
+    nextPresence[uid] = nowMs;
+    tx.update(roomRefDoc, {
+      roomPresenceMs: nextPresence,
+      updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+    });
+
+    return {
+      ok: true,
+      roomId,
+      status: String(room.status || ""),
+      currentPlayer: safeSignedInt(room.currentPlayer, -1),
+      humanCount: Array.isArray(room.playerUids) ? room.playerUids.filter(Boolean).length : safeInt(room.humanCount),
+      botCount: safeInt(room.botCount),
+    };
+  });
+}, { invoker: "public" });
+
+exports.submitActionDame = publicOnCall("submitActionDame", async (request) => {
+  const { uid } = assertAuth(request);
+  const payload = request.data && typeof request.data === "object" ? request.data : {};
+  const roomId = String(payload.roomId || "").trim();
+  if (!roomId) {
+    throw new HttpsError("invalid-argument", "roomId requis.");
+  }
+
+  const fromLine = safeSignedInt(payload?.from?.line, -1);
+  const fromColumn = safeSignedInt(payload?.from?.column, -1);
+  const toLine = safeSignedInt(payload?.to?.line, -1);
+  const toColumn = safeSignedInt(payload?.to?.column, -1);
+  const piecePlayer = safeSignedInt(payload.piecePlayer, -1);
+  const changeTurn = payload.changeTurn !== false;
+  const seatIndexInput = safeSignedInt(payload.seatIndex, -1);
+
+  if (
+    fromLine < 0 || fromLine > 7
+    || fromColumn < 0 || fromColumn > 7
+    || toLine < 0 || toLine > 7
+    || toColumn < 0 || toColumn > 7
+  ) {
+    throw new HttpsError("invalid-argument", "Coordonnees de coup invalides.");
+  }
+
+  const roomRefDoc = dameRoomRef(roomId);
+  return db.runTransaction(async (tx) => {
+    const roomSnap = await tx.get(roomRefDoc);
+    if (!roomSnap.exists) {
+      throw new HttpsError("not-found", "Salle dame introuvable.");
+    }
+
+    const room = roomSnap.data() || {};
+    const status = String(room.status || "").trim().toLowerCase();
+    if (status !== "playing") {
+      throw new HttpsError("failed-precondition", "La partie dame n'est pas en cours.");
+    }
+
+    const seatIndex = getSeatForUser(room, uid);
+    if (seatIndex < 0) {
+      throw new HttpsError("permission-denied", "Tu ne fais pas partie de cette salle dame.");
+    }
+    if (seatIndexInput >= 0 && seatIndexInput !== seatIndex) {
+      throw new HttpsError("permission-denied", "Seat invalide pour ce joueur.");
+    }
+
+    const currentPlayer = safeSignedInt(room.currentPlayer, 1) === 0 ? 0 : 1;
+    if (currentPlayer !== seatIndex) {
+      throw new HttpsError("failed-precondition", "Ce n'est pas ton tour.");
+    }
+    if (piecePlayer >= 0 && piecePlayer !== seatIndex) {
+      throw new HttpsError("failed-precondition", "Piece invalide pour ce tour.");
+    }
+
+    const nextActionSeq = Math.max(1, safeInt(room.nextActionSeq, 0) + 1);
+    const actionRef = roomRefDoc.collection("actions").doc(String(nextActionSeq));
+    const nowMs = Date.now();
+
+    tx.set(actionRef, {
+      seq: nextActionSeq,
+      roomId,
+      uid,
+      seatIndex,
+      from: { line: fromLine, column: fromColumn },
+      to: { line: toLine, column: toColumn },
+      piecePlayer: seatIndex,
+      changeTurn: changeTurn === true,
+      createdAt: admin.firestore.FieldValue.serverTimestamp(),
+      createdAtMs: nowMs,
+    }, { merge: true });
+
+    tx.set(roomRefDoc, {
+      lastActionSeq: nextActionSeq,
+      nextActionSeq,
+      currentPlayer: changeTurn === true ? (seatIndex ^ 1) : seatIndex,
+      updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+    }, { merge: true });
+
+    return {
+      ok: true,
+      roomId,
+      seq: nextActionSeq,
+      currentPlayer: changeTurn === true ? (seatIndex ^ 1) : seatIndex,
+    };
+  });
+}, { invoker: "public" });
+
+exports.leaveRoomDame = publicOnCall("leaveRoomDame", async (request) => {
+  const { uid } = assertAuth(request);
+  const payload = request.data && typeof request.data === "object" ? request.data : {};
+  const roomId = String(payload.roomId || "").trim();
+  if (!roomId) {
+    throw new HttpsError("invalid-argument", "roomId requis.");
+  }
+
+  const roomRefDoc = dameRoomRef(roomId);
+  return db.runTransaction(async (tx) => {
+    const roomSnap = await tx.get(roomRefDoc);
+    if (!roomSnap.exists) {
+      return { ok: true, deleted: true, status: "missing" };
+    }
+
+    const room = roomSnap.data() || {};
+    const seatIndex = getSeatForUser(room, uid);
+    if (seatIndex < 0) {
+      return { ok: true, deleted: false, status: String(room.status || "") };
+    }
+
+    const nowMs = Date.now();
+    const nextPlayerUids = Array.isArray(room.playerUids) ? room.playerUids.slice(0, 2) : ["", ""];
+    const nextPlayerNames = Array.isArray(room.playerNames) ? room.playerNames.slice(0, 2) : ["", ""];
+    nextPlayerUids[seatIndex] = "";
+    nextPlayerNames[seatIndex] = "";
+    const nextSeats = room.seats && typeof room.seats === "object" ? { ...room.seats } : {};
+    delete nextSeats[uid];
+    const nextPresence = room.roomPresenceMs && typeof room.roomPresenceMs === "object" ? { ...room.roomPresenceMs } : {};
+    delete nextPresence[uid];
+    const nextBlocked = Array.from(new Set([
+      ...(Array.isArray(room.blockedRejoinUids) ? room.blockedRejoinUids : []),
+      uid,
+    ]));
+    const nextHumans = nextPlayerUids.filter(Boolean).length;
+    const status = String(room.status || "").trim().toLowerCase();
+
+    const updates = {
+      playerUids: nextPlayerUids,
+      playerNames: nextPlayerNames,
+      seats: nextSeats,
+      roomPresenceMs: nextPresence,
+      blockedRejoinUids: nextBlocked,
+      humanCount: nextHumans,
+      botCount: 0,
+      updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+    };
+
+    if (status === "playing") {
+      const winnerSeat = nextPlayerUids[0] ? 0 : (nextPlayerUids[1] ? 1 : -1);
+      const winnerUid = winnerSeat >= 0 ? String(nextPlayerUids[winnerSeat] || "").trim() : "";
+      Object.assign(updates, {
+        status: "ended",
+        endedReason: "player_left",
+        endedAt: admin.firestore.FieldValue.serverTimestamp(),
+        endedAtMs: nowMs,
+        winnerSeat,
+        winnerUid,
+      });
+    } else if (nextHumans <= 0) {
+      Object.assign(updates, {
+        status: "closed",
+        endedReason: "empty_room",
+        endedAt: admin.firestore.FieldValue.serverTimestamp(),
+        endedAtMs: nowMs,
+      });
+    } else {
+      Object.assign(updates, {
+        status: "waiting",
+      });
+    }
+
+    tx.set(roomRefDoc, updates, { merge: true });
+
+    if (!isFriendDameRoom(room)) {
+      const poolRef = dameMatchmakingPoolRef(String(room.stakeConfigId || ""), safeInt(room.entryCostDoes || room.stakeDoes));
+      if (nextHumans <= 0 || status === "playing") {
+        clearDameMatchmakingPool(tx, poolRef);
+      } else {
+        setDameMatchmakingPoolOpen(tx, poolRef, roomId, String(room.stakeConfigId || ""), safeInt(room.entryCostDoes || room.stakeDoes));
+      }
+    }
+
+    return { ok: true, deleted: false, status: String(updates.status || "") };
+  });
 }, { invoker: "public" });
 
 exports.createFriendMorpionRoom = publicOnCall("createFriendMorpionRoom", async (request) => {
@@ -20059,6 +21381,16 @@ exports.getPublicWhatsappModalConfigSecure = publicOnCall("getPublicWhatsappModa
   };
 }, { minInstances: 1 });
 
+exports.getPublicHomeHeroConfigSecure = publicOnCall("getPublicHomeHeroConfigSecure", async () => {
+  const snapshot = await readHomeHeroSettings();
+  return {
+    ok: true,
+    slides: snapshot.slides,
+    version: snapshot.version,
+    updatedAtMs: snapshot.updatedAtMs || 0,
+  };
+}, { minInstances: 1 });
+
 exports.setWhatsappModalConfigSecure = publicOnCall("setWhatsappModalConfigSecure", async (request) => {
   const { uid, email } = assertFinanceAdmin(request);
   const payload = request.data && typeof request.data === "object" ? request.data : {};
@@ -20085,6 +21417,39 @@ exports.setWhatsappModalConfigSecure = publicOnCall("setWhatsappModalConfigSecur
     ok: true,
     contacts: mergedContacts,
     version: "wmc-v1",
+    updatedAtMs: nowMs,
+  };
+});
+
+exports.setHomeHeroConfigSecure = publicOnCall("setHomeHeroConfigSecure", async (request) => {
+  const { uid, email } = assertFinanceAdmin(request);
+  const payload = request.data && typeof request.data === "object" ? request.data : {};
+  const incomingSlides = Array.isArray(payload.slides) ? payload.slides : [];
+  const slides = normalizeHomeHeroSlides(incomingSlides);
+  const enabledSlides = slides.filter((slide) => slide.enabled === true);
+
+  if (enabledSlides.length <= 0) {
+    throw new HttpsError("invalid-argument", "Ajoute au moins une image hero active.", {
+      code: "home-hero-empty",
+    });
+  }
+
+  const nowMs = Date.now();
+  await homeHeroSettingsRef().set({
+    slides,
+    version: "hhs-v1",
+    updatedAtMs: nowMs,
+    updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+    updatedBy: {
+      uid,
+      email: sanitizeEmail(email, 160),
+    },
+  }, { merge: true });
+
+  return {
+    ok: true,
+    slides,
+    version: "hhs-v1",
     updatedAtMs: nowMs,
   };
 });
@@ -20982,25 +22347,29 @@ async function computeGamesVolumeAnalyticsSnapshot(options = {}) {
   let classicQuery = db.collection(ROOM_RESULTS_COLLECTION).orderBy("endedAtMs", "asc");
   let duelQuery = db.collection(DUEL_ROOM_RESULTS_COLLECTION).orderBy("endedAtMs", "asc");
   let morpionQuery = db.collection(MORPION_ROOM_RESULTS_COLLECTION).orderBy("endedAtMs", "asc");
+  let dameQuery = db.collection(DAME_ROOM_RESULTS_COLLECTION).orderBy("endedAtMs", "asc");
   let pongQuery = db.collection(PONG_MATCH_RESULTS_COLLECTION).orderBy("endedAtMs", "asc");
 
   if (range.startMs > 0) {
     classicQuery = classicQuery.where("endedAtMs", ">=", range.startMs);
     duelQuery = duelQuery.where("endedAtMs", ">=", range.startMs);
     morpionQuery = morpionQuery.where("endedAtMs", ">=", range.startMs);
+    dameQuery = dameQuery.where("endedAtMs", ">=", range.startMs);
     pongQuery = pongQuery.where("endedAtMs", ">=", range.startMs);
   }
   if (range.endMs > 0) {
     classicQuery = classicQuery.where("endedAtMs", "<=", range.endMs);
     duelQuery = duelQuery.where("endedAtMs", "<=", range.endMs);
     morpionQuery = morpionQuery.where("endedAtMs", "<=", range.endMs);
+    dameQuery = dameQuery.where("endedAtMs", "<=", range.endMs);
     pongQuery = pongQuery.where("endedAtMs", "<=", range.endMs);
   }
 
-  const [classicSnap, duelSnap, morpionSnap, pongSnap] = await Promise.all([
+  const [classicSnap, duelSnap, morpionSnap, dameSnap, pongSnap] = await Promise.all([
     safeAnalyticsQueryGet(classicQuery, db.collection(ROOM_RESULTS_COLLECTION), "classicRoomResults"),
     safeAnalyticsQueryGet(duelQuery, db.collection(DUEL_ROOM_RESULTS_COLLECTION), "duelRoomResults"),
     safeAnalyticsQueryGet(morpionQuery, db.collection(MORPION_ROOM_RESULTS_COLLECTION), "morpionRoomResults"),
+    safeAnalyticsQueryGet(dameQuery, db.collection(DAME_ROOM_RESULTS_COLLECTION), "dameRoomResults"),
     safeAnalyticsQueryGet(pongQuery, db.collection(PONG_MATCH_RESULTS_COLLECTION), "pongMatchResults"),
   ]);
 
@@ -21012,10 +22381,12 @@ async function computeGamesVolumeAnalyticsSnapshot(options = {}) {
     classicMatches: 0,
     duelMatches: 0,
     morpionMatches: 0,
+    dameMatches: 0,
     pongMatches: 0,
     classicWithBots: 0,
     duelWithBots: 0,
     morpionWithBots: 0,
+    dameWithBots: 0,
     pongWithBots: 0,
   };
 
@@ -21030,6 +22401,7 @@ async function computeGamesVolumeAnalyticsSnapshot(options = {}) {
     if (gameKey === "classic") summary.classicMatches += 1;
     if (gameKey === "duel") summary.duelMatches += 1;
     if (gameKey === "morpion") summary.morpionMatches += 1;
+    if (gameKey === "dame") summary.dameMatches += 1;
     if (gameKey === "pong") summary.pongMatches += 1;
 
     const botCount = gameKey === "pong"
@@ -21038,6 +22410,7 @@ async function computeGamesVolumeAnalyticsSnapshot(options = {}) {
     if (gameKey === "classic" && inferClassicGameComposition(data) === "with_bot") summary.classicWithBots += 1;
     if (gameKey === "duel" && botCount > 0) summary.duelWithBots += 1;
     if (gameKey === "morpion" && botCount > 0) summary.morpionWithBots += 1;
+    if (gameKey === "dame" && botCount > 0) summary.dameWithBots += 1;
     if (gameKey === "pong" && botCount > 0) summary.pongWithBots += 1;
 
     const bucketKey = getDuelAnalyticsBucketKey(range.granularity, endedAtMs);
@@ -21049,12 +22422,14 @@ async function computeGamesVolumeAnalyticsSnapshot(options = {}) {
       classicMatches: 0,
       duelMatches: 0,
       morpionMatches: 0,
+      dameMatches: 0,
       pongMatches: 0,
     };
     bucket.totalMatches += 1;
     if (gameKey === "classic") bucket.classicMatches += 1;
     if (gameKey === "duel") bucket.duelMatches += 1;
     if (gameKey === "morpion") bucket.morpionMatches += 1;
+    if (gameKey === "dame") bucket.dameMatches += 1;
     if (gameKey === "pong") bucket.pongMatches += 1;
     if (endedAtMs > safeSignedInt(bucket.periodMs)) {
       bucket.periodMs = endedAtMs;
@@ -21076,6 +22451,7 @@ async function computeGamesVolumeAnalyticsSnapshot(options = {}) {
   classicSnap.forEach((docSnap) => addMatch("classic", "Domino classique", docSnap.data() || {}, docSnap.id));
   duelSnap.forEach((docSnap) => addMatch("duel", "Duel 2 joueurs", docSnap.data() || {}, docSnap.id));
   morpionSnap.forEach((docSnap) => addMatch("morpion", "Morpion 5", docSnap.data() || {}, docSnap.id));
+  dameSnap.forEach((docSnap) => addMatch("dame", "Jeu de dame", docSnap.data() || {}, docSnap.id));
   pongSnap.forEach((docSnap) => addMatch("pong", "Pong", docSnap.data() || {}, docSnap.id));
 
   recentMatches.sort((left, right) => safeSignedInt(right.endedAtMs) - safeSignedInt(left.endedAtMs));
@@ -21090,6 +22466,7 @@ async function computeGamesVolumeAnalyticsSnapshot(options = {}) {
       classicMatches: safeInt(bucket.classicMatches),
       duelMatches: safeInt(bucket.duelMatches),
       morpionMatches: safeInt(bucket.morpionMatches),
+      dameMatches: safeInt(bucket.dameMatches),
       pongMatches: safeInt(bucket.pongMatches),
     }));
 
@@ -21113,6 +22490,7 @@ async function computeGamesVolumeAnalyticsSnapshot(options = {}) {
         { key: "classic", label: "Domino classique", count: summary.classicMatches },
         { key: "duel", label: "Duel 2 joueurs", count: summary.duelMatches },
         { key: "morpion", label: "Morpion 5", count: summary.morpionMatches },
+        { key: "dame", label: "Jeu de dame", count: summary.dameMatches },
         { key: "pong", label: "Pong", count: summary.pongMatches },
       ],
       trend,
@@ -21569,6 +22947,22 @@ exports.getMorpionAnalyticsSnapshot = publicOnCall(
   }
 );
 
+exports.getDameAnalyticsSnapshot = publicOnCall(
+  "getDameAnalyticsSnapshot",
+  async (request) => {
+    assertFinanceAdmin(request);
+    const payload = request.data && typeof request.data === "object" ? request.data : {};
+    const snapshot = await computeDameAnalyticsSnapshot(payload);
+    return {
+      ok: true,
+      snapshot,
+    };
+  },
+  {
+    memory: "1GiB",
+  }
+);
+
 exports.getPongAnalyticsSnapshot = publicOnCall(
   "getPongAnalyticsSnapshot",
   async (request) => {
@@ -21904,6 +23298,346 @@ exports.startPongWagerSecure = publicOnCall("startPongWagerSecure", async (reque
   return result;
 });
 
+exports.createFriendPongRoom = publicOnCall("createFriendPongRoom", async (request) => {
+  const { uid, email } = assertAuth(request);
+  const payload = request.data && typeof request.data === "object" ? request.data : {};
+  const stakeDoes = safeInt(payload.stakeDoes);
+  if (!PONG_ALLOWED_STAKES.has(stakeDoes)) {
+    throw new HttpsError("invalid-argument", "Mise Pong non autorisee.");
+  }
+
+  const activeRoom = await findActivePongFriendRoomForUser(uid);
+  const nowMs = Date.now();
+  let replacedRoomId = "";
+  if (activeRoom?.roomId) {
+    replacedRoomId = String(activeRoom.roomId || "").trim();
+    await pongFriendRoomRef(replacedRoomId).set({
+      status: "closed",
+      endedReason: "replaced_by_new_room",
+      endedAt: admin.firestore.FieldValue.serverTimestamp(),
+      endedAtMs: nowMs,
+      updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      updatedAtMs: nowMs,
+    }, { merge: true });
+  }
+
+  const inviteCode = await generateUniqueFriendPongInviteCode();
+  const roomRefDoc = pongFriendRoomRef();
+  const waitingDeadlineMs = nowMs + FRIEND_ROOM_WAIT_MS;
+  const rewardAmountDoes = Math.floor((stakeDoes * PONG_ODDS_NUMERATOR) / PONG_ODDS_DENOMINATOR);
+
+  await roomRefDoc.set({
+    status: "waiting",
+    createdAt: admin.firestore.FieldValue.serverTimestamp(),
+    createdAtMs: nowMs,
+    updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+    updatedAtMs: nowMs,
+    ownerUid: uid,
+    roomMode: "pong_friends",
+    isPrivate: true,
+    allowBots: false,
+    inviteCode,
+    inviteCodeNormalized: normalizeCode(inviteCode),
+    requiredHumans: 2,
+    playerUids: [uid, ""],
+    playerNames: [sanitizePlayerLabel(email || uid, 0), ""],
+    seats: { [uid]: 0 },
+    roomPresenceMs: { [uid]: nowMs },
+    humanCount: 1,
+    botCount: 0,
+    waitingDeadlineMs,
+    startedAt: null,
+    startedAtMs: 0,
+    endedAtMs: 0,
+    stakeDoes,
+    entryCostDoes: stakeDoes,
+    rewardAmountDoes,
+    stakeConfigId: `pong_friends_${stakeDoes}`,
+  });
+
+  return {
+    ok: true,
+    roomId: roomRefDoc.id,
+    seatIndex: 0,
+    status: "waiting",
+    roomMode: "pong_friends",
+    inviteCode,
+    requiredHumans: 2,
+    humanCount: 1,
+    waitingDeadlineMs,
+    stakeDoes,
+    rewardAmountDoes,
+    replacedRoomId,
+  };
+}, { invoker: "public" });
+
+exports.joinFriendPongRoomByCode = publicOnCall("joinFriendPongRoomByCode", async (request) => {
+  const { uid, email } = assertAuth(request);
+  const payload = request.data && typeof request.data === "object" ? request.data : {};
+  const inviteCodeNormalized = normalizeCode(payload.inviteCode || payload.code || "");
+  if (!inviteCodeNormalized) {
+    throw new HttpsError("invalid-argument", "Code de salle Pong requis.");
+  }
+
+  const activeRoom = await findActivePongFriendRoomForUser(uid);
+  if (activeRoom) {
+    throw new HttpsError("failed-precondition", "Tu participes deja a une salle Pong active.", {
+      code: "active-room-exists",
+      roomId: activeRoom.roomId,
+      status: String(activeRoom.status || ""),
+      seatIndex: safeInt(activeRoom.seatIndex, 0),
+      roomMode: "pong_friends",
+      stakeDoes: safeInt(activeRoom.stakeDoes),
+      inviteCode: String(activeRoom.inviteCode || "").trim(),
+    });
+  }
+
+  const matchingSnap = await db
+    .collection(PONG_FRIEND_ROOMS_COLLECTION)
+    .where("inviteCodeNormalized", "==", inviteCodeNormalized)
+    .limit(6)
+    .get();
+
+  const roomDoc = matchingSnap.docs.find((docSnap) => isFriendPongRoom(docSnap.data() || {})) || null;
+  if (!roomDoc) {
+    throw new HttpsError("not-found", "Code de salle Pong introuvable.");
+  }
+
+  const roomRefDoc = roomDoc.ref;
+  const result = await db.runTransaction(async (tx) => {
+    const roomSnap = await tx.get(roomRefDoc);
+    if (!roomSnap.exists) {
+      throw new HttpsError("not-found", "Salle Pong introuvable.");
+    }
+
+    const room = roomSnap.data() || {};
+    if (!isFriendPongRoom(room)) {
+      throw new HttpsError("failed-precondition", "Cette salle Pong n'est pas disponible.");
+    }
+    if (getBlockedRejoinSet(room).has(uid)) {
+      throw new HttpsError("permission-denied", "Tu ne peux plus rejoindre cette salle Pong.");
+    }
+
+    const nowMs = Date.now();
+    const roomStatus = String(room.status || "").trim().toLowerCase();
+    const waitingDeadlineMs = resolveFriendRoomDeadlineMs(room, nowMs);
+    const roomStakeDoes = safeInt(room.entryCostDoes || room.stakeDoes);
+    const roomRewardAmountDoes = safeInt(room.rewardAmountDoes || Math.floor((roomStakeDoes * PONG_ODDS_NUMERATOR) / PONG_ODDS_DENOMINATOR));
+    const roomInviteCode = String(room.inviteCode || inviteCodeNormalized).trim();
+    const playerUids = Array.from({ length: 2 }, (_, idx) => String((room.playerUids || [])[idx] || ""));
+    const humans = playerUids.filter(Boolean).length;
+
+    if (roomStatus === "closed") {
+      throw new HttpsError("failed-precondition", "Cette salle Pong n'est plus disponible.");
+    }
+
+    if (roomStatus === "waiting" && waitingDeadlineMs > 0 && humans < 2 && nowMs >= waitingDeadlineMs) {
+      tx.set(roomRefDoc, {
+        status: "closed",
+        endedReason: "expired",
+        endedAt: admin.firestore.FieldValue.serverTimestamp(),
+        endedAtMs: nowMs,
+        waitingDeadlineMs: admin.firestore.FieldValue.delete(),
+        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+        updatedAtMs: nowMs,
+      }, { merge: true });
+      return { ok: false, expired: true, roomId: roomRefDoc.id };
+    }
+
+    if (playerUids.includes(uid)) {
+      const nextPresence = room.roomPresenceMs && typeof room.roomPresenceMs === "object"
+        ? { ...room.roomPresenceMs }
+        : {};
+      nextPresence[uid] = nowMs;
+      tx.set(roomRefDoc, {
+        roomPresenceMs: nextPresence,
+        waitingDeadlineMs,
+        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+        updatedAtMs: nowMs,
+      }, { merge: true });
+      return {
+        ok: true,
+        resumed: true,
+        roomId: roomRefDoc.id,
+        seatIndex: getSeatForUser(room, uid),
+        status: roomStatus,
+        roomMode: "pong_friends",
+        stakeDoes: roomStakeDoes,
+        rewardAmountDoes: roomRewardAmountDoes,
+        inviteCode: roomInviteCode,
+        humanCount: humans,
+        requiredHumans: 2,
+        waitingDeadlineMs,
+      };
+    }
+
+    if (roomStatus !== "waiting" && roomStatus !== "ready") {
+      throw new HttpsError("failed-precondition", "Cette salle Pong n'est plus disponible.");
+    }
+
+    const currentSeats = room.seats && typeof room.seats === "object" ? room.seats : {};
+    const usedSeats = new Set(
+      Object.values(currentSeats)
+        .map((seat) => Number(seat))
+        .filter((seat) => Number.isFinite(seat) && seat >= 0 && seat < 2)
+    );
+    const seatIndex = [0, 1].find((seat) => !usedSeats.has(seat));
+    if (typeof seatIndex !== "number" || humans >= 2) {
+      throw new HttpsError("failed-precondition", "Cette salle Pong est complete.");
+    }
+
+    const nextPlayerUids = playerUids.slice();
+    nextPlayerUids[seatIndex] = uid;
+    const currentNames = Array.from({ length: 2 }, (_, idx) => String((room.playerNames || [])[idx] || ""));
+    const nextPlayerNames = currentNames.slice();
+    nextPlayerNames[seatIndex] = sanitizePlayerLabel(email || uid, seatIndex);
+    const nextSeats = { ...currentSeats, [uid]: seatIndex };
+    const nextPresence = room.roomPresenceMs && typeof room.roomPresenceMs === "object"
+      ? { ...room.roomPresenceMs }
+      : {};
+    nextPresence[uid] = nowMs;
+    const nextHumans = nextPlayerUids.filter(Boolean).length;
+    const nextStatus = nextHumans >= 2 ? "ready" : "waiting";
+    const nextStartedAtMs = nextHumans >= 2 ? nowMs : safeSignedInt(room.startedAtMs);
+
+    tx.set(roomRefDoc, {
+      playerUids: nextPlayerUids,
+      playerNames: nextPlayerNames,
+      seats: nextSeats,
+      roomPresenceMs: nextPresence,
+      humanCount: nextHumans,
+      botCount: 0,
+      status: nextStatus,
+      waitingDeadlineMs,
+      startedAt: nextHumans >= 2 ? admin.firestore.FieldValue.serverTimestamp() : (room.startedAt || null),
+      startedAtMs: nextStartedAtMs > 0 ? nextStartedAtMs : 0,
+      updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      updatedAtMs: nowMs,
+    }, { merge: true });
+
+    return {
+      ok: true,
+      resumed: false,
+      roomId: roomRefDoc.id,
+      seatIndex,
+      status: nextStatus,
+      roomMode: "pong_friends",
+      stakeDoes: roomStakeDoes,
+      rewardAmountDoes: roomRewardAmountDoes,
+      inviteCode: roomInviteCode,
+      humanCount: nextHumans,
+      requiredHumans: 2,
+      waitingDeadlineMs,
+    };
+  });
+
+  return result;
+}, { invoker: "public" });
+
+exports.resumeFriendPongRoom = publicOnCall("resumeFriendPongRoom", async (request) => {
+  const { uid } = assertAuth(request);
+  const payload = request.data && typeof request.data === "object" ? request.data : {};
+  const roomId = String(payload.roomId || "").trim();
+  if (!roomId) {
+    throw new HttpsError("invalid-argument", "roomId requis.");
+  }
+
+  const roomSnap = await pongFriendRoomRef(roomId).get();
+  if (!roomSnap.exists) {
+    throw new HttpsError("not-found", "Salle Pong introuvable.");
+  }
+
+  const room = roomSnap.data() || {};
+  if (!isFriendPongRoom(room)) {
+    throw new HttpsError("failed-precondition", "Cette salle Pong n'est pas une salle privee valide.");
+  }
+  if (getBlockedRejoinSet(room).has(uid)) {
+    throw new HttpsError("permission-denied", "Tu ne peux plus rejoindre cette salle Pong.");
+  }
+
+  const seatIndex = getSeatForUser(room, uid);
+  if (seatIndex < 0) {
+    throw new HttpsError("permission-denied", "Tu ne fais pas partie de cette salle Pong.");
+  }
+
+  const nowMs = Date.now();
+  const status = String(room.status || "").trim().toLowerCase();
+  const waitingDeadlineMs = resolveFriendRoomDeadlineMs(room, nowMs);
+
+  await pongFriendRoomRef(roomId).set({
+    roomPresenceMs: {
+      ...(room.roomPresenceMs && typeof room.roomPresenceMs === "object" ? room.roomPresenceMs : {}),
+      [uid]: nowMs,
+    },
+    updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+    updatedAtMs: nowMs,
+  }, { merge: true });
+
+  return {
+    ok: true,
+    roomId,
+    seatIndex,
+    status,
+    roomMode: "pong_friends",
+    stakeDoes: safeInt(room.entryCostDoes || room.stakeDoes),
+    rewardAmountDoes: safeInt(room.rewardAmountDoes || Math.floor((safeInt(room.entryCostDoes || room.stakeDoes) * PONG_ODDS_NUMERATOR) / PONG_ODDS_DENOMINATOR)),
+    inviteCode: String(room.inviteCode || "").trim(),
+    humanCount: Array.isArray(room.playerUids)
+      ? room.playerUids.map((entry) => String(entry || "").trim()).filter(Boolean).length
+      : 0,
+    requiredHumans: 2,
+    playerNames: Array.isArray(room.playerNames)
+      ? room.playerNames.map((entry) => sanitizeText(entry || "", 120))
+      : [],
+    waitingDeadlineMs,
+  };
+}, { invoker: "public" });
+
+exports.leaveFriendPongRoom = publicOnCall("leaveFriendPongRoom", async (request) => {
+  const { uid } = assertAuth(request);
+  const payload = request.data && typeof request.data === "object" ? request.data : {};
+  const roomId = String(payload.roomId || "").trim();
+  if (!roomId) {
+    throw new HttpsError("invalid-argument", "roomId requis.");
+  }
+
+  const roomRefDoc = pongFriendRoomRef(roomId);
+  const result = await db.runTransaction(async (tx) => {
+    const roomSnap = await tx.get(roomRefDoc);
+    if (!roomSnap.exists) {
+      return { ok: true, alreadyClosed: true };
+    }
+
+    const room = roomSnap.data() || {};
+    if (!isFriendPongRoom(room)) {
+      throw new HttpsError("failed-precondition", "Cette salle Pong n'est pas une salle privee valide.");
+    }
+
+    const seatIndex = getSeatForUser(room, uid);
+    if (seatIndex < 0) {
+      throw new HttpsError("permission-denied", "Tu ne fais pas partie de cette salle Pong.");
+    }
+
+    const nowMs = Date.now();
+    const blocked = getBlockedRejoinSet(room);
+    blocked.add(uid);
+
+    tx.set(roomRefDoc, {
+      status: "closed",
+      endedReason: "player_left",
+      endedAt: admin.firestore.FieldValue.serverTimestamp(),
+      endedAtMs: nowMs,
+      blockedRejoinUids: Array.from(blocked),
+      updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      updatedAtMs: nowMs,
+    }, { merge: true });
+
+    return { ok: true, roomId, closed: true };
+  });
+
+  return result;
+}, { invoker: "public" });
+
 exports.recordPongMatchResultSecure = publicOnCall("recordPongMatchResultSecure", async (request) => {
   const { uid, email } = assertAuth(request);
   const payload = request.data && typeof request.data === "object" ? request.data : {};
@@ -22085,6 +23819,51 @@ exports.recordPongMatchResultSecure = publicOnCall("recordPongMatchResultSecure"
     ...result,
     winner,
     aiProfile,
+    matchId,
+  };
+});
+
+exports.recordDameMatchResultSecure = publicOnCall("recordDameMatchResultSecure", async (request) => {
+  const { uid } = assertAuth(request);
+  const payload = request.data && typeof request.data === "object" ? request.data : {};
+
+  const matchId = sanitizeText(payload.matchId || "", 120) || `dame_${uid}_${Date.now()}`;
+  const resultDocId = `${uid}_${matchId}`;
+  const winnerSeat = clamp(safeSignedInt(payload.winnerSeat, -1), -1, 1);
+  const winnerTypeRaw = String(payload.winnerType || "").trim().toLowerCase();
+  const winnerType = winnerTypeRaw === "bot" ? "bot" : "human";
+  const stakeDoes = safeInt(payload.stakeDoes);
+  const startedAtMs = safeSignedInt(payload.startedAtMs, 0);
+  const endedAtMs = safeSignedInt(payload.endedAtMs, Date.now()) || Date.now();
+  const endedReason = sanitizeText(payload.endedReason || "match_end", 80);
+  const roomMode = sanitizeText(payload.roomMode || "dame_local", 40) || "dame_local";
+  const roomId = sanitizeText(payload.roomId || "", 120);
+
+  await db.collection(DAME_ROOM_RESULTS_COLLECTION).doc(resultDocId).set({
+    id: resultDocId,
+    matchId,
+    roomId,
+    uid,
+    status: "ended",
+    roomMode,
+    winnerType,
+    winnerSeat,
+    humanCount: 2,
+    botCount: winnerType === "bot" ? 1 : 0,
+    stakeDoes,
+    entryCostDoes: stakeDoes,
+    startedAtMs,
+    endedAtMs,
+    endedReason,
+    archiveVersion: 1,
+    archivedAtMs: Date.now(),
+    updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+    createdAt: admin.firestore.FieldValue.serverTimestamp(),
+  }, { merge: true });
+
+  return {
+    ok: true,
+    resultDocId,
     matchId,
   };
 });
