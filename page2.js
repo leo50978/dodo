@@ -1723,17 +1723,6 @@ export function renderPage2(user, options = {}) {
         <p class="mt-2 text-sm leading-6 text-white/82 sm:text-[15px]">
           Quand tu cliques sur <span class="font-semibold text-white">Championnat Mopyon</span>, tu ouvres le championnat officiel avec la progression, le classement et l'accès à ton match.
         </p>
-        <div class="mt-4 space-y-3 rounded-[24px] border border-white/12 bg-white/8 p-4 shadow-[inset_4px_4px_10px_rgba(20,28,45,0.28),inset_-4px_-4px_10px_rgba(123,137,180,0.08)]">
-          <p class="text-sm leading-6 text-white/88">
-            Pour gagner, tu dois finir <span class="font-semibold text-white">premier</span> avec le plus de victoires.
-          </p>
-          <p class="text-sm leading-6 text-white/88">
-            Si tu gagnes, <span class="font-semibold text-white">10 000 Does</span> seront ajoutés à ton compte et tu pourras les retirer quand tu veux.
-          </p>
-          <p class="text-sm leading-6 text-white/88">
-            Pour protéger les joueurs, les usernames sont cachés et seul leur <span class="font-semibold text-white">ID</span> est affiché. C’est valable pour toi aussi, mais tu verras toujours ta place dans le classement.
-          </p>
-        </div>
         <div class="mt-4 rounded-[24px] border border-[#ffb26e]/22 bg-[#F57C00]/10 p-4">
           <p class="text-sm leading-6 text-white/90">
             Le championnat reste en <span class="font-semibold text-white">élimination directe</span> et les premiers tours sont saisis manuellement par le staff avant la progression normale du bracket.
