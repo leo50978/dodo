@@ -227,7 +227,7 @@ async function loadContactChannel() {
     dom.contactLink.setAttribute("aria-disabled", hasNumber ? "false" : "true");
     dom.contactLink.style.pointerEvents = hasNumber ? "" : "none";
     dom.contactLink.style.opacity = hasNumber ? "" : "0.5";
-    dom.contactLink.textContent = hasNumber ? "Ouvrir WhatsApp" : "Numéro indisponible";
+    dom.contactLink.textContent = hasNumber ? "Contacter un agent" : "Numéro indisponible";
   }
 }
 
