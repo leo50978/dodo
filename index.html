@@ -418,6 +418,10 @@
         box-shadow: 8px 8px 18px rgba(163, 82, 27, 0.4), -6px -6px 14px rgba(255, 175, 102, 0.14);
       }
 
+      .welcome-modal__btn--agent {
+        background: linear-gradient(135deg, rgba(245, 124, 0, 0.96), rgba(255, 180, 102, 0.72));
+      }
+
       .welcome-modal__ghost {
         display: inline-flex;
         min-height: 44px;
@@ -524,9 +528,17 @@
         <div id="welcomeDepositBody"></div>
         <div class="welcome-modal__cta">
           <a
+            id="welcomeDepositAgent"
+            class="welcome-modal__btn welcome-modal__btn--agent hidden"
+            href="https://wa.me/50941752992?text=Bonjour%2C%20je%20veux%20m'inscrire%20au%20championnat%20Mopyon."
+            target="_blank"
+            rel="noopener"
+          >
+          </a>
+          <a
             id="welcomeDepositPrimary"
             class="welcome-modal__btn hidden"
-            href="https://wa.me/50941752992"
+            href="https://chat.whatsapp.com/I8VfW1Tdv6nF1d7ZkMfOg0"
             target="_blank"
             rel="noopener"
           >
@@ -546,6 +558,7 @@
         const badgeEl = document.getElementById("welcomeDepositBadge");
         const titleEl = document.getElementById("welcomeDepositTitle");
         const bodyEl = document.getElementById("welcomeDepositBody");
+        const agentBtn = document.getElementById("welcomeDepositAgent");
         const primaryBtn = document.getElementById("welcomeDepositPrimary");
         const secondaryBtn = document.getElementById("welcomeDepositSecondary");
 
@@ -557,11 +570,15 @@
               "Si tu veux t'inscrire au championnat Mopyon, contacte un agent. L'inscription coûte 150 gourdes.",
               "Le vainqueur remportera 5000 gourdes, le 2e 2000 gourdes et le 3e 1000 gourdes.",
             ],
+            agent: {
+              label: "Contacter un agent",
+              href: "https://wa.me/50941752992?text=Bonjour%2C%20je%20veux%20m'inscrire%20au%20championnat%20Mopyon.",
+            },
             primary: {
               label: "Intègre le groupe WhatsApp",
               href: "https://chat.whatsapp.com/I8VfW1Tdv6nF1d7ZkMfOg0",
             },
-            secondaryLabel: "Contacter un agent",
+            secondaryLabel: "Suivant",
           },
           {
             badge: "Parrainage",
@@ -605,6 +622,16 @@
             paragraph.textContent = text;
             bodyEl.appendChild(paragraph);
           });
+
+          if (agentBtn && step.agent?.label && step.agent?.href) {
+            agentBtn.textContent = step.agent.label;
+            agentBtn.href = step.agent.href;
+            agentBtn.classList.remove("hidden");
+          } else if (agentBtn) {
+            agentBtn.textContent = "";
+            agentBtn.removeAttribute("href");
+            agentBtn.classList.add("hidden");
+          }
 
           if (primaryBtn && step.primary?.label && step.primary?.href) {
             primaryBtn.textContent = step.primary.label;
