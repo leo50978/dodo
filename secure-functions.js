@@ -212,10 +212,6 @@ export async function createFriendMorpionRoomSecure(payload = {}) {
   return invokeCallable("createFriendMorpionRoom", payload, "Impossible de creer une salle morpion entre amis.");
 }
 
-export async function createFriendDameRoomSecure(payload = {}) {
-  return invokeCallable("createFriendDameRoom", payload, "Impossible de creer une salle dame entre amis.");
-}
-
 export async function createMorpionBotTestRoomSecure(payload = {}) {
   return invokeCallable("createMorpionBotTestRoom", payload, "Impossible de creer la salle de test morpion.");
 }
