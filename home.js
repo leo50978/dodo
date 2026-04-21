@@ -11,6 +11,7 @@ let homeAuthBootstrapTimer = null;
 let homeInitialAuthResolved = false;
 let homeRenderToken = 0;
 let page2ModulePromise = null;
+let page2ModuleRetryPromise = null;
 let pwaSupportModulePromise = null;
 const HOME_AUTH_BOOTSTRAP_TIMEOUT_MS = 900;
 const HOME_AUTH_SUCCESS_TIMEOUT_MS = 2600;
@@ -192,9 +193,33 @@ async function ensurePage2Module() {
       url: PAGE2_BOOTSTRAP_MODULE_URL,
       version: HOME_DEBUG_VERSION,
     });
-    page2ModulePromise = import(PAGE2_BOOTSTRAP_MODULE_URL);
+    page2ModulePromise = import(PAGE2_BOOTSTRAP_MODULE_URL).catch((error) => {
+      page2ModulePromise = null;
+      throw error;
+    });
   }
   return page2ModulePromise;
+}
+
+async function ensurePage2ModuleWithRetry() {
+  try {
+    return await ensurePage2Module();
+  } catch (error) {
+    if (!page2ModuleRetryPromise) {
+      const retryUrl = `${PAGE2_BOOTSTRAP_MODULE_URL}${PAGE2_BOOTSTRAP_MODULE_URL.includes("?") ? "&" : "?"}cb=${Date.now()}`;
+      console.warn("[DLK_BOOTSTRAP][HOME] page2:import:retry", {
+        version: HOME_DEBUG_VERSION,
+        retryUrl,
+        message: String(error?.message || ""),
+      });
+      page2ModuleRetryPromise = import(retryUrl).catch((retryError) => {
+        page2ModuleRetryPromise = null;
+        page2ModulePromise = null;
+        throw retryError;
+      });
+    }
+    return page2ModuleRetryPromise;
+  }
 }
 
 function warmPage2ModuleSoon() {
@@ -254,7 +279,7 @@ async function renderHomeFromAuth(user, options = {}) {
   const renderToken = ++homeRenderToken;
   homeDebug("renderHomeFromAuth:loadPage2", { uid, optimistic, renderToken, page2ModuleUrl: PAGE2_BOOTSTRAP_MODULE_URL });
   try {
-    const { renderPage2 } = await ensurePage2Module();
+    const { renderPage2 } = await ensurePage2ModuleWithRetry();
     if (renderToken !== homeRenderToken) {
       homeDebug("renderHomeFromAuth:staleRenderAbort", { uid, optimistic, renderToken });
       return;
