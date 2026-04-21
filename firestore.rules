@@ -127,6 +127,11 @@ service cloud.firestore {
       allow delete: if isFinanceAdmin();
     }
 
+    match /championnats/mopyon_current {
+      allow read: if true;
+      allow write: if isFinanceAdmin();
+    }
+
     match /clients/{uid}/orders/{orderId} {
       allow read: if isOwner(uid) || isFinanceAdmin();
       allow write: if isFinanceAdmin();

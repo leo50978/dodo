@@ -1,0 +1,199 @@
+<!doctype html>
+<html lang="fr">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <script src="./runtime-config.js"></script>
+    <link rel="icon" type="image/png" href="./favicon-96x96.png" sizes="96x96" />
+    <link rel="icon" type="image/svg+xml" href="./favicon.svg" />
+    <link rel="shortcut icon" href="./favicon.ico" />
+    <link rel="apple-touch-icon" sizes="180x180" href="./apple-touch-icon.png" />
+    <link rel="manifest" href="./site.webmanifest" />
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'self'; script-src 'self' 'unsafe-inline' https://www.gstatic.com https://www.google.com https://www.recaptcha.net; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com https://cdnjs.cloudflare.com https://www.gstatic.com; font-src 'self' https://fonts.gstatic.com https://cdnjs.cloudflare.com data:; img-src 'self' data: https: blob:; connect-src 'self' data: blob: https://*.googleapis.com https://firestore.googleapis.com https://identitytoolkit.googleapis.com https://securetoken.googleapis.com https://firebaseinstallations.googleapis.com https://content-firebaseappcheck.googleapis.com https://www.gstatic.com https://www.google.com https://www.recaptcha.net https://us-central1-does-2c234.cloudfunctions.net https://*.cloudfunctions.net https://firebasestorage.googleapis.com https://storage.googleapis.com; frame-src https://www.google.com https://www.gstatic.com https://www.recaptcha.net; object-src 'none'; base-uri 'self'; form-action 'self'; upgrade-insecure-requests; block-all-mixed-content;"
+    />
+    <title>Salle du championnat Mopyon</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;700;800&family=Sora:wght@400;600;700;800&display=swap" rel="stylesheet" />
+    <style>
+      :root {
+        --bg-0: #050816;
+        --bg-1: #0a1024;
+        --bg-2: #121a33;
+        --panel: rgba(13, 22, 44, 0.72);
+        --line: rgba(163, 184, 255, 0.16);
+        --text: #edf2ff;
+        --muted: #95a4cb;
+        --accent: #68d7ff;
+        --good: #4be7b8;
+        --warn: #ffbf69;
+      }
+      * { box-sizing: border-box; }
+      html, body {
+        margin: 0;
+        min-height: 100%;
+        font-family: "Space Grotesk", sans-serif;
+        color: var(--text);
+        background:
+          radial-gradient(circle at top right, rgba(124, 92, 255, 0.14), transparent 28%),
+          radial-gradient(circle at 15% 20%, rgba(104, 215, 255, 0.12), transparent 32%),
+          radial-gradient(circle at bottom left, rgba(255, 156, 95, 0.12), transparent 30%),
+          linear-gradient(160deg, var(--bg-0) 0%, var(--bg-1) 46%, var(--bg-2) 100%);
+      }
+      .page { min-height: 100vh; padding: 20px; }
+      .shell { width: min(1100px, 100%); margin: 0 auto; }
+      .card {
+        border: 1px solid var(--line);
+        background: var(--panel);
+        border-radius: 28px;
+        padding: 22px;
+        backdrop-filter: blur(20px);
+        -webkit-backdrop-filter: blur(20px);
+        box-shadow: 0 24px 60px rgba(2, 7, 22, 0.45);
+      }
+      h1 {
+        margin: 10px 0 0;
+        font-family: "Sora", sans-serif;
+        font-size: clamp(2rem, 4vw, 3.4rem);
+        line-height: 1;
+      }
+      p {
+        color: var(--muted);
+        line-height: 1.7;
+      }
+      .eyebrow {
+        margin: 0;
+        font-size: 0.74rem;
+        letter-spacing: 0.22em;
+        text-transform: uppercase;
+        color: var(--accent);
+        font-weight: 800;
+      }
+      .toolbar {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 10px;
+        margin-top: 18px;
+      }
+      .btn, a.btn {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        border: 1px solid var(--line);
+        border-radius: 16px;
+        padding: 12px 16px;
+        color: var(--text);
+        background: rgba(255,255,255,0.04);
+        text-decoration: none;
+        font: inherit;
+        font-weight: 800;
+      }
+      .btn.primary {
+        background: linear-gradient(135deg, rgba(104, 215, 255, 0.22), rgba(124, 92, 255, 0.22));
+      }
+      .grid {
+        display: grid;
+        gap: 18px;
+        margin-top: 18px;
+      }
+      .metric {
+        border: 1px solid var(--line);
+        background: rgba(255,255,255,0.03);
+        border-radius: 22px;
+        padding: 16px;
+      }
+      .metric label {
+        display: block;
+        color: var(--muted);
+        font-size: 0.72rem;
+        letter-spacing: 0.14em;
+        text-transform: uppercase;
+        font-weight: 800;
+      }
+      .metric strong {
+        display: block;
+        margin-top: 8px;
+        font-size: 1.4rem;
+      }
+      @media (min-width: 860px) {
+        .grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+      }
+    </style>
+  </head>
+  <body>
+    <main class="page">
+      <div class="shell">
+        <section class="card">
+          <p class="eyebrow">Salle du championnat</p>
+          <h1>En attente de ton adversaire</h1>
+          <p id="roomCopy">
+            Cette salle reste légère: elle affiche seulement les informations utiles pour le joueur concerné.
+          </p>
+          <div class="toolbar">
+            <a class="btn primary" href="./championnat.html">Retour championnat</a>
+            <a class="btn" href="./index.html">Retour accueil</a>
+          </div>
+        </section>
+
+        <section class="grid">
+          <article class="metric">
+            <label>Room</label>
+            <strong id="roomId">-</strong>
+          </article>
+          <article class="metric">
+            <label>Statut</label>
+            <strong id="roomStatus">En attente</strong>
+          </article>
+          <article class="metric">
+            <label>Prochaine action</label>
+            <strong id="roomAction">Attendre l’adversaire</strong>
+          </article>
+        </section>
+      </div>
+    </main>
+    <script type="module">
+      const LOCAL_STORAGE_KEY = "championnat_mopyon_snapshot_v1";
+      const roomIdNode = document.getElementById("roomId");
+      const roomStatusNode = document.getElementById("roomStatus");
+      const roomActionNode = document.getElementById("roomAction");
+      const roomCopy = document.getElementById("roomCopy");
+      const params = new URLSearchParams(window.location.search);
+      const roomId = params.get("room") || window.location.hash.replace(/^#/, "") || "room-inconnue";
+
+      function readSnapshot() {
+        try {
+          const raw = window.localStorage.getItem(LOCAL_STORAGE_KEY);
+          return raw ? JSON.parse(raw) : null;
+        } catch (_) {
+          return null;
+        }
+      }
+
+      function render() {
+        const snapshot = readSnapshot();
+        const matches = Array.isArray(snapshot?.matches) ? snapshot.matches : [];
+        const liveMatch = snapshot?.liveMatch || matches.find((item) => String(item.roomId || item.room || "") === String(roomId)) || null;
+        if (roomIdNode) roomIdNode.textContent = roomId;
+        if (roomCopy) {
+          roomCopy.textContent = liveMatch
+            ? `Tu es dans la salle ${roomId}. ${liveMatch.playerAName || liveMatch.playerA || "Joueur A"} vs ${liveMatch.playerBName || liveMatch.playerB || "Joueur B"} est le match associé.`
+            : `Tu es dans la salle ${roomId}. Garde cette page ouverte jusqu’au lancement du match.`;
+        }
+        if (roomStatusNode) roomStatusNode.textContent = liveMatch ? "Match associé chargé" : "Salle ouverte";
+        if (roomActionNode) {
+          roomActionNode.textContent = liveMatch
+            ? `Score actuel ${Number(liveMatch.scoreA || 0)} - ${Number(liveMatch.scoreB || 0)}`
+            : "Le staff peut lancer la partie";
+        }
+      }
+
+      window.addEventListener("storage", (event) => {
+        if (event.key === LOCAL_STORAGE_KEY) render();
+      });
+
+      render();
+    </script>
+  </body>
+</html>

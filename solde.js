@@ -10,6 +10,11 @@ import {
   onAuthStateChanged,
 } from "./firebase-init.js";
 import { cancelWithdrawalSecure, getDepositFundingStatusSecure, orderClientActionSecure } from "./secure-functions.js";
+import {
+  buildWhatsappUrlForKey,
+  getWhatsappContactLabel,
+  refreshWhatsappModalContacts,
+} from "./whatsapp-modal-config.js";
 const BALANCE_DEBUG = false;
 const WELCOME_FLOW_DEBUG = false;
 const SOLDE_BUILD_TAG = "welcome-bonus-debug-2026-03-21-v2";
@@ -32,6 +37,7 @@ let soldeVisibilityBound = false;
 let ordersLoadToken = 0;
 let withdrawalsLoadToken = 0;
 const SOLDE_REFRESH_MS = 3 * 60 * 1000;
+void refreshWhatsappModalContacts().catch(() => {});
 let balanceHydrationSession = {
   uid: "",
   ordersReady: false,
@@ -189,10 +195,10 @@ function markRejectedOrderAlertSeen(uid = "", orderId = "") {
 }
 
 function openRejectedOrderSupport() {
-  const text = encodeURIComponent(
+  const text = (
     "Bonjour assistance, ma demande de depot a ete rejetee et je souhaite contester cette decision."
   );
-  const url = `https://wa.me/${REJECTED_ORDER_SUPPORT_PHONE}?text=${text}`;
+  const url = buildWhatsappUrlForKey("rejected_order", text, REJECTED_ORDER_SUPPORT_PHONE);
   const popup = window.open(url, "_blank", "noopener,noreferrer");
   if (!popup) {
     window.location.href = url;
@@ -204,6 +210,7 @@ function ensureLargeDepositAgentModal() {
   if (existing) return existing;
 
   const overlay = document.createElement("div");
+  const agentLabel = getWhatsappContactLabel("agent_deposit", AGENT_DEPOSIT_SUPPORT_PHONE) || `+${AGENT_DEPOSIT_SUPPORT_PHONE}`;
   overlay.id = "largeDepositAgentModalOverlay";
   overlay.className = "fixed inset-0 z-[3200] hidden items-end justify-center bg-[#12050b]/78 px-[max(12px,env(safe-area-inset-left))] pb-[max(12px,env(safe-area-inset-bottom))] pt-[max(12px,env(safe-area-inset-top))] backdrop-blur-md sm:items-center sm:px-4 sm:py-4";
   overlay.innerHTML = `
@@ -226,7 +233,7 @@ function ensureLargeDepositAgentModal() {
           Pour ce montant, veuillez contacter un agent pour faire votre depot. Votre demande sera traitee directement avec assistance.
         </p>
         <div class="mt-4 rounded-2xl border border-white/10 bg-black/10 px-4 py-3 text-sm font-semibold text-[#ffe0bb]">
-          Agent WhatsApp: +${AGENT_DEPOSIT_SUPPORT_PHONE}
+          Agent WhatsApp: ${agentLabel}
         </div>
       </div>
 
@@ -270,8 +277,8 @@ function ensureLargeDepositAgentModal() {
   if (closeBtn) closeBtn.addEventListener("click", close);
   if (contactBtn) {
     contactBtn.addEventListener("click", () => {
-      const text = encodeURIComponent("Bonjour agent, je veux faire un depot superieur a 500 GDes.");
-      const url = `https://wa.me/${AGENT_DEPOSIT_SUPPORT_PHONE}?text=${text}`;
+      const text = "Bonjour agent, je veux faire un depot superieur a 500 GDes.";
+      const url = buildWhatsappUrlForKey("agent_deposit", text, AGENT_DEPOSIT_SUPPORT_PHONE);
       const popup = window.open(url, "_blank", "noopener,noreferrer");
       if (!popup) {
         window.location.href = url;
@@ -432,8 +439,8 @@ function ensureDepositInfoModal() {
   if (hideBtn) hideBtn.addEventListener("click", handleHideForever);
   if (contactAgentBtn) {
     contactAgentBtn.addEventListener("click", () => {
-      const text = encodeURIComponent("Bonjou agent, mwen bezwen fe yon depo kounya tanpri.");
-      const url = `https://wa.me/${AGENT_DEPOSIT_SUPPORT_PHONE}?text=${text}`;
+      const text = "Bonjou agent, mwen bezwen fe yon depo kounya tanpri.";
+      const url = buildWhatsappUrlForKey("agent_deposit", text, AGENT_DEPOSIT_SUPPORT_PHONE);
       const popup = window.open(url, "_blank", "noopener,noreferrer");
       if (!popup) {
         window.location.href = url;

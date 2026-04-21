@@ -1,0 +1,297 @@
+<!doctype html>
+<html lang="fr">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <script src="./runtime-config.js"></script>
+    <link rel="icon" type="image/png" href="./favicon-96x96.png" sizes="96x96" />
+    <link rel="icon" type="image/svg+xml" href="./favicon.svg" />
+    <link rel="shortcut icon" href="./favicon.ico" />
+    <link rel="apple-touch-icon" sizes="180x180" href="./apple-touch-icon.png" />
+    <link rel="manifest" href="./site.webmanifest" />
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'self'; script-src 'self' 'unsafe-inline' https://www.gstatic.com https://www.google.com https://apis.google.com https://www.recaptcha.net; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com https://cdnjs.cloudflare.com https://www.gstatic.com; font-src 'self' https://fonts.gstatic.com https://cdnjs.cloudflare.com data:; img-src 'self' data: https: blob:; connect-src 'self' data: blob: https://*.googleapis.com https://firestore.googleapis.com https://identitytoolkit.googleapis.com https://securetoken.googleapis.com https://firebaseinstallations.googleapis.com https://content-firebaseappcheck.googleapis.com https://www.gstatic.com https://www.google.com https://www.recaptcha.net https://us-central1-does-2c234.cloudfunctions.net https://*.cloudfunctions.net https://firebasestorage.googleapis.com https://storage.googleapis.com; frame-src https://www.google.com https://www.gstatic.com https://www.recaptcha.net https://does-2c234.firebaseapp.com https://does-2c234.web.app https://accounts.google.com; object-src 'none'; base-uri 'self'; form-action 'self'; upgrade-insecure-requests; block-all-mixed-content;"
+    />
+    <title>Championnat Mopyon · Dashboard</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;700;800&family=Sora:wght@400;600;700;800&display=swap" rel="stylesheet" />
+    <style>
+      :root {
+        --bg-0: #050816;
+        --bg-1: #0a1024;
+        --bg-2: #121a33;
+        --panel: rgba(13, 22, 44, 0.76);
+        --line: rgba(163, 184, 255, 0.16);
+        --line-strong: rgba(163, 184, 255, 0.28);
+        --text: #edf2ff;
+        --muted: #95a4cb;
+        --accent: #68d7ff;
+        --accent-2: #7c5cff;
+        --good: #4be7b8;
+        --bad: #ff7d8d;
+        --warn: #ffbf69;
+        --shadow-hard: 16px 16px 40px rgba(2, 7, 22, 0.78);
+        --shadow-soft: -12px -12px 28px rgba(49, 67, 122, 0.14);
+      }
+
+      * { box-sizing: border-box; }
+
+      html, body {
+        margin: 0;
+        min-height: 100%;
+        font-family: "Space Grotesk", sans-serif;
+        color: var(--text);
+        background:
+          radial-gradient(circle at top right, rgba(124, 92, 255, 0.14), transparent 28%),
+          radial-gradient(circle at 15% 20%, rgba(104, 215, 255, 0.12), transparent 32%),
+          radial-gradient(circle at bottom left, rgba(255, 156, 95, 0.12), transparent 30%),
+          linear-gradient(160deg, var(--bg-0) 0%, var(--bg-1) 46%, var(--bg-2) 100%);
+      }
+
+      .page {
+        min-height: 100vh;
+        padding: 20px;
+        display: grid;
+        place-items: center;
+      }
+
+      .shell {
+        width: min(980px, 100%);
+      }
+
+      .card {
+        border: 1px solid var(--line);
+        border-radius: 30px;
+        background: var(--panel);
+        box-shadow: var(--shadow-hard), var(--shadow-soft);
+        backdrop-filter: blur(20px);
+        -webkit-backdrop-filter: blur(20px);
+        padding: 22px;
+      }
+
+      .topbar {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        gap: 12px;
+        flex-wrap: wrap;
+        margin-bottom: 18px;
+      }
+
+      .back-link,
+      .ghost-btn,
+      .primary-btn {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        border: 1px solid var(--line);
+        border-radius: 16px;
+        padding: 12px 16px;
+        text-decoration: none;
+        font: inherit;
+        font-weight: 800;
+        color: var(--text);
+        background: rgba(255, 255, 255, 0.04);
+        cursor: pointer;
+        transition: transform 140ms ease, border-color 140ms ease, background 140ms ease;
+      }
+
+      .back-link:hover,
+      .ghost-btn:hover,
+      .primary-btn:hover {
+        transform: translateY(-1px);
+        border-color: var(--line-strong);
+        background: rgba(255, 255, 255, 0.06);
+      }
+
+      .primary-btn {
+        background: linear-gradient(135deg, rgba(104, 215, 255, 0.22), rgba(124, 92, 255, 0.22));
+      }
+
+      .title-block {
+        margin: 0 0 18px;
+      }
+
+      .eyebrow {
+        margin: 0;
+        font-size: 0.74rem;
+        letter-spacing: 0.22em;
+        text-transform: uppercase;
+        color: var(--accent);
+        font-weight: 800;
+      }
+
+      h1 {
+        margin: 10px 0 0;
+        font-family: "Sora", sans-serif;
+        font-size: clamp(1.8rem, 3.6vw, 3rem);
+        line-height: 1.05;
+        font-weight: 800;
+      }
+
+      .search-panel {
+        display: grid;
+        gap: 14px;
+      }
+
+      .field {
+        display: grid;
+        gap: 8px;
+      }
+
+      .field label {
+        font-size: 0.78rem;
+        text-transform: uppercase;
+        letter-spacing: 0.14em;
+        color: var(--muted);
+        font-weight: 800;
+      }
+
+      .search-row {
+        display: grid;
+        grid-template-columns: 1fr auto;
+        gap: 12px;
+      }
+
+      .search-row input {
+        width: 100%;
+        border: 1px solid var(--line);
+        border-radius: 16px;
+        background: rgba(7, 14, 31, 0.78);
+        color: var(--text);
+        padding: 14px 16px;
+        font: inherit;
+        outline: none;
+      }
+
+      .search-row input:focus {
+        border-color: var(--line-strong);
+        box-shadow: 0 0 0 3px rgba(104, 215, 255, 0.12);
+      }
+
+      .status {
+        min-height: 1.2rem;
+        color: var(--muted);
+      }
+
+      .status[data-tone="success"] { color: var(--good); }
+      .status[data-tone="error"] { color: var(--bad); }
+      .status[data-tone="warn"] { color: var(--warn); }
+
+      .results {
+        display: grid;
+        gap: 12px;
+      }
+
+      .result-card {
+        border: 1px solid rgba(163, 184, 255, 0.12);
+        border-radius: 18px;
+        padding: 14px;
+        background: rgba(255, 255, 255, 0.03);
+        display: grid;
+        gap: 12px;
+      }
+
+      .row-top {
+        display: flex;
+        justify-content: space-between;
+        gap: 12px;
+        align-items: start;
+      }
+
+      .row-title {
+        margin: 0;
+        font-size: 1rem;
+        font-weight: 800;
+      }
+
+      .row-sub {
+        margin: 6px 0 0;
+        color: var(--muted);
+        line-height: 1.55;
+      }
+
+      .badge {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        border-radius: 999px;
+        padding: 7px 12px;
+        font-size: 0.76rem;
+        font-weight: 800;
+        white-space: nowrap;
+      }
+
+      .badge.good { background: rgba(75, 231, 184, 0.16); color: #bbf7d0; }
+      .badge.warn { background: rgba(255, 191, 105, 0.16); color: #fde68a; }
+      .badge.bad { background: rgba(255, 125, 141, 0.16); color: #fecaca; }
+      .badge.info { background: rgba(104, 215, 255, 0.16); color: #bae6fd; }
+
+      .toolbar {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 10px;
+      }
+
+      .empty {
+        padding: 16px 0 4px;
+        color: var(--muted);
+      }
+
+      @media (max-width: 720px) {
+        .page { padding: 14px; }
+        .card { padding: 18px; border-radius: 24px; }
+        .search-row { grid-template-columns: 1fr; }
+        .topbar { align-items: flex-start; }
+      }
+    </style>
+  </head>
+  <body>
+    <main class="page">
+      <section class="shell">
+        <div class="card">
+          <div class="topbar">
+            <a class="back-link" href="./index.html">Retour dashboard</a>
+          </div>
+
+          <div class="title-block">
+            <p class="eyebrow">Championnat Mopyon</p>
+            <h1>Ajouter un joueur au championnat</h1>
+          </div>
+
+          <div class="search-panel">
+            <div class="field">
+              <label for="championnatSearchInput">Rechercher un utilisateur</label>
+              <div class="search-row">
+                <input
+                  id="championnatSearchInput"
+                  type="text"
+                  placeholder="Nom, pseudo, email, téléphone ou UID"
+                  autocomplete="off"
+                />
+                <button class="primary-btn" id="championnatSearchBtn" type="button">Rechercher</button>
+              </div>
+            </div>
+
+            <div class="status" id="championnatStatus">Cherche un user puis clique sur “Ajouter”.</div>
+
+            <div class="results" id="championnatSearchResults">
+              <div class="empty">Aucun résultat pour le moment.</div>
+            </div>
+
+            <div class="field">
+              <label>Participants du championnat</label>
+              <div class="results" id="championnatParticipantsList">
+                <div class="empty">Aucun participant ajouté pour le moment.</div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <script type="module" src="./Dchampionnat.js?v=championnat-admin-v3"></script>
+  </body>
+</html>

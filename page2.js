@@ -1680,7 +1680,7 @@ export function renderPage2(user, options = {}) {
                 LANCER UNE PARTIE
             </button>
             <button id="tournamentBtn" type="button" class="h-12 w-full rounded-[16px] border border-white/25 bg-white/10 px-8 text-sm font-semibold text-white shadow-[8px_8px_18px_rgba(22,29,45,0.35),-6px_-6px_14px_rgba(118,131,172,0.2)] backdrop-blur-md transition hover:-translate-y-0.5 hover:bg-white/15">
-              Tournois
+              Championnat Mopyon
             </button>
             <button id="sharePromoBtn" type="button" class="flex min-h-[56px] w-full items-center justify-between gap-2 rounded-[16px] border border-white/25 bg-white/10 px-4 py-3 text-left text-white shadow-[8px_8px_18px_rgba(22,29,45,0.35),-6px_-6px_14px_rgba(118,131,172,0.2)] backdrop-blur-md transition hover:-translate-y-0.5 hover:bg-white/15 sm:gap-3 sm:px-5">
               <span class="flex min-w-0 items-center gap-3">
@@ -1719,9 +1719,9 @@ export function renderPage2(user, options = {}) {
         <div class="mx-auto mb-4 flex h-11 w-11 items-center justify-center rounded-2xl border border-[#ffd3aa]/35 bg-[#F57C00]/20 text-[#ffd9b8] shadow-[inset_4px_4px_10px_rgba(20,28,45,0.42),inset_-4px_-4px_10px_rgba(123,137,180,0.18)] sm:mx-0 sm:mb-5 sm:h-12 sm:w-12">
           <i class="fa-solid fa-trophy text-lg"></i>
         </div>
-        <h3 class="text-[1.35rem] font-bold leading-tight sm:text-[1.55rem]">Bienvenue dans les tournois</h3>
+        <h3 class="text-[1.35rem] font-bold leading-tight sm:text-[1.55rem]">Bienvenue dans le championnat Mopyon</h3>
         <p class="mt-2 text-sm leading-6 text-white/82 sm:text-[15px]">
-          Quand tu cliques sur <span class="font-semibold text-white">Tournois</span>, un tournoi se lance automatiquement pour toi. Tous les joueurs qui cliquent dans la même période rejoignent ce tournoi.
+          Quand tu cliques sur <span class="font-semibold text-white">Championnat Mopyon</span>, tu ouvres le championnat officiel avec la progression, le classement et l'accès à ton match.
         </p>
         <div class="mt-4 space-y-3 rounded-[24px] border border-white/12 bg-white/8 p-4 shadow-[inset_4px_4px_10px_rgba(20,28,45,0.28),inset_-4px_-4px_10px_rgba(123,137,180,0.08)]">
           <p class="text-sm leading-6 text-white/88">
@@ -1736,7 +1736,7 @@ export function renderPage2(user, options = {}) {
         </div>
         <div class="mt-4 rounded-[24px] border border-[#ffb26e]/22 bg-[#F57C00]/10 p-4">
           <p class="text-sm leading-6 text-white/90">
-            Chaque tournoi dure <span class="font-semibold text-white">15 minutes</span>. Tu as droit à <span class="font-semibold text-white">3 tournois par jour</span>. Ces règles servent à mieux réguler le volume des tournois vu le nombre de joueurs.
+            Le championnat reste en <span class="font-semibold text-white">élimination directe</span> et les premiers tours sont saisis manuellement par le staff avant la progression normale du bracket.
           </p>
         </div>
         <button id="tournamentIntroContinueBtn" type="button" class="mt-5 h-12 w-full rounded-[18px] border border-[#ffb26e] bg-[#F57C00] text-sm font-semibold text-white shadow-[9px_9px_20px_rgba(155,78,25,0.45),-7px_-7px_16px_rgba(255,173,96,0.2)] transition hover:-translate-y-0.5 sm:mt-6 sm:h-12 sm:text-[15px]">
@@ -4202,8 +4202,8 @@ export function renderPage2(user, options = {}) {
   };
 
   const continueToTournament = () => {
-    showGlobalLoading("Ouverture du tournoi...");
-    window.location.href = "./tournois.html";
+    showGlobalLoading("Ouverture du championnat...");
+    window.location.href = "./championnat.html?v=championnat-mopyon-v2";
   };
 
   let currentStakeOptions = normalizeGameStakeOptions();

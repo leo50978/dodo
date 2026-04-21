@@ -1,4 +1,4 @@
-const CACHE_VERSION = "domino-static-v12";
+const CACHE_VERSION = "domino-static-v15";
 const PAGE_CACHE = `${CACHE_VERSION}-pages`;
 const ASSET_CACHE = `${CACHE_VERSION}-assets`;
 const MEDIA_CACHE = `${CACHE_VERSION}-media`;
@@ -12,6 +12,11 @@ const CORE_PRECACHE = [
   "/recrutement.html",
   "/contrat.html",
   "/morpion.html",
+  "/championnat.html",
+  "/championnat.js",
+  "/championnat-salle.html",
+  "/tournois.html",
+  "/tournois.js",
   "/logiquejeu-morpion.js",
   "/page2.js",
   "/secure-functions.js",

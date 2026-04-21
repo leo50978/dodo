@@ -108,6 +108,22 @@ export async function startPongWagerSecure(payload = {}) {
   return invokeCallable("startPongWagerSecure", payload, "Impossible de demarrer le pari Pong.");
 }
 
+export async function createFriendPongRoomSecure(payload = {}) {
+  return invokeCallable("createFriendPongRoom", payload, "Impossible de creer la salle Pong privee.");
+}
+
+export async function joinFriendPongRoomByCodeSecure(payload = {}) {
+  return invokeCallable("joinFriendPongRoomByCode", payload, "Impossible de rejoindre la salle Pong privee.");
+}
+
+export async function resumeFriendPongRoomSecure(payload = {}) {
+  return invokeCallable("resumeFriendPongRoom", payload, "Impossible de reprendre la salle Pong privee.");
+}
+
+export async function leaveFriendPongRoomSecure(payload = {}) {
+  return invokeCallable("leaveFriendPongRoom", payload, "Impossible de quitter la salle Pong privee.");
+}
+
 export async function createOrderSecure(payload = {}) {
   return invokeCallable("createOrderSecure", payload, "Impossible de créer la commande.");
 }
@@ -188,8 +204,16 @@ export async function joinMatchmakingMorpionSecure(payload = {}) {
   return invokeCallable("joinMatchmakingMorpion", payload, "Impossible de rejoindre une partie de morpion.");
 }
 
+export async function joinMatchmakingDameSecure(payload = {}) {
+  return invokeCallable("joinMatchmakingDame", payload, "Impossible de rejoindre une partie de dame.");
+}
+
 export async function createFriendMorpionRoomSecure(payload = {}) {
   return invokeCallable("createFriendMorpionRoom", payload, "Impossible de creer une salle morpion entre amis.");
+}
+
+export async function createFriendDameRoomSecure(payload = {}) {
+  return invokeCallable("createFriendDameRoom", payload, "Impossible de creer une salle dame entre amis.");
 }
 
 export async function createMorpionBotTestRoomSecure(payload = {}) {
@@ -200,8 +224,16 @@ export async function joinFriendMorpionRoomByCodeSecure(payload = {}) {
   return invokeCallable("joinFriendMorpionRoomByCode", payload, "Impossible de rejoindre la salle morpion entre amis.");
 }
 
+export async function joinFriendDameRoomByCodeSecure(payload = {}) {
+  return invokeCallable("joinFriendDameRoomByCode", payload, "Impossible de rejoindre la salle dame entre amis.");
+}
+
 export async function resumeFriendMorpionRoomSecure(payload = {}) {
   return invokeCallable("resumeFriendMorpionRoom", payload, "Impossible de reprendre la salle morpion privee.");
+}
+
+export async function resumeFriendDameRoomSecure(payload = {}) {
+  return invokeCallable("resumeFriendDameRoom", payload, "Impossible de reprendre la salle dame privee.");
 }
 
 export async function resumeMorpionBotTestRoomSecure(payload = {}) {
@@ -212,36 +244,72 @@ export async function ensureRoomReadyMorpionSecure(payload = {}) {
   return invokeCallable("ensureRoomReadyMorpion", payload, "Impossible de demarrer la partie de morpion.");
 }
 
+export async function ensureRoomReadyDameSecure(payload = {}) {
+  return invokeCallable("ensureRoomReadyDame", payload, "Impossible de demarrer la partie de dame.");
+}
+
 export async function touchRoomPresenceMorpionSecure(payload = {}) {
   return invokeCallable("touchRoomPresenceMorpion", payload, "Impossible de mettre a jour la presence morpion.");
+}
+
+export async function touchRoomPresenceDameSecure(payload = {}) {
+  return invokeCallable("touchRoomPresenceDame", payload, "Impossible de mettre a jour la presence dame.");
 }
 
 export async function ackRoomStartSeenMorpionSecure(payload = {}) {
   return invokeCallable("ackRoomStartSeenMorpion", payload, "Impossible de synchroniser le demarrage du morpion.");
 }
 
+export async function ackRoomStartSeenDameSecure(payload = {}) {
+  return invokeCallable("ackRoomStartSeenMorpion", payload, "Impossible de synchroniser le demarrage de la dame.");
+}
+
 export async function leaveRoomMorpionSecure(payload = {}) {
   return invokeCallable("leaveRoomMorpion", payload, "Impossible de quitter la salle morpion.");
+}
+
+export async function leaveRoomDameSecure(payload = {}) {
+  return invokeCallable("leaveRoomDame", payload, "Impossible de quitter la salle dame.");
 }
 
 export async function submitActionMorpionSecure(payload = {}) {
   return invokeCallable("submitActionMorpion", payload, "Impossible d'envoyer l'action morpion.");
 }
 
+export async function submitActionDameSecure(payload = {}) {
+  return invokeCallable("submitActionDame", payload, "Impossible d'envoyer l'action dame.");
+}
+
 export async function claimWinRewardMorpionSecure(payload = {}) {
   return invokeCallable("claimWinRewardMorpion", payload, "Impossible de valider le gain morpion.");
+}
+
+export async function claimWinRewardDameSecure(payload = {}) {
+  return invokeCallable("claimWinRewardMorpion", payload, "Impossible de valider le gain dame.");
 }
 
 export async function requestFriendMorpionRematchSecure(payload = {}) {
   return invokeCallable("requestFriendMorpionRematch", payload, "Impossible de demander la revanche morpion.");
 }
 
+export async function requestFriendDameRematchSecure(payload = {}) {
+  return invokeCallable("requestFriendMorpionRematch", payload, "Impossible de demander la revanche dame.");
+}
+
 export async function getMyActiveMorpionInviteSecure(payload = {}) {
   return invokeCallable("getMyActiveMorpionInvite", payload, "Impossible de charger l'invitation morpion.");
 }
 
+export async function getMyActiveDameInviteSecure(payload = {}) {
+  return invokeCallable("getMyActiveMorpionInvite", payload, "Impossible de charger l'invitation dame.");
+}
+
 export async function respondMorpionPlayInviteSecure(payload = {}) {
   return invokeCallable("respondMorpionPlayInvite", payload, "Impossible de repondre a l'invitation.");
+}
+
+export async function respondDamePlayInviteSecure(payload = {}) {
+  return invokeCallable("respondMorpionPlayInvite", payload, "Impossible de repondre a l'invitation dame.");
 }
 
 export async function getMorpionLiveMatchmakingSignalSecure(payload = {}) {
@@ -268,6 +336,26 @@ export async function listRecentMorpionWhatsappContactsSecure(payload = {}) {
   return invokeCallable("listRecentMorpionWhatsappContactsSecure", payload, "Impossible de charger les joueurs recemment actifs.");
 }
 
+export async function getMyDameWhatsappPreferenceSecure(payload = {}) {
+  return invokeCallable("getMyMorpionWhatsappPreferenceSecure", payload, "Impossible de charger ton numero WhatsApp dame.");
+}
+
+export async function saveDameWhatsappPreferenceSecure(payload = {}) {
+  return invokeCallable("saveMorpionWhatsappPreferenceSecure", payload, "Impossible d'enregistrer ton numero WhatsApp dame.");
+}
+
+export async function removeDameWhatsappPreferenceSecure(payload = {}) {
+  return invokeCallable("removeMorpionWhatsappPreferenceSecure", payload, "Impossible de retirer ton numero WhatsApp dame.");
+}
+
+export async function listRecentDameWhatsappContactsSecure(payload = {}) {
+  return invokeCallable("listRecentMorpionWhatsappContactsSecure", payload, "Impossible de charger les joueurs dame recemment actifs.");
+}
+
+export async function recordDameMatchResultSecure(payload = {}) {
+  return invokeCallable("recordDameMatchResultSecure", payload, "Impossible d'enregistrer le resultat dame.");
+}
+
 export async function getRecruitmentCampaignSnapshotSecure(payload = {}) {
   return invokeCallable("getRecruitmentCampaignSnapshotSecure", payload, "Impossible de charger la campagne de recrutement.");
 }
@@ -276,8 +364,56 @@ export async function getPublicWhatsappModalConfigSecure(payload = {}) {
   return invokeCallable("getPublicWhatsappModalConfigSecure", payload, "Impossible de charger la configuration WhatsApp.");
 }
 
+export async function getPublicHomeHeroConfigSecure(payload = {}) {
+  return invokeCallable("getPublicHomeHeroConfigSecure", payload, "Impossible de charger la configuration du hero.");
+}
+
 export async function setWhatsappModalConfigSecure(payload = {}) {
   return invokeCallable("setWhatsappModalConfigSecure", payload, "Impossible de mettre à jour la configuration WhatsApp.");
+}
+
+export async function setHomeHeroConfigSecure(payload = {}) {
+  return invokeCallable("setHomeHeroConfigSecure", payload, "Impossible de mettre à jour la configuration du hero.");
+}
+
+export async function getPublicChampionnatSnapshotSecure(payload = {}) {
+  return invokeCallable("getPublicChampionnatSnapshotSecure", payload, "Impossible de charger le championnat public.");
+}
+
+export async function getChampionnatDashboardSnapshotSecure(payload = {}) {
+  return invokeCallable("getChampionnatDashboardSnapshotSecure", payload, "Impossible de charger le dashboard championnat.");
+}
+
+export async function searchChampionnatUsersSecure(payload = {}) {
+  return invokeCallable("searchChampionnatUsersSecure", payload, "Impossible de rechercher un utilisateur pour le championnat.");
+}
+
+export async function registerChampionnatParticipantSecure(payload = {}) {
+  return invokeCallable("registerChampionnatParticipantSecure", payload, "Impossible d'inscrire ce participant.");
+}
+
+export async function updateChampionnatParticipantSecure(payload = {}) {
+  return invokeCallable("updateChampionnatParticipantSecure", payload, "Impossible de mettre à jour ce participant.");
+}
+
+export async function listChampionnatParticipantsSecure(payload = {}) {
+  return invokeCallable("listChampionnatParticipantsSecure", payload, "Impossible de charger la liste des participants.");
+}
+
+export async function listChampionnatMatchesSecure(payload = {}) {
+  return invokeCallable("listChampionnatMatchesSecure", payload, "Impossible de charger les matchs du championnat.");
+}
+
+export async function upsertChampionnatMatchSecure(payload = {}) {
+  return invokeCallable("upsertChampionnatMatchSecure", payload, "Impossible d'enregistrer le match du championnat.");
+}
+
+export async function updateChampionnatMatchSecure(payload = {}) {
+  return invokeCallable("updateChampionnatMatchSecure", payload, "Impossible de mettre à jour ce match.");
+}
+
+export async function updateChampionnatLiveStateSecure(payload = {}) {
+  return invokeCallable("updateChampionnatLiveStateSecure", payload, "Impossible de mettre à jour l'état live du championnat.");
 }
 
 export async function recordRecruitmentVisitSecure(payload = {}) {
@@ -334,6 +470,10 @@ export async function unfreezeClientAccountSecure(payload = {}) {
 
 export async function getGlobalAnalyticsSnapshotSecure(payload = {}) {
   return invokeCallable("getGlobalAnalyticsSnapshot", payload, "Impossible de charger les analytics globaux.");
+}
+
+export async function getDameAnalyticsSnapshotSecure(payload = {}) {
+  return invokeCallable("getDameAnalyticsSnapshot", payload, "Impossible de charger les analytics dame.");
 }
 
 export async function getClientAcquisitionSnapshotSecure(payload = {}) {

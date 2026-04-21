@@ -553,6 +553,19 @@
         }
       }
 
+      function setStakeControlsEnabled(enabled, note = "") {
+        const nextEnabled = !!enabled;
+        stakeButtons.forEach((btn) => {
+          btn.disabled = !nextEnabled;
+        });
+        if (friendInviteBtn) {
+          friendInviteBtn.disabled = !nextEnabled;
+        }
+        if (stakeNote) {
+          stakeNote.textContent = String(note || "");
+        }
+      }
+
       function normalizeInviteCode(value = "") {
         return String(value || "")
           .toUpperCase()
@@ -819,7 +832,7 @@
       async function startWagerAndLaunch(stakeDoes) {
         const uid = String(currentUid || auth.currentUser?.uid || "").trim();
         if (!uid) {
-          setStakeUiBusy(false, "Connexion requise pour jouer.");
+          setStakeControlsEnabled(false, "Connecte-toi pour choisir une mise Pong.");
           return;
         }
 
@@ -950,6 +963,8 @@
         }
         window.location.href = targetHref;
       }
+
+      setStakeControlsEnabled(false, "Connexion en cours...");
 
       stakeButtons.forEach((btn) => {
         btn.addEventListener("click", () => {
@@ -1083,9 +1098,11 @@
         currentUid = uid;
         if (!uid) {
           renderDoesBalance(null);
-          setStakeUiBusy(false, "Connexion requise pour jouer.");
+          setStakeControlsEnabled(false, "Connecte-toi pour choisir une mise Pong.");
           return;
         }
+
+        setStakeControlsEnabled(false, "Chargement du profil Pong...");
 
         const stale = readStoredActiveWager();
         if (stale && String(stale.uid || "").trim() === uid && String(stale.sessionId || "").trim()) {
@@ -1100,6 +1117,7 @@
         }
 
         void resolveProfileForCurrentUser(user).then(() => {
+          setStakeControlsEnabled(true, "");
           void flushForfeitQueue(uid).then(() => refreshDoesBalance(uid));
         });
       });

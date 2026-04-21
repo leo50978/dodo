@@ -6,6 +6,12 @@ import {
   getPublicPaymentOptionsSecure,
 } from './secure-functions.js';
 import { SUPPORT_WHATSAPP_PHONE, SUPPORT_WHATSAPP_LABEL, buildSupportWhatsAppUrl } from './support-contact.js';
+import {
+  buildWhatsappUrlForKey,
+  getWhatsappContactDigits,
+  getWhatsappContactLabel,
+  refreshWhatsappModalContacts,
+} from "./whatsapp-modal-config.js";
 
 const OCR_LANGUAGE = 'fra+eng';
 const DEPOSIT_BONUS_MIN_HTG = 100;
@@ -20,6 +26,8 @@ const SUPPORT_WHATSAPP_DIGITS = SUPPORT_WHATSAPP_PHONE;
 const AGENT_DEPOSIT_WHATSAPP_DIGITS = SUPPORT_WHATSAPP_DIGITS;
 const AGENT_DEPOSIT_WHATSAPP_LABEL = `+${AGENT_DEPOSIT_WHATSAPP_DIGITS}`;
 let tesseractRuntimePromise = null;
+
+void refreshWhatsappModalContacts().catch(() => {});
 
 async function loadTesseractRuntime() {
   if (typeof window !== 'undefined' && window.Tesseract && typeof window.Tesseract.recognize === 'function') {
@@ -386,6 +394,9 @@ class PaymentModal {
         color: #3F2D14;
       `;
 
+      const supportUrl = buildWhatsappUrlForKey("support_default", "", SUPPORT_WHATSAPP_DIGITS) || buildSupportWhatsAppUrl();
+      const supportLabel = getWhatsappContactLabel("support_default", SUPPORT_WHATSAPP_DIGITS) || SUPPORT_WHATSAPP_LABEL;
+
       modal.innerHTML = `
         <div style="display:flex; align-items:flex-start; gap:0.85rem;">
           <div style="
@@ -424,7 +435,7 @@ class PaymentModal {
             cursor:pointer;
             padding:0.85rem 1rem;
           ">Annuler</button>
-          <a href="${buildSupportWhatsAppUrl()}" target="_blank" rel="noopener noreferrer" data-rapid-confirm="support" style="
+          <a href="${supportUrl}" target="_blank" rel="noopener noreferrer" data-rapid-confirm="support" style="
             flex:1 1 160px;
             min-height:46px;
             border-radius:14px;
@@ -450,7 +461,7 @@ class PaymentModal {
           ">Oui, j'ai effectue ce depot</button>
         </div>
         <div style="margin-top:0.75rem; font-size:0.82rem; color:#6B7280; text-align:center;">
-          Assistance WhatsApp: ${SUPPORT_WHATSAPP_LABEL}
+          Assistance WhatsApp: ${supportLabel}
         </div>
       `;
 
@@ -499,6 +510,9 @@ class PaymentModal {
         color: #2e1065;
       `;
 
+      const agentDepositDigits = getWhatsappContactDigits("agent_deposit", AGENT_DEPOSIT_WHATSAPP_DIGITS) || AGENT_DEPOSIT_WHATSAPP_DIGITS;
+      const agentDepositLabel = getWhatsappContactLabel("agent_deposit", AGENT_DEPOSIT_WHATSAPP_DIGITS) || AGENT_DEPOSIT_WHATSAPP_LABEL;
+
       modal.innerHTML = `
         <div style="display:flex;align-items:flex-start;gap:0.85rem;">
           <div style="
@@ -537,7 +551,7 @@ class PaymentModal {
             cursor:pointer;
             padding:0.85rem 1rem;
           ">Fermer</button>
-          <a href="https://wa.me/${AGENT_DEPOSIT_WHATSAPP_DIGITS}" target="_blank" rel="noopener noreferrer" data-agent-deposit="continue" style="
+          <a href="https://wa.me/${agentDepositDigits}" target="_blank" rel="noopener noreferrer" data-agent-deposit="continue" style="
             flex:1 1 200px;
             min-height:46px;
             border-radius:14px;
@@ -552,7 +566,7 @@ class PaymentModal {
           ">Continuer sur WhatsApp</a>
         </div>
         <div style="margin-top:0.75rem;font-size:0.82rem;color:#6b7280;text-align:center;">
-          Agent WhatsApp : ${AGENT_DEPOSIT_WHATSAPP_LABEL}
+          Agent WhatsApp : ${agentDepositLabel}
         </div>
       `;
 
@@ -601,6 +615,9 @@ class PaymentModal {
         color: #7C2D12;
       `;
 
+      const supportUrl = buildWhatsappUrlForKey("support_default", "", SUPPORT_WHATSAPP_DIGITS) || buildSupportWhatsAppUrl();
+      const supportLabel = getWhatsappContactLabel("support_default", SUPPORT_WHATSAPP_DIGITS) || SUPPORT_WHATSAPP_LABEL;
+
       modal.innerHTML = `
         <div style="display:flex;align-items:flex-start;gap:0.85rem;">
           <div style="
@@ -639,7 +656,7 @@ class PaymentModal {
             cursor:pointer;
             padding:0.85rem 1rem;
           ">Fermer</button>
-          <a href="${buildSupportWhatsAppUrl()}" target="_blank" rel="noopener noreferrer" data-missing-id="support" style="
+          <a href="${supportUrl}" target="_blank" rel="noopener noreferrer" data-missing-id="support" style="
             flex:1 1 200px;
             min-height:46px;
             border-radius:14px;
@@ -654,7 +671,7 @@ class PaymentModal {
           ">Contacter un agent</a>
         </div>
         <div style="margin-top:0.75rem;font-size:0.82rem;color:#6B7280;text-align:center;">
-          Agent WhatsApp: ${SUPPORT_WHATSAPP_LABEL}
+          Agent WhatsApp: ${supportLabel}
         </div>
       `;
 

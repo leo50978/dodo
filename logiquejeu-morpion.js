@@ -33,6 +33,7 @@ const MORPION_ROOMS = "morpionRooms";
 const MORPION_GAME_STATES = "morpionGameStates";
 const ALLOWED_MORPION_STAKE_AMOUNTS = Object.freeze([500]);
 const MORPION_BOT_TEST_STAKE_DOES = 0;
+const MORPION_BOARD_SIZE = 15;
 const TURN_LIMIT_SECONDS = 30;
 const TURN_LIMIT_MS = TURN_LIMIT_SECONDS * 1000;
 const MATCHMAKING_WAIT_SECONDS = 15;
@@ -52,6 +53,7 @@ const URL_PARAMS = new URLSearchParams(window.location.search);
 const parsedRequestedStake = Number.parseInt(String(URL_PARAMS.get("stake") ?? 500), 10);
 const requestedStake = Number.isFinite(parsedRequestedStake) ? parsedRequestedStake : 500;
 const requestedRoomMode = String(URL_PARAMS.get("roomMode") || "").trim();
+const requestedLocalBotFlag = String(URL_PARAMS.get("localBot") || "").trim();
 
 function buildMorpionBotTestGameUrl(roomId = "", seatIndex = 0) {
   const params = new URLSearchParams();
@@ -79,6 +81,12 @@ function isFriendMorpionFlowFromUrl() {
 
 function isBotTestMorpionFlowFromUrl() {
   return getBotTestMorpionRoomIdFromUrl().length > 0 || requestedRoomMode === "morpion_bot_test";
+}
+
+function isLocalBotModeEnabled() {
+  if (!isBotTestMorpionFlowFromUrl()) return false;
+  if (requestedLocalBotFlag === "0") return false;
+  return true;
 }
 
 const selectedStakeDoes = isFriendMorpionFlowFromUrl()
@@ -211,6 +219,8 @@ let lastBotTurnNudgeKey = "";
 let lastBotTurnNudgeAtMs = 0;
 let lastTimeoutNudgeKey = "";
 let lastTimeoutNudgeAtMs = 0;
+let localBotMoveTimer = null;
+let localTurnTimeoutTimer = null;
 
 function buildMorpionLogPayload(payload = {}) {
   return {

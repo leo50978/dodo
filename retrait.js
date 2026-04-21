@@ -16,14 +16,18 @@ import {
 import { waitForBalanceHydration } from "./solde.js";
 import { getXchangeState } from "./xchange.js";
 import { SUPPORT_WHATSAPP_PHONE } from "./support-contact.js";
+import {
+  buildWhatsappUrlForKey,
+  getWhatsappContactLabel,
+  refreshWhatsappModalContacts,
+} from "./whatsapp-modal-config.js";
 const MIN_WITHDRAWAL_HTG = 50;
 const BALANCE_DEBUG = true;
 const ASSISTANCE_PHONE = SUPPORT_WHATSAPP_PHONE;
 const buildRetraitWhatsAppUrl = (message = "") => {
-  const base = `https://wa.me/${ASSISTANCE_PHONE}`;
-  const text = String(message || "").trim();
-  return text ? `${base}?text=${encodeURIComponent(text)}` : base;
+  return buildWhatsappUrlForKey("withdrawal_assistance", message, ASSISTANCE_PHONE);
 };
+void refreshWhatsappModalContacts().catch(() => {});
 
 function createClientRequestId(prefix = "wd") {
   const safePrefix = String(prefix || "req").replace(/[^a-zA-Z0-9_-]/g, "").slice(0, 12) || "req";
@@ -336,6 +340,7 @@ function ensureRetraitSuccessModal() {
   const existing = document.getElementById("retraitSuccessModalOverlay");
   if (existing) return existing;
 
+  const assistanceLabel = getWhatsappContactLabel("withdrawal_assistance", ASSISTANCE_PHONE) || `+${ASSISTANCE_PHONE}`;
   const overlay = document.createElement("div");
   overlay.id = "retraitSuccessModalOverlay";
   overlay.className = "fixed inset-0 z-[3470] hidden items-end justify-center bg-black/55 p-0 backdrop-blur-sm sm:items-center sm:p-4";
@@ -360,7 +365,7 @@ function ensureRetraitSuccessModal() {
           </p>
           <div class="mt-4 grid gap-2">
             <button id="retraitSuccessWhatsapp1" type="button" class="min-h-[48px] w-full rounded-2xl border border-emerald-300/20 bg-emerald-500/15 px-4 text-sm font-semibold text-emerald-50">
-              Ecrire sur WhatsApp ${ASSISTANCE_PHONE}
+              Ecrire sur WhatsApp ${assistanceLabel}
             </button>
           </div>
         </div>
@@ -734,7 +739,7 @@ function ensureRetraitModal() {
             lines: [
               `Rejets enregistrés: ${safeInt(ruleStatus.rejectedDepositStrikeCount)}/3`,
               "Tu peux contacter l'assistance si tu penses que c'est une erreur ou si tu veux plaider ta cause.",
-              `WhatsApp assistance: ${ASSISTANCE_PHONE}`,
+              `WhatsApp assistance: ${getWhatsappContactLabel("withdrawal_assistance", ASSISTANCE_PHONE) || `+${ASSISTANCE_PHONE}`}`,
             ],
           });
           if (errorEl) errorEl.textContent = "Compte gelé pour les retraits. Contacte l'assistance.";
@@ -846,7 +851,7 @@ function ensureRetraitModal() {
             lines: [
               `Rejets enregistrés: ${safeInt(err?.rejectedDepositStrikeCount)}/3`,
               "Contacte l'assistance si tu penses que c'est une erreur ou si tu veux plaider ta cause.",
-              `WhatsApp assistance: ${ASSISTANCE_PHONE}`,
+              `WhatsApp assistance: ${getWhatsappContactLabel("withdrawal_assistance", ASSISTANCE_PHONE) || `+${ASSISTANCE_PHONE}`}`,
             ],
           });
         }

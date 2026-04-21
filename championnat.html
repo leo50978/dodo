@@ -1,0 +1,483 @@
+<!doctype html>
+<html lang="fr">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <script src="./runtime-config.js"></script>
+    <link rel="icon" type="image/png" href="./favicon-96x96.png" sizes="96x96" />
+    <link rel="icon" type="image/svg+xml" href="./favicon.svg" />
+    <link rel="shortcut icon" href="./favicon.ico" />
+    <link rel="apple-touch-icon" sizes="180x180" href="./apple-touch-icon.png" />
+    <link rel="manifest" href="./site.webmanifest" />
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'self'; script-src 'self' 'unsafe-inline' https://www.gstatic.com https://www.google.com https://apis.google.com https://www.recaptcha.net; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com https://cdnjs.cloudflare.com https://www.gstatic.com; font-src 'self' https://fonts.gstatic.com https://cdnjs.cloudflare.com data:; img-src 'self' data: https: blob:; connect-src 'self' data: blob: https://*.googleapis.com https://firestore.googleapis.com https://identitytoolkit.googleapis.com https://securetoken.googleapis.com https://firebaseinstallations.googleapis.com https://content-firebaseappcheck.googleapis.com https://www.gstatic.com https://www.google.com https://www.recaptcha.net https://us-central1-does-2c234.cloudfunctions.net https://*.cloudfunctions.net https://firebasestorage.googleapis.com https://storage.googleapis.com; frame-src https://www.google.com https://www.gstatic.com https://www.recaptcha.net https://does-2c234.firebaseapp.com https://does-2c234.web.app https://accounts.google.com; object-src 'none'; base-uri 'self'; form-action 'self'; upgrade-insecure-requests; block-all-mixed-content;"
+    />
+    <title>Championnat Mopyon · Dominoes Lakay</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;700;800&family=Sora:wght@400;600;700;800&display=swap" rel="stylesheet" />
+    <style>
+      :root {
+        --bg-0: #050816;
+        --bg-1: #0a1024;
+        --bg-2: #121a33;
+        --panel: rgba(13, 22, 44, 0.72);
+        --panel-strong: rgba(10, 18, 38, 0.86);
+        --line: rgba(163, 184, 255, 0.16);
+        --line-strong: rgba(163, 184, 255, 0.26);
+        --text: #edf2ff;
+        --muted: #95a4cb;
+        --accent: #68d7ff;
+        --accent-2: #7c5cff;
+        --accent-3: #ff9c5f;
+        --good: #4be7b8;
+        --warn: #ffbf69;
+        --bad: #ff7d8d;
+        --shadow-hard: 16px 16px 40px rgba(2, 7, 22, 0.78);
+        --shadow-soft: -12px -12px 28px rgba(49, 67, 122, 0.14);
+      }
+
+      * { box-sizing: border-box; }
+
+      html, body {
+        margin: 0;
+        min-height: 100%;
+        font-family: "Space Grotesk", sans-serif;
+        color: var(--text);
+        background:
+          radial-gradient(circle at top right, rgba(124, 92, 255, 0.14), transparent 28%),
+          radial-gradient(circle at 15% 20%, rgba(104, 215, 255, 0.12), transparent 32%),
+          radial-gradient(circle at bottom left, rgba(255, 156, 95, 0.12), transparent 30%),
+          linear-gradient(160deg, var(--bg-0) 0%, var(--bg-1) 46%, var(--bg-2) 100%);
+      }
+
+      .page {
+        position: relative;
+        z-index: 1;
+        min-height: 100vh;
+        padding: 20px;
+      }
+
+      .shell {
+        width: min(1360px, 100%);
+        margin: 0 auto;
+      }
+
+      .glass,
+      .panel,
+      .card,
+      .metric {
+        border: 1px solid var(--line);
+        background: var(--panel);
+        box-shadow: var(--shadow-hard), var(--shadow-soft);
+        backdrop-filter: blur(20px);
+        -webkit-backdrop-filter: blur(20px);
+      }
+
+      .hero {
+        display: grid;
+        place-items: center;
+        min-height: calc(100vh - 40px);
+      }
+
+      .hero-card {
+        width: min(760px, 100%);
+        border-radius: 30px;
+        padding: 28px;
+        position: relative;
+        overflow: hidden;
+      }
+
+      .eyebrow {
+        margin: 0;
+        font-size: 0.74rem;
+        letter-spacing: 0.22em;
+        text-transform: uppercase;
+        color: var(--accent);
+        font-weight: 800;
+      }
+
+      h1 {
+        margin: 10px 0 0;
+        font-family: "Sora", sans-serif;
+        font-size: clamp(2.1rem, 4vw, 4rem);
+        line-height: 1;
+        font-weight: 800;
+      }
+
+      .btn {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        border: 1px solid var(--line);
+        border-radius: 16px;
+        padding: 12px 16px;
+        text-decoration: none;
+        font: inherit;
+        font-weight: 800;
+        color: var(--text);
+        background: rgba(255, 255, 255, 0.04);
+        cursor: pointer;
+        transition: transform 140ms ease, border-color 140ms ease, background 140ms ease;
+      }
+
+      .btn:hover {
+        transform: translateY(-1px);
+        border-color: var(--line-strong);
+        background: rgba(255, 255, 255, 0.06);
+      }
+
+      .btn.primary {
+        background: linear-gradient(135deg, rgba(104, 215, 255, 0.22), rgba(124, 92, 255, 0.22));
+      }
+
+      .btn.primary.pulse {
+        position: relative;
+        animation: championPulse 1.8s ease-in-out infinite;
+        box-shadow: 0 0 0 0 rgba(104, 215, 255, 0.28);
+      }
+
+      .btn.primary.pulse::after {
+        content: "";
+        position: absolute;
+        inset: -6px;
+        border-radius: 20px;
+        border: 1px solid rgba(104, 215, 255, 0.24);
+        animation: championRing 1.8s ease-out infinite;
+        pointer-events: none;
+      }
+
+      .progress {
+        margin: 72px auto 0;
+        width: min(100%, 520px);
+        display: grid;
+        gap: 10px;
+        text-align: center;
+      }
+
+      .progress-bar {
+        width: 100%;
+        height: 16px;
+        border-radius: 999px;
+        border: 1px solid var(--line);
+        overflow: hidden;
+        background: rgba(255, 255, 255, 0.05);
+      }
+
+      .progress-fill {
+        height: 100%;
+        width: 0%;
+        border-radius: inherit;
+        background: linear-gradient(90deg, var(--accent), var(--accent-2));
+        transition: width 240ms ease;
+      }
+
+      .card {
+        border-radius: 26px;
+        padding: 18px;
+      }
+
+      .standings {
+        display: grid;
+        gap: 10px;
+      }
+
+      .standing-row {
+        border: 1px solid rgba(163, 184, 255, 0.12);
+        border-radius: 18px;
+        padding: 14px;
+        background: rgba(255, 255, 255, 0.03);
+        display: grid;
+        gap: 10px;
+      }
+
+      .row-top {
+        display: flex;
+        justify-content: space-between;
+        gap: 12px;
+        align-items: start;
+      }
+
+      .row-title {
+        margin: 0;
+        font-size: 1rem;
+        font-weight: 800;
+      }
+
+      .row-sub {
+        margin: 6px 0 0;
+        color: var(--muted);
+        line-height: 1.55;
+      }
+
+      .badge {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        border-radius: 999px;
+        padding: 7px 12px;
+        font-size: 0.76rem;
+        font-weight: 800;
+      }
+
+      .badge.good { background: rgba(75, 231, 184, 0.16); color: #bbf7d0; }
+      .badge.warn { background: rgba(255, 191, 105, 0.16); color: #fde68a; }
+      .badge.info { background: rgba(104, 215, 255, 0.16); color: #bae6fd; }
+      .badge.bad { background: rgba(255, 125, 141, 0.16); color: #fecaca; }
+
+      .table {
+        display: grid;
+        gap: 8px;
+      }
+
+      .table-head,
+      .table-row {
+        display: grid;
+        grid-template-columns: 72px minmax(0, 1.5fr) minmax(0, 1fr) minmax(0, 1fr);
+        gap: 10px;
+        align-items: center;
+      }
+
+      .table-head {
+        color: var(--muted);
+        font-size: 0.76rem;
+        letter-spacing: 0.12em;
+        text-transform: uppercase;
+        font-weight: 800;
+        padding: 0 4px;
+      }
+
+      .inline-note {
+        color: var(--muted);
+        line-height: 1.6;
+      }
+
+      .modal-overlay {
+        position: fixed;
+        inset: 0;
+        display: none;
+        align-items: center;
+        justify-content: center;
+        padding: 20px;
+        background: rgba(4, 8, 19, 0.72);
+        backdrop-filter: blur(10px);
+        z-index: 50;
+      }
+
+      .modal-overlay.is-open {
+        display: flex;
+      }
+
+      .modal {
+        width: min(680px, 100%);
+        border-radius: 28px;
+        border: 1px solid var(--line);
+        background: var(--panel-strong);
+        box-shadow: 0 30px 80px rgba(0, 0, 0, 0.4);
+        padding: 22px;
+      }
+
+      .modal-head {
+        display: flex;
+        justify-content: space-between;
+        gap: 12px;
+        align-items: start;
+      }
+
+      .modal-copy {
+        margin: 0;
+        color: var(--muted);
+        line-height: 1.7;
+      }
+
+      .modal-actions {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 10px;
+        margin-top: 16px;
+      }
+
+      .modal-body {
+        margin-top: 14px;
+        display: grid;
+        gap: 10px;
+        max-height: min(60vh, 520px);
+        overflow: auto;
+        padding-right: 4px;
+      }
+
+      .modal-list {
+        display: grid;
+        gap: 10px;
+      }
+
+      .champion-top-link,
+      .champion-top-right,
+      .champion-bottom-right {
+        position: absolute;
+        z-index: 2;
+      }
+
+      .champion-top-link {
+        top: 18px;
+        left: 18px;
+      }
+
+      .champion-top-right {
+        top: 18px;
+        right: 18px;
+      }
+
+      .champion-bottom-right {
+        right: 18px;
+        bottom: 18px;
+      }
+
+      .champion-center {
+        display: grid;
+        place-items: center;
+        gap: 18px;
+        min-height: 380px;
+        padding: 44px 14px 26px;
+      }
+
+      .champion-title {
+        margin: 0;
+        text-align: center;
+      }
+
+      .champion-subtitle {
+        margin: -6px 0 0;
+        color: var(--muted);
+        font-weight: 700;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+        font-size: 0.78rem;
+      }
+
+      @keyframes championPulse {
+        0%, 100% { transform: translateY(0) scale(1); }
+        50% { transform: translateY(-2px) scale(1.02); }
+      }
+
+      @keyframes championRing {
+        0% { opacity: 0.85; transform: scale(1); }
+        100% { opacity: 0; transform: scale(1.12); }
+      }
+
+      .empty {
+        color: var(--muted);
+        padding: 18px 0;
+      }
+
+      @media (min-width: 920px) {
+        .page {
+          padding: 28px;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <main class="page">
+      <div class="shell">
+        <section class="hero">
+          <div class="hero-card glass">
+            <a class="btn champion-top-link" href="./index.html">Retour accueil</a>
+            <button class="btn champion-top-right" id="championnatClassementBtn" type="button">Classement</button>
+            <button class="btn champion-bottom-right" id="championnatRulesBtn" type="button">Règles</button>
+            <div class="champion-center">
+              <div class="champion-title">
+                <h1>Championnat Mopyon</h1>
+                <p class="champion-subtitle">64 places</p>
+              </div>
+              <div class="progress">
+                <div class="progress-bar" aria-label="Progression du championnat">
+                  <div class="progress-fill" id="championnatProgressFill"></div>
+                </div>
+                <p class="inline-note" id="championnatProgressCopy">0 / 64 participants validés.</p>
+              </div>
+              <button class="btn primary pulse" id="championnatRegisterBtn" type="button">S'inscrire au championnat</button>
+            </div>
+          </div>
+        </section>
+      </div>
+    </main>
+
+    <div class="modal-overlay" id="championnatContactModal" aria-hidden="true">
+      <div class="modal">
+        <div class="modal-head">
+          <div>
+            <p class="eyebrow" style="margin-bottom:6px;">Contact agent</p>
+            <h2 style="margin:0;font-family:'Sora',sans-serif;">Inscription au championnat</h2>
+          </div>
+          <button class="btn" id="championnatContactCloseBtn" type="button">Fermer</button>
+        </div>
+        <p class="modal-copy" style="margin-top:12px;">
+          Pour t'inscrire au championnat Mopyon, contacte un agent et confirme ton paiement de
+          <strong>150 HTG</strong>. Une fois validé, ton inscription sera ajoutée au championnat.
+        </p>
+        <div class="card" style="margin-top:14px;padding:14px;">
+          <p class="row-title">Canal WhatsApp</p>
+          <p class="row-sub" id="championnatContactCopy">
+            Chargement du numéro de contact...
+          </p>
+        </div>
+        <div class="modal-actions">
+          <a class="btn primary" id="championnatContactLink" href="#" target="_blank" rel="noreferrer">Ouvrir WhatsApp</a>
+          <button class="btn" id="championnatContactCopyBtn" type="button">Copier le numéro</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="modal-overlay" id="championnatStandingsModal" aria-hidden="true">
+      <div class="modal">
+        <div class="modal-head">
+          <div>
+            <p class="eyebrow" style="margin-bottom:6px;">Classement</p>
+            <h2 style="margin:0;font-family:'Sora',sans-serif;">Participants inscrits</h2>
+          </div>
+          <button class="btn" id="championnatStandingsCloseBtn" type="button">Fermer</button>
+        </div>
+        <p class="modal-copy" style="margin-top:12px;">
+          Voici les joueurs déjà inscrits au championnat Mopyon. La liste se met à jour quand le staff ajoute un participant.
+        </p>
+        <div class="modal-body">
+          <div class="table">
+            <div class="table-head">
+              <div>Rang</div>
+              <div>Joueur</div>
+              <div>Statut</div>
+              <div>Tour</div>
+            </div>
+            <div id="championnatStandingsList" class="modal-list">
+              <div class="empty">Aucun participant enregistré pour le moment.</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="modal-overlay" id="championnatRulesModal" aria-hidden="true">
+      <div class="modal">
+        <div class="modal-head">
+          <div>
+            <p class="eyebrow" style="margin-bottom:6px;">Règles</p>
+            <h2 style="margin:0;font-family:'Sora',sans-serif;">Règlement du championnat</h2>
+          </div>
+          <button class="btn" id="championnatRulesCloseBtn" type="button">Fermer</button>
+        </div>
+        <div class="modal-body">
+          <p class="modal-copy"><strong>Présentation.</strong> Le championnat Mopyon est une compétition de Tic Tac Toe 5 organisée en ligne avec 64 joueurs et une élimination directe. Tous les matchs se jouent sur le site officiel et le championnat démarre quand les 64 inscrits sont atteints.</p>
+          <p class="modal-copy"><strong>Frais et récompenses.</strong> L'inscription coûte 150 gourdes par joueur. Pour jouer un match, chaque joueur paie 500 DOES, uniquement comme frais de jeu. Les récompenses sont de 5000 gourdes pour la 1re place, 2000 gourdes pour la 2e et 1000 gourdes pour la 3e.</p>
+          <p class="modal-copy"><strong>Format des matchs.</strong> Chaque match se joue en Best of 3. Le premier joueur à gagner 2 parties remporte le match. Défaite = élimination directe. Victoire = qualification pour le tour suivant et gain de points. Un joueur doit gagner 6 matchs pour devenir champion.</p>
+          <p class="modal-copy"><strong>Déroulement.</strong> Les tours 32e, 16e et 8e de finale sont saisis manuellement par le staff. Les quarts, demi-finales et la finale suivent ensuite le bracket normal. Tout retard, abandon ou déconnexion vaut défaite, sauf bug système validé par le staff.</p>
+          <p class="modal-copy"><strong>Visibilité.</strong> Les matchs sont accessibles au public en lecture seule. La vue publique reste légère pour éviter de surcharger la base de données.</p>
+          <p class="modal-copy"><strong>Règle du jeu.</strong> Le but est d'aligner 5 symboles consécutifs horizontalement, verticalement ou en diagonale.</p>
+        </div>
+      </div>
+    </div>
+
+    <script type="module" src="./championnat.js?v=championnat-mopyon-v3"></script>
+  </body>
+</html>

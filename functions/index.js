@@ -70,6 +70,17 @@ const ANALYTICS_SITE_VISITS_HOUR_COLLECTION = "analyticsSiteVisitsHours";
 const ANALYTICS_SITE_VISITS_WEEKDAY_COLLECTION = "analyticsSiteVisitsWeekdays";
 const RECRUITMENT_APPLICATIONS_COLLECTION = "recruitmentApplications";
 const RECRUITMENT_CAMPAIGN_DOC = "recruitmentCampaign";
+const CHAMPIONNAT_COLLECTION = "championnats";
+const CHAMPIONNAT_STATE_DOC = "mopyon_current";
+const CHAMPIONNAT_TOTAL_SLOTS = 64;
+const CHAMPIONNAT_REGISTRATION_FEE_HTG = 150;
+const CHAMPIONNAT_MATCH_FEE_DOES = 500;
+const CHAMPIONNAT_DEFAULT_BEST_OF = 3;
+const CHAMPIONNAT_DEFAULT_PRIZES = Object.freeze({
+  first: 5000,
+  second: 2000,
+  third: 1000,
+});
 
 const RATE_HTG_TO_DOES = 20;
 const DEFAULT_STAKE_REWARD_MULTIPLIER = 3;
@@ -275,7 +286,7 @@ const SURVEY_MAX_TEXT_ANSWER = 500;
 const PONG_ALLOWED_AI_PROFILES = new Set(["soft", "normal", "ultra"]);
 const PONG_RECENT_OUTCOMES_LIMIT = 10;
 const PONG_RECENT_MATCH_IDS_LIMIT = 20;
-const PONG_ALLOWED_STAKES = new Set([100, 1000, 5000]);
+const PONG_ALLOWED_STAKES = new Set([100, 500, 1000, 5000]);
 const PONG_ODDS_NUMERATOR = 19;
 const PONG_ODDS_DENOMINATOR = 10;
 const DEFAULT_WHATSAPP_MODAL_CONTACTS = Object.freeze({
@@ -3445,6 +3456,10 @@ function whatsappModalSettingsRef() {
   return db.collection("settings").doc(WHATSAPP_MODAL_SETTINGS_DOC);
 }
 
+function championnatStateRef() {
+  return db.collection(CHAMPIONNAT_COLLECTION).doc(CHAMPIONNAT_STATE_DOC);
+}
+
 function surveysCollection() {
   return db.collection(SURVEYS_COLLECTION);
 }
@@ -3459,6 +3474,271 @@ function surveyResponsesCollection(surveyId) {
 
 function surveyResponseRef(surveyId, uid) {
   return surveyResponsesCollection(surveyId).doc(String(uid || "").trim());
+}
+
+function normalizeChampionnatStatus(value, fallback = "collecting") {
+  const normalized = sanitizeText(value || "", 24).toLowerCase();
+  return ["collecting", "ready", "running", "finished"].includes(normalized) ? normalized : fallback;
+}
+
+function normalizeChampionnatRound(value, fallback = "round_of_32") {
+  const normalized = sanitizeText(value || "", 40).toLowerCase();
+  const mapping = {
+    round_of_64: "round_of_64",
+    round_of_32: "round_of_32",
+    round_of_16: "round_of_16",
+    quarter_final: "quarter_final",
+    semi_final: "semi_final",
+    final: "final",
+    finale: "final",
+  };
+  return mapping[normalized] || fallback;
+}
+
+function normalizeChampionnatParticipantStatus(value, fallback = "registered") {
+  const normalized = sanitizeText(value || "", 32).toLowerCase();
+  return ["registered", "qualified", "in_match", "eliminated", "late_disqualified", "forfeit", "staff_review"].includes(normalized)
+    ? normalized
+    : fallback;
+}
+
+function normalizeChampionnatParticipantRound(value, fallback = "registered") {
+  const normalized = sanitizeText(value || "", 40).toLowerCase();
+  return [
+    "registered",
+    "round_of_64",
+    "round_of_32",
+    "round_of_16",
+    "quarter_final",
+    "semi_final",
+    "final",
+    "eliminated",
+  ].includes(normalized) ? normalized : fallback;
+}
+
+function normalizeChampionnatMatchStatus(value, fallback = "scheduled") {
+  const normalized = sanitizeText(value || "", 32).toLowerCase();
+  return ["scheduled", "live", "completed", "cancelled", "cancelled_staff", "ready", "waiting"].includes(normalized)
+    ? normalized
+    : fallback;
+}
+
+function championnatSortParticipants(items = []) {
+  return (Array.isArray(items) ? [...items] : []).sort((left, right) =>
+    safeInt(left.rank || left.position || left.seed || 9999) - safeInt(right.rank || right.position || right.seed || 9999)
+    || String(left.displayName || left.username || left.uid || "").localeCompare(String(right.displayName || right.username || right.uid || ""), "fr")
+  );
+}
+
+function championnatSortMatches(items = []) {
+  return (Array.isArray(items) ? [...items] : []).sort((left, right) =>
+    safeInt(left.order || left.scheduledAtMs || left.scheduledAt || 0) - safeInt(right.order || right.scheduledAtMs || right.scheduledAt || 0)
+    || safeSignedInt(left.startedAtMs) - safeSignedInt(right.startedAtMs)
+    || String(left.matchId || left.id || "").localeCompare(String(right.matchId || right.id || ""), "fr")
+  );
+}
+
+function buildChampionnatDefaultState(nowMs = Date.now()) {
+  return {
+    champion: {
+      totalSlots: CHAMPIONNAT_TOTAL_SLOTS,
+      registeredCount: 0,
+      status: "collecting",
+      registrationFeeHtg: CHAMPIONNAT_REGISTRATION_FEE_HTG,
+      matchFeeDoes: CHAMPIONNAT_MATCH_FEE_DOES,
+      bestOf: CHAMPIONNAT_DEFAULT_BEST_OF,
+      prizes: { ...CHAMPIONNAT_DEFAULT_PRIZES },
+      manualRounds: ["round_of_32", "round_of_16", "quarter_final"],
+      automatedRounds: ["semi_final", "final"],
+      updatedAtMs: nowMs,
+    },
+    participants: [],
+    matches: [],
+    liveMatch: null,
+    updatedAtMs: nowMs,
+  };
+}
+
+function buildChampionnatParticipantRecord(participant = {}, nowMs = Date.now()) {
+  const uid = sanitizeText(participant.uid || participant.userId || participant.id || "", 160);
+  const displayName = sanitizeText(
+    participant.displayName || participant.username || participant.name || uid || "Joueur",
+    160
+  );
+  return {
+    uid,
+    id: uid,
+    userId: uid,
+    displayName,
+    username: sanitizeUsername(participant.username || "", 24),
+    email: sanitizeEmail(participant.email || "", 160),
+    phone: sanitizePhone(participant.phone || "", 40),
+    note: sanitizeText(participant.note || "", 240),
+    status: normalizeChampionnatParticipantStatus(participant.status || "registered"),
+    round: normalizeChampionnatParticipantRound(participant.round || "registered"),
+    rank: safeInt(participant.rank || participant.position || participant.seed || 0),
+    position: safeInt(participant.position || participant.rank || participant.seed || 0),
+    seed: safeInt(participant.seed || participant.rank || participant.position || 0),
+    paymentAmountHtg: safeInt(participant.paymentAmountHtg || CHAMPIONNAT_REGISTRATION_FEE_HTG),
+    paymentStatus: sanitizeText(participant.paymentStatus || "approved", 40),
+    paymentConfirmedAtMs: safeSignedInt(participant.paymentConfirmedAtMs || participant.approvedAtMs || nowMs),
+    registeredAtMs: safeSignedInt(participant.registeredAtMs || participant.createdAtMs || nowMs),
+    createdAtMs: safeSignedInt(participant.createdAtMs || nowMs),
+    updatedAtMs: nowMs,
+  };
+}
+
+function buildChampionnatMatchRecord(match = {}, nowMs = Date.now()) {
+  const matchId = sanitizeText(match.matchId || match.id || "", 160)
+    || `${normalizeChampionnatRound(match.round || "round_of_32")}-${sanitizeText(match.playerAUid || match.playerA || "", 60)}-${sanitizeText(match.playerBUid || match.playerB || "", 60)}`;
+  const roomId = sanitizeText(match.roomId || match.room || matchId, 160);
+  const playerAUid = sanitizeText(match.playerAUid || "", 160);
+  const playerBUid = sanitizeText(match.playerBUid || "", 160);
+  const playerAName = sanitizeText(match.playerAName || match.playerA || playerAUid || "Joueur A", 160);
+  const playerBName = sanitizeText(match.playerBName || match.playerB || playerBUid || "Joueur B", 160);
+  const status = normalizeChampionnatMatchStatus(match.status || "scheduled");
+  return {
+    matchId,
+    id: matchId,
+    round: normalizeChampionnatRound(match.round || "round_of_32"),
+    playerAUid,
+    playerBUid,
+    playerA: playerAUid || playerAName,
+    playerB: playerBUid || playerBName,
+    playerAName,
+    playerBName,
+    scoreA: safeInt(match.scoreA),
+    scoreB: safeInt(match.scoreB),
+    bestOf: safeInt(match.bestOf || CHAMPIONNAT_DEFAULT_BEST_OF) || CHAMPIONNAT_DEFAULT_BEST_OF,
+    format: sanitizeText(match.format || "bo3", 32).toLowerCase() || "bo3",
+    roomId,
+    room: roomId,
+    order: safeInt(match.order || match.scheduledAtMs || nowMs),
+    scheduledAtMs: safeSignedInt(match.scheduledAtMs || match.scheduledAt || nowMs),
+    startedAtMs: safeSignedInt(match.startedAtMs || 0),
+    finishedAtMs: safeSignedInt(match.finishedAtMs || 0),
+    status,
+    publicLiveView: match.publicLiveView !== false,
+    winnerUid: sanitizeText(match.winnerUid || "", 160),
+    winnerName: sanitizeText(match.winnerName || "", 160),
+    notes: sanitizeText(match.notes || "", 240),
+    updatedAtMs: nowMs,
+  };
+}
+
+function buildChampionnatStateSnapshot(rawState = {}, options = {}) {
+  const nowMs = safeSignedInt(options.nowMs || Date.now()) || Date.now();
+  const inputChampion = rawState.champion && typeof rawState.champion === "object" ? rawState.champion : {};
+  const participants = championnatSortParticipants(
+    (Array.isArray(rawState.participants) ? rawState.participants : []).map((item) => buildChampionnatParticipantRecord(item, safeSignedInt(item.updatedAtMs || item.registeredAtMs || item.createdAtMs || nowMs) || nowMs))
+  ).slice(0, CHAMPIONNAT_TOTAL_SLOTS);
+  const matches = championnatSortMatches(
+    (Array.isArray(rawState.matches) ? rawState.matches : []).map((item) => buildChampionnatMatchRecord(item, safeSignedInt(item.updatedAtMs || item.scheduledAtMs || nowMs) || nowMs))
+  );
+  const liveMatch = rawState.liveMatch
+    ? buildChampionnatMatchRecord(rawState.liveMatch, safeSignedInt(rawState.liveMatch.updatedAtMs || rawState.liveMatch.startedAtMs || nowMs) || nowMs)
+    : null;
+
+  const champion = {
+    totalSlots: safeInt(inputChampion.totalSlots || CHAMPIONNAT_TOTAL_SLOTS) || CHAMPIONNAT_TOTAL_SLOTS,
+    registeredCount: safeInt(inputChampion.registeredCount || participants.length),
+    status: normalizeChampionnatStatus(inputChampion.status || (participants.length >= CHAMPIONNAT_TOTAL_SLOTS ? "ready" : "collecting")),
+    registrationFeeHtg: safeInt(inputChampion.registrationFeeHtg || CHAMPIONNAT_REGISTRATION_FEE_HTG) || CHAMPIONNAT_REGISTRATION_FEE_HTG,
+    matchFeeDoes: safeInt(inputChampion.matchFeeDoes || CHAMPIONNAT_MATCH_FEE_DOES) || CHAMPIONNAT_MATCH_FEE_DOES,
+    bestOf: safeInt(inputChampion.bestOf || CHAMPIONNAT_DEFAULT_BEST_OF) || CHAMPIONNAT_DEFAULT_BEST_OF,
+    prizes: {
+      first: safeInt(inputChampion.prizes?.first || CHAMPIONNAT_DEFAULT_PRIZES.first) || CHAMPIONNAT_DEFAULT_PRIZES.first,
+      second: safeInt(inputChampion.prizes?.second || CHAMPIONNAT_DEFAULT_PRIZES.second) || CHAMPIONNAT_DEFAULT_PRIZES.second,
+      third: safeInt(inputChampion.prizes?.third || CHAMPIONNAT_DEFAULT_PRIZES.third) || CHAMPIONNAT_DEFAULT_PRIZES.third,
+    },
+    manualRounds: Array.isArray(inputChampion.manualRounds) && inputChampion.manualRounds.length
+      ? inputChampion.manualRounds.map((round) => normalizeChampionnatRound(round)).slice(0, 3)
+      : ["round_of_32", "round_of_16", "quarter_final"],
+    automatedRounds: Array.isArray(inputChampion.automatedRounds) && inputChampion.automatedRounds.length
+      ? inputChampion.automatedRounds.map((round) => normalizeChampionnatRound(round)).slice(0, 3)
+      : ["semi_final", "final"],
+  };
+
+  champion.registeredCount = Math.min(CHAMPIONNAT_TOTAL_SLOTS, Math.max(champion.registeredCount, participants.length));
+  if (champion.registeredCount < champion.totalSlots && champion.status === "ready") {
+    champion.status = "collecting";
+  }
+  if (champion.registeredCount >= champion.totalSlots && champion.status === "collecting") {
+    champion.status = "ready";
+  }
+  if (liveMatch && liveMatch.status === "live" && champion.status !== "finished") {
+    champion.status = "running";
+  }
+  if (matches.some((match) => match.status === "live") && champion.status !== "finished") {
+    champion.status = "running";
+  }
+
+  return {
+    champion,
+    participants,
+    matches,
+    liveMatch: liveMatch && liveMatch.publicLiveView !== false ? liveMatch : null,
+    updatedAtMs: safeSignedInt(rawState.updatedAtMs || nowMs) || nowMs,
+    updatedByUid: sanitizeText(rawState.updatedByUid || "", 160),
+    updatedByEmail: sanitizeEmail(rawState.updatedByEmail || "", 160),
+  };
+}
+
+function buildChampionnatPublicMatchView(match = {}, uid = "") {
+  const normalized = buildChampionnatMatchRecord(match, safeSignedInt(match.updatedAtMs || Date.now()) || Date.now());
+  const canJoin = Boolean(normalized.roomId)
+    && ["ready", "live", "scheduled"].includes(normalized.status)
+    && !!sanitizeText(uid || "", 160);
+  return {
+    ...normalized,
+    joinUrl: normalized.roomId ? `./championnat-salle.html?room=${encodeURIComponent(normalized.roomId)}` : "",
+    canJoin,
+    publicLiveView: normalized.publicLiveView !== false,
+  };
+}
+
+function buildChampionnatSearchRecord(clientId = "", raw = {}) {
+  const displayName = sanitizeText(raw.name || raw.displayName || raw.username || raw.email || clientId || "Utilisateur", 160);
+  return {
+    uid: clientId,
+    id: clientId,
+    displayName,
+    username: sanitizeUsername(raw.username || "", 24),
+    email: sanitizeEmail(raw.email || "", 160),
+    phone: sanitizePhone(raw.phone || raw.customerPhone || "", 40),
+    status: raw.paymentStatus || raw.status || "candidate",
+    paymentStatus: raw.paymentStatus || raw.status || "candidate",
+    note: sanitizeText(raw.note || raw.paymentNote || "", 240),
+    createdAtMs: safeSignedInt(raw.createdAtMs || raw.createdAt || 0),
+    updatedAtMs: safeSignedInt(raw.updatedAtMs || raw.updatedAt || 0),
+    lastSeenAtMs: safeSignedInt(raw.lastSeenAtMs || raw.lastSeenAt || 0),
+  };
+}
+
+async function readChampionnatState() {
+  const snap = await championnatStateRef().get();
+  const raw = snap.exists ? (snap.data() || {}) : buildChampionnatDefaultState();
+  return buildChampionnatStateSnapshot(raw);
+}
+
+async function writeChampionnatState(mutator, options = {}) {
+  const ref = championnatStateRef();
+  const nowMs = safeSignedInt(options.nowMs || Date.now()) || Date.now();
+
+  return db.runTransaction(async (tx) => {
+    const snap = await tx.get(ref);
+    const raw = snap.exists ? (snap.data() || {}) : buildChampionnatDefaultState(nowMs);
+    const current = buildChampionnatStateSnapshot(raw, { nowMs });
+    const next = await mutator(current, { nowMs, tx, ref });
+    const normalized = buildChampionnatStateSnapshot(next || current, { nowMs });
+    tx.set(ref, {
+      ...normalized,
+      updatedAtMs: nowMs,
+      updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      version: "championnat_mopyon_v1",
+    }, { merge: false });
+    return normalized;
+  });
 }
 
 function normalizeSurveyStatus(value, fallback = "draft") {
@@ -21453,6 +21733,471 @@ exports.setHomeHeroConfigSecure = publicOnCall("setHomeHeroConfigSecure", async 
     updatedAtMs: nowMs,
   };
 });
+
+exports.getPublicChampionnatSnapshotSecure = publicOnCall("getPublicChampionnatSnapshotSecure", async (request) => {
+  const snapshot = await readChampionnatState();
+  const uid = sanitizeText(request.auth?.uid || "", 160);
+  const participant = uid
+    ? snapshot.participants.find((item) => String(item.uid || "").trim() === uid)
+    : null;
+  const participantAliases = participant
+    ? [
+      participant.uid,
+      participant.displayName,
+      participant.username,
+      participant.email,
+      participant.phone,
+    ]
+      .map((value) => sanitizeText(value || "", 160))
+      .filter(Boolean)
+    : [];
+  const myMatch = uid
+    ? snapshot.matches.find((match) =>
+      String(match.playerAUid || "").trim() === uid
+      || String(match.playerBUid || "").trim() === uid
+      || String(match.playerA || "").trim() === uid
+      || String(match.playerB || "").trim() === uid
+      || participantAliases.includes(String(match.playerAName || "").trim())
+      || participantAliases.includes(String(match.playerBName || "").trim()))
+    : null;
+
+  return {
+    ok: true,
+    champion: snapshot.champion,
+    participants: snapshot.participants,
+    matches: snapshot.matches,
+    liveMatch: snapshot.liveMatch,
+    myMatch: myMatch ? buildChampionnatPublicMatchView(myMatch, uid) : null,
+    updatedAtMs: snapshot.updatedAtMs,
+  };
+}, { minInstances: 1 });
+
+exports.getChampionnatDashboardSnapshotSecure = publicOnCall("getChampionnatDashboardSnapshotSecure", async (request) => {
+  assertFinanceAdmin(request);
+  const snapshot = await readChampionnatState();
+  return {
+    ok: true,
+    champion: snapshot.champion,
+    participants: snapshot.participants,
+    matches: snapshot.matches,
+    liveMatch: snapshot.liveMatch,
+    updatedAtMs: snapshot.updatedAtMs,
+  };
+}, { minInstances: 1 });
+
+exports.searchChampionnatUsersSecure = publicOnCall("searchChampionnatUsersSecure", async (request) => {
+  assertFinanceAdmin(request);
+  const payload = request.data && typeof request.data === "object" ? request.data : {};
+  const rawQuery = sanitizeText(payload.query || "", 160);
+  const normalizedQuery = normalizeSearchText(rawQuery);
+  const queryDigits = phoneDigits(rawQuery);
+  const queryUsername = sanitizeUsername(rawQuery || "", 24);
+  const queryEmail = sanitizeEmail(rawQuery || "", 160);
+  const results = new Map();
+
+  if (!rawQuery) {
+    return { ok: true, items: [] };
+  }
+
+  const addClientSnap = (docSnap) => {
+    if (!docSnap?.exists) return;
+    results.set(docSnap.id, buildChampionnatSearchRecord(docSnap.id, docSnap.data() || {}));
+  };
+
+  const addClientDocs = (snap) => {
+    (snap?.docs || []).forEach((docSnap) => addClientSnap(docSnap));
+  };
+
+  if (rawQuery.length >= 20 && /^[A-Za-z0-9_-]+$/.test(rawQuery)) {
+    addClientSnap(await walletRef(rawQuery).get());
+  }
+
+  const exactLookups = [];
+  if (queryEmail) {
+    exactLookups.push(db.collection(CLIENTS_COLLECTION).where("email", "==", queryEmail).limit(6).get());
+  }
+  if (queryUsername) {
+    exactLookups.push(db.collection(CLIENTS_COLLECTION).where("username", "==", queryUsername).limit(6).get());
+  }
+  if (queryDigits.length >= 8) {
+    const sanitizedPhone = sanitizePhone(rawQuery, 40);
+    exactLookups.push(db.collection(CLIENTS_COLLECTION).where("phone", "==", sanitizedPhone).limit(6).get());
+  }
+
+  if (exactLookups.length) {
+    const exactSnaps = await Promise.allSettled(exactLookups);
+    exactSnaps.forEach((entry) => {
+      if (entry.status === "fulfilled") {
+        addClientDocs(entry.value);
+      }
+    });
+  }
+
+  if (results.size < 12 && normalizedQuery.length >= 2) {
+    let fallbackSnap = null;
+    try {
+      fallbackSnap = await db.collection(CLIENTS_COLLECTION)
+        .orderBy("lastSeenAtMs", "desc")
+        .limit(250)
+        .get();
+    } catch (_) {
+      fallbackSnap = await db.collection(CLIENTS_COLLECTION)
+        .limit(250)
+        .get();
+    }
+
+    (fallbackSnap?.docs || []).forEach((docSnap) => {
+      if (results.size >= 12) return;
+      const raw = docSnap.data() || {};
+      const haystack = [
+        docSnap.id,
+        raw.uid,
+        raw.name,
+        raw.displayName,
+        raw.username,
+        raw.email,
+        raw.phone,
+      ]
+        .map((value) => normalizeSearchText(value))
+        .filter(Boolean)
+        .join(" ");
+      const phoneHaystack = [
+        phoneDigits(raw.phone || ""),
+        phoneDigits(raw.customerPhone || ""),
+      ].filter(Boolean).join(" ");
+
+      const match = haystack.includes(normalizedQuery)
+        || (queryDigits.length >= 4 && phoneHaystack.includes(queryDigits));
+      if (match) {
+        addClientSnap(docSnap);
+      }
+    });
+  }
+
+  const items = Array.from(results.values())
+    .sort((left, right) =>
+      safeSignedInt(right.lastSeenAtMs) - safeSignedInt(left.lastSeenAtMs)
+      || safeSignedInt(right.createdAtMs) - safeSignedInt(left.createdAtMs)
+      || String(left.displayName || left.email || left.id).localeCompare(String(right.displayName || right.email || right.id), "fr")
+    )
+    .slice(0, 12);
+
+  return {
+    ok: true,
+    query: rawQuery,
+    items,
+  };
+}, { invoker: "public" });
+
+exports.registerChampionnatParticipantSecure = publicOnCall("registerChampionnatParticipantSecure", async (request) => {
+  const { uid: adminUid, email: adminEmail } = assertFinanceAdmin(request);
+  const payload = request.data && typeof request.data === "object" ? request.data : {};
+  const participantUid = sanitizeText(payload.uid || payload.userId || payload.id || "", 160);
+  if (!participantUid) {
+    throw new HttpsError("invalid-argument", "UID du participant requis.");
+  }
+
+  const result = await writeChampionnatState(async (current, context) => {
+    const nowMs = context.nowMs;
+    const currentParticipant = current.participants.find((item) => String(item.uid || "") === participantUid);
+    const nextParticipant = buildChampionnatParticipantRecord({
+      ...currentParticipant,
+      ...payload,
+      uid: participantUid,
+      displayName: payload.displayName || currentParticipant?.displayName || payload.username || payload.name || participantUid,
+      username: payload.username || currentParticipant?.username || "",
+      email: payload.email || currentParticipant?.email || "",
+      phone: payload.phone || currentParticipant?.phone || "",
+      note: payload.note || currentParticipant?.note || "Paiement validé par l'agent.",
+      status: "registered",
+      round: payload.round || currentParticipant?.round || "registered",
+      paymentAmountHtg: safeInt(payload.paymentAmountHtg || currentParticipant?.paymentAmountHtg || CHAMPIONNAT_REGISTRATION_FEE_HTG),
+      paymentStatus: payload.paymentStatus || currentParticipant?.paymentStatus || "approved",
+      paymentConfirmedAtMs: nowMs,
+      registeredAtMs: currentParticipant?.registeredAtMs || nowMs,
+      createdAtMs: currentParticipant?.createdAtMs || nowMs,
+    }, nowMs);
+
+    let nextParticipants = [...current.participants];
+    const existingIndex = nextParticipants.findIndex((item) => String(item.uid || "") === participantUid);
+    if (existingIndex >= 0) {
+      nextParticipants[existingIndex] = { ...nextParticipants[existingIndex], ...nextParticipant };
+    } else {
+      if (nextParticipants.length >= CHAMPIONNAT_TOTAL_SLOTS) {
+        throw new HttpsError("failed-precondition", "Le championnat a déjà atteint 64 participants.");
+      }
+      nextParticipants.push(nextParticipant);
+    }
+
+    nextParticipants = championnatSortParticipants(nextParticipants).map((item, index) => ({
+      ...item,
+      rank: item.rank > 0 ? item.rank : index + 1,
+      position: item.position > 0 ? item.position : index + 1,
+      seed: item.seed > 0 ? item.seed : index + 1,
+      updatedAtMs: nowMs,
+    }));
+
+    const nextChampion = {
+      ...current.champion,
+      registeredCount: nextParticipants.length,
+      status: nextParticipants.length >= current.champion.totalSlots ? "ready" : "collecting",
+      updatedAtMs: nowMs,
+    };
+
+    return {
+      ...current,
+      champion: nextChampion,
+      participants: nextParticipants,
+    };
+  }, { nowMs: Date.now() });
+
+  const participant = result.participants.find((item) => String(item.uid || "") === participantUid) || null;
+  return {
+    ok: true,
+    participant,
+    champion: result.champion,
+    participants: result.participants,
+    updatedBy: {
+      uid: adminUid,
+      email: sanitizeEmail(adminEmail || "", 160),
+    },
+  };
+}, { invoker: "public" });
+
+exports.updateChampionnatParticipantSecure = publicOnCall("updateChampionnatParticipantSecure", async (request) => {
+  const { uid: adminUid, email: adminEmail } = assertFinanceAdmin(request);
+  const payload = request.data && typeof request.data === "object" ? request.data : {};
+  const participantUid = sanitizeText(payload.uid || payload.userId || payload.id || "", 160);
+  if (!participantUid) {
+    throw new HttpsError("invalid-argument", "UID du participant requis.");
+  }
+
+  const result = await writeChampionnatState(async (current, context) => {
+    const nowMs = context.nowMs;
+    const index = current.participants.findIndex((item) => String(item.uid || "") === participantUid);
+    if (index < 0) {
+      throw new HttpsError("not-found", "Participant introuvable.");
+    }
+
+    const existing = current.participants[index];
+    const patch = {
+      ...existing,
+      displayName: payload.displayName || existing.displayName,
+      username: payload.username || existing.username,
+      email: payload.email || existing.email,
+      phone: payload.phone || existing.phone,
+      note: payload.note || existing.note,
+      status: payload.status ? normalizeChampionnatParticipantStatus(payload.status, existing.status) : existing.status,
+      round: payload.round ? normalizeChampionnatParticipantRound(payload.round, existing.round) : existing.round,
+      rank: safeInt(payload.rank || existing.rank),
+      position: safeInt(payload.position || existing.position || existing.rank),
+      seed: safeInt(payload.seed || existing.seed || existing.rank),
+      paymentAmountHtg: safeInt(payload.paymentAmountHtg || existing.paymentAmountHtg || CHAMPIONNAT_REGISTRATION_FEE_HTG),
+      paymentStatus: payload.paymentStatus || existing.paymentStatus,
+      paymentConfirmedAtMs: safeSignedInt(payload.paymentConfirmedAtMs || existing.paymentConfirmedAtMs || nowMs),
+      updatedAtMs: nowMs,
+    };
+
+    current.participants[index] = buildChampionnatParticipantRecord(patch, nowMs);
+    const participants = championnatSortParticipants(current.participants).map((item, idx) => ({
+      ...item,
+      rank: item.rank > 0 ? item.rank : idx + 1,
+      position: item.position > 0 ? item.position : idx + 1,
+      seed: item.seed > 0 ? item.seed : idx + 1,
+      updatedAtMs: nowMs,
+    }));
+
+    const champion = {
+      ...current.champion,
+      registeredCount: participants.length,
+      status: participants.length >= current.champion.totalSlots && current.champion.status === "collecting"
+        ? "ready"
+        : current.champion.status,
+      updatedAtMs: nowMs,
+    };
+
+    return {
+      ...current,
+      champion,
+      participants,
+    };
+  }, { nowMs: Date.now() });
+
+  return {
+    ok: true,
+    participant: result.participants.find((item) => String(item.uid || "") === participantUid) || null,
+    champion: result.champion,
+    participants: result.participants,
+    updatedBy: {
+      uid: adminUid,
+      email: sanitizeEmail(adminEmail || "", 160),
+    },
+  };
+}, { invoker: "public" });
+
+exports.listChampionnatParticipantsSecure = publicOnCall("listChampionnatParticipantsSecure", async (request) => {
+  assertFinanceAdmin(request);
+  const snapshot = await readChampionnatState();
+  return {
+    ok: true,
+    items: snapshot.participants,
+    total: snapshot.participants.length,
+  };
+}, { invoker: "public" });
+
+exports.listChampionnatMatchesSecure = publicOnCall("listChampionnatMatchesSecure", async (request) => {
+  assertFinanceAdmin(request);
+  const snapshot = await readChampionnatState();
+  return {
+    ok: true,
+    items: snapshot.matches,
+    total: snapshot.matches.length,
+    liveMatch: snapshot.liveMatch,
+  };
+}, { invoker: "public" });
+
+exports.upsertChampionnatMatchSecure = publicOnCall("upsertChampionnatMatchSecure", async (request) => {
+  const { uid: adminUid, email: adminEmail } = assertFinanceAdmin(request);
+  const payload = request.data && typeof request.data === "object" ? request.data : {};
+
+  const result = await writeChampionnatState(async (current, context) => {
+    const nowMs = context.nowMs;
+    const nextMatch = buildChampionnatMatchRecord(payload, nowMs);
+    const nextMatches = [...current.matches];
+    const index = nextMatches.findIndex((item) => String(item.matchId || item.id || "") === nextMatch.matchId);
+    if (index >= 0) {
+      nextMatches[index] = { ...nextMatches[index], ...nextMatch };
+    } else {
+      nextMatches.push(nextMatch);
+    }
+
+    const nextLive = nextMatch.status === "live"
+      ? nextMatch
+      : current.liveMatch && String(current.liveMatch.matchId || current.liveMatch.id || "") === nextMatch.matchId
+        ? { ...current.liveMatch, ...nextMatch }
+        : current.liveMatch;
+
+    const champion = {
+      ...current.champion,
+      status: nextMatch.status === "live" ? "running" : current.champion.status,
+      updatedAtMs: nowMs,
+    };
+
+    return {
+      ...current,
+      champion,
+      matches: championnatSortMatches(nextMatches),
+      liveMatch: nextLive,
+    };
+  }, { nowMs: Date.now() });
+
+  return {
+    ok: true,
+    match: result.matches.find((item) => String(item.matchId || item.id || "") === String(buildChampionnatMatchRecord(payload).matchId)) || null,
+    liveMatch: result.liveMatch,
+    champion: result.champion,
+    updatedBy: {
+      uid: adminUid,
+      email: sanitizeEmail(adminEmail || "", 160),
+    },
+  };
+}, { invoker: "public" });
+
+exports.updateChampionnatMatchSecure = publicOnCall("updateChampionnatMatchSecure", async (request) => {
+  const { uid: adminUid, email: adminEmail } = assertFinanceAdmin(request);
+  const payload = request.data && typeof request.data === "object" ? request.data : {};
+  const matchId = sanitizeText(payload.matchId || payload.id || "", 160);
+  if (!matchId) {
+    throw new HttpsError("invalid-argument", "matchId requis.");
+  }
+
+  const result = await writeChampionnatState(async (current, context) => {
+    const nowMs = context.nowMs;
+    const index = current.matches.findIndex((item) => String(item.matchId || item.id || "") === matchId);
+    if (index < 0) {
+      throw new HttpsError("not-found", "Match introuvable.");
+    }
+
+    const nextMatch = buildChampionnatMatchRecord({
+      ...current.matches[index],
+      ...payload,
+      matchId,
+    }, nowMs);
+    current.matches[index] = nextMatch;
+
+    const nextLive = nextMatch.status === "live"
+      ? nextMatch
+      : current.liveMatch && String(current.liveMatch.matchId || current.liveMatch.id || "") === matchId
+        ? { ...current.liveMatch, ...nextMatch }
+        : current.liveMatch;
+
+    const champion = {
+      ...current.champion,
+      status: nextMatch.status === "live" ? "running" : current.champion.status,
+      updatedAtMs: nowMs,
+    };
+
+    return {
+      ...current,
+      champion,
+      matches: championnatSortMatches(current.matches),
+      liveMatch: nextLive,
+    };
+  }, { nowMs: Date.now() });
+
+  return {
+    ok: true,
+    match: result.matches.find((item) => String(item.matchId || item.id || "") === matchId) || null,
+    liveMatch: result.liveMatch,
+    champion: result.champion,
+    updatedBy: {
+      uid: adminUid,
+      email: sanitizeEmail(adminEmail || "", 160),
+    },
+  };
+}, { invoker: "public" });
+
+exports.updateChampionnatLiveStateSecure = publicOnCall("updateChampionnatLiveStateSecure", async (request) => {
+  const { uid: adminUid, email: adminEmail } = assertFinanceAdmin(request);
+  const payload = request.data && typeof request.data === "object" ? request.data : {};
+
+  const result = await writeChampionnatState(async (current, context) => {
+    const nowMs = context.nowMs;
+    const liveMatch = buildChampionnatMatchRecord({
+      ...payload,
+      status: "live",
+      publicLiveView: payload.publicLiveView !== false,
+    }, nowMs);
+    const nextMatches = [...current.matches];
+    const index = nextMatches.findIndex((item) => String(item.matchId || item.id || "") === liveMatch.matchId);
+    if (index >= 0) {
+      nextMatches[index] = { ...nextMatches[index], ...liveMatch };
+    } else {
+      nextMatches.push(liveMatch);
+    }
+
+    return {
+      ...current,
+      champion: {
+        ...current.champion,
+        status: "running",
+        updatedAtMs: nowMs,
+      },
+      matches: championnatSortMatches(nextMatches),
+      liveMatch,
+    };
+  }, { nowMs: Date.now() });
+
+  return {
+    ok: true,
+    liveMatch: result.liveMatch,
+    champion: result.champion,
+    updatedBy: {
+      uid: adminUid,
+      email: sanitizeEmail(adminEmail || "", 160),
+    },
+  };
+}, { invoker: "public" });
 
 exports.getRecruitmentCampaignSnapshotSecure = publicOnCall("getRecruitmentCampaignSnapshotSecure", async () => {
   const snap = await db.collection(ANALYTICS_META_COLLECTION).doc(RECRUITMENT_CAMPAIGN_DOC).get();

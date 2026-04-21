@@ -5,7 +5,6 @@ const rightScoreEl = document.getElementById("rightScore");
 const rightPlayerLabelEl = document.getElementById("rightPlayerLabel");
 const matchStatusEl = document.getElementById("matchStatus");
 const replayBtn = document.getElementById("replayBtn");
-const friendBtn = document.getElementById("friendBtn");
 
 const WIDTH = canvas.width;
 const HEIGHT = canvas.height;
@@ -147,7 +146,27 @@ function parseAiProfile() {
   }
 }
 
+function parseFriendMode() {
+  try {
+    const params = new URLSearchParams(window.location.search);
+    return params.get("friendMode") === "1";
+  } catch (_) {
+    return false;
+  }
+}
+
+function parseOpponentName() {
+  try {
+    const params = new URLSearchParams(window.location.search);
+    const raw = String(params.get("opponentName") || "").trim();
+    return raw.slice(0, 40);
+  } catch (_) {
+    return "";
+  }
+}
+
 const aiProfile = parseAiProfile();
+const friendMode = parseFriendMode();
 const matchId = `pong_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 9)}`;
 function buildOpponentHandle() {
   const baseName = (OPPONENT_NAMES[Math.floor(Math.random() * OPPONENT_NAMES.length)] || "Adversaire").toLowerCase();
@@ -155,7 +174,7 @@ function buildOpponentHandle() {
   return `${baseName}${suffix}`;
 }
 
-const opponentName = buildOpponentHandle();
+const opponentName = parseOpponentName() || buildOpponentHandle();
 
 let leftScore = 0;
 let rightScore = 0;
@@ -227,7 +246,7 @@ function startRoundCountdown() {
 
 function startRoundNow() {
   roundRunning = true;
-  updateMatchStatus("Partie en cours");
+  updateMatchStatus(friendMode ? "Salle entre amis · Partie en cours" : "Partie en cours");
 }
 
 function moveAiPaddle() {
@@ -465,10 +484,6 @@ canvas.addEventListener("pointermove", (event) => {
 
 replayBtn?.addEventListener("click", () => {
   window.parent?.postMessage({ type: "pong:playAgain" }, window.location.origin);
-});
-
-friendBtn?.addEventListener("click", () => {
-  updateMatchStatus("Fonctionnalite Jouer avec un ami pas encore disponible.");
 });
 
 window.addEventListener("message", (event) => {
