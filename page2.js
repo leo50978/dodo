@@ -1721,13 +1721,24 @@ export function renderPage2(user, options = {}) {
         </div>
         <h3 class="text-[1.35rem] font-bold leading-tight sm:text-[1.55rem]">Bienvenue dans le championnat Mopyon</h3>
         <p class="mt-2 text-sm leading-6 text-white/82 sm:text-[15px]">
-          Quand tu cliques sur <span class="font-semibold text-white">Championnat Mopyon</span>, tu ouvres le championnat officiel avec la progression, le classement et l'accès à ton match.
+          Si tu veux t'inscrire au championnat Mopyon, contacte un agent. L'inscription coûte
+          <span class="font-semibold text-white">150 gourdes</span>.
         </p>
         <div class="mt-4 rounded-[24px] border border-[#ffb26e]/22 bg-[#F57C00]/10 p-4">
           <p class="text-sm leading-6 text-white/90">
-            Le championnat reste en <span class="font-semibold text-white">élimination directe</span> et les premiers tours sont saisis manuellement par le staff avant la progression normale du bracket.
+            Le vainqueur remportera <span class="font-semibold text-white">5000 gourdes</span>,
+            le 2e <span class="font-semibold text-white">2000 gourdes</span> et le 3e
+            <span class="font-semibold text-white">1000 gourdes</span>.
           </p>
         </div>
+        <a
+          href="https://chat.whatsapp.com/I8VfW1Tdv6nF1d7ZkMfOg0"
+          target="_blank"
+          rel="noreferrer"
+          class="mt-4 inline-flex h-12 w-full items-center justify-center rounded-[18px] border border-[#7fe2b6]/35 bg-[#1fbf75] px-4 text-sm font-semibold text-white shadow-[9px_9px_20px_rgba(24,94,60,0.38),-7px_-7px_16px_rgba(127,226,182,0.18)] transition hover:-translate-y-0.5"
+        >
+          Intègre le groupe WhatsApp
+        </a>
         <button id="tournamentIntroContinueBtn" type="button" class="mt-5 h-12 w-full rounded-[18px] border border-[#ffb26e] bg-[#F57C00] text-sm font-semibold text-white shadow-[9px_9px_20px_rgba(155,78,25,0.45),-7px_-7px_16px_rgba(255,173,96,0.2)] transition hover:-translate-y-0.5 sm:mt-6 sm:h-12 sm:text-[15px]">
           Continuer
         </button>
