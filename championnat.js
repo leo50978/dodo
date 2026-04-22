@@ -156,8 +156,8 @@ function roundLabel(round = "") {
 
 function normalizeParticipant(participant = {}, fallbackRank = 0) {
   const rank = safeInt(participant.rank || participant.position || participant.seed || fallbackRank || 0);
-  const displayName = String(participant.displayName || participant.username || participant.name || participant.uid || `participant-${fallbackRank}`).trim();
-  const uid = String(participant.uid || participant.userId || participant.id || `placeholder-${fallbackRank}`).trim();
+  const displayName = String(participant.displayName || participant.username || participant.name || participant.uid || "Joueur confirmé").trim();
+  const uid = String(participant.uid || participant.userId || participant.id || "").trim();
   return {
     ...participant,
     rank: rank > 0 ? rank : fallbackRank,
@@ -173,7 +173,7 @@ function buildPlaceholderParticipant(index, rank) {
   return {
     rank,
     displayName: label,
-    uid: `placeholder-${String(rank).padStart(2, "0")}`,
+    uid: "",
     status: "registered",
     round: "registered",
     note: "Inscription validée",
@@ -258,7 +258,9 @@ function renderStandings() {
       <div class="row-top">
         <div>
           <p class="row-title">#${formatInt(participant.rank || index + 1)} · ${escapeHtml(participant.displayName || participant.username || participant.uid || "Joueur")}</p>
-          <p class="row-sub">${escapeHtml(participant.uid || participant.userId || "UID inconnu")} · ${escapeHtml(participant.note || "Inscription validée")}</p>
+          <p class="row-sub">${participant.isPlaceholder
+            ? escapeHtml(participant.note || "Inscription validée")
+            : `${escapeHtml(participant.uid || participant.userId || "UID inconnu")} · ${escapeHtml(participant.note || "Inscription validée")}`}</p>
         </div>
         <span class="badge ${badgeClass(participant.status)}">${escapeHtml(statusLabel(participant.status))}</span>
       </div>
