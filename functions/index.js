@@ -296,6 +296,7 @@ const DEFAULT_WHATSAPP_MODAL_CONTACTS = Object.freeze({
   withdrawal_assistance: "50940507232",
   welcome_deposit_modal: "50940507232",
   recruitment_modal: "50940507232",
+  championnat_mopyon: "50940507232",
 });
 const DEFAULT_HOME_HERO_SLIDES = Object.freeze([
   Object.freeze({ name: "hero.jpg", enabled: true, sortOrder: 10 }),
@@ -4028,6 +4029,10 @@ function normalizeWhatsappModalContacts(rawContacts = {}) {
     withdrawal_assistance: sanitizeWhatsappDigits(source.withdrawal_assistance, source.support_default || DEFAULT_WHATSAPP_MODAL_CONTACTS.withdrawal_assistance),
     welcome_deposit_modal: sanitizeWhatsappDigits(source.welcome_deposit_modal, source.support_default || DEFAULT_WHATSAPP_MODAL_CONTACTS.welcome_deposit_modal),
     recruitment_modal: sanitizeWhatsappDigits(source.recruitment_modal, source.support_default || DEFAULT_WHATSAPP_MODAL_CONTACTS.recruitment_modal),
+    championnat_mopyon: sanitizeWhatsappDigits(
+      source.championnat_mopyon,
+      source.support_default || DEFAULT_WHATSAPP_MODAL_CONTACTS.championnat_mopyon,
+    ),
   };
 }
 
