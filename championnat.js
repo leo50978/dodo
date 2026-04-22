@@ -2,6 +2,69 @@ import { db, doc, getDoc } from "./firebase-init.js";
 import { getPublicWhatsappModalConfigSecure } from "./secure-functions.js";
 
 const CHAMPIONNAT_DOC_PATH = ["championnats", "mopyon_current"];
+const PUBLIC_MARKETING_MIN_COUNT = 61;
+const PUBLIC_MARKETING_PLACEHOLDERS = [
+  "junio45",
+  "kervens12",
+  "wilner08",
+  "derick19",
+  "joseph04",
+  "marlon27",
+  "bryan33",
+  "david16",
+  "edwin51",
+  "robin22",
+  "simon39",
+  "nicolas17",
+  "steven26",
+  "josue48",
+  "carlo11",
+  "francois07",
+  "wilfrid24",
+  "mackenson31",
+  "jordan14",
+  "lucky03",
+  "melvin28",
+  "renel05",
+  "jeanlouis18",
+  "pascal42",
+  "wendy09",
+  "darline15",
+  "emmanuel36",
+  "cesar21",
+  "erick30",
+  "fritz13",
+  "raul41",
+  "pierre20",
+  "lucas52",
+  "kelvin23",
+  "andy37",
+  "mario29",
+  "alexandre06",
+  "yanick34",
+  "quentin10",
+  "josiane44",
+  "olivier25",
+  "patrick38",
+  "sandra40",
+  "benson43",
+  "mikael46",
+  "edson47",
+  "liliane49",
+  "jonathan50",
+  "marcel53",
+  "roderick54",
+  "emile55",
+  "samuel56",
+  "lucie57",
+  "kevin58",
+  "patrick59",
+  "daniel60",
+  "marie61",
+  "wilson62",
+  "alain63",
+  "presley64",
+];
 
 const dom = {
   progressFill: document.getElementById("championnatProgressFill"),
@@ -29,6 +92,8 @@ const state = {
     status: "collecting",
   },
   participants: [],
+  publicParticipants: [],
+  publicCount: 0,
   contactNumber: "",
   contactMessage: "Bonjour, je veux m'inscrire au championnat Mopyon.",
 };
@@ -89,6 +154,65 @@ function roundLabel(round = "") {
   return map[value] || "À venir";
 }
 
+function normalizeParticipant(participant = {}, fallbackRank = 0) {
+  const rank = safeInt(participant.rank || participant.position || participant.seed || fallbackRank || 0);
+  const displayName = String(participant.displayName || participant.username || participant.name || participant.uid || `participant-${fallbackRank}`).trim();
+  const uid = String(participant.uid || participant.userId || participant.id || `placeholder-${fallbackRank}`).trim();
+  return {
+    ...participant,
+    rank: rank > 0 ? rank : fallbackRank,
+    displayName,
+    uid,
+    status: String(participant.status || "registered"),
+    round: String(participant.round || "registered"),
+  };
+}
+
+function buildPlaceholderParticipant(index, rank) {
+  const label = PUBLIC_MARKETING_PLACEHOLDERS[index % PUBLIC_MARKETING_PLACEHOLDERS.length] || `junio${45 + index}`;
+  return {
+    rank,
+    displayName: label,
+    uid: `placeholder-${String(rank).padStart(2, "0")}`,
+    status: "registered",
+    round: "registered",
+    note: "Inscription validée",
+    isPlaceholder: true,
+  };
+}
+
+function sortRealParticipants(items = []) {
+  return [...items].map((item, index) => normalizeParticipant(item, index + 1)).sort((a, b) => {
+    const rankA = safeInt(a.rank || a.position || a.seed || 9999);
+    const rankB = safeInt(b.rank || b.position || b.seed || 9999);
+    if (rankA !== rankB) return rankA - rankB;
+    return String(a.displayName || a.username || a.uid || "").localeCompare(String(b.displayName || b.username || b.uid || ""));
+  });
+}
+
+function getPublicVisibleCount(realCount = 0) {
+  const total = getTotalSlots();
+  const safeReal = Math.max(0, safeInt(realCount));
+  const count = safeReal >= 62 ? safeReal : PUBLIC_MARKETING_MIN_COUNT;
+  return Math.max(0, Math.min(total, count));
+}
+
+function buildPublicParticipants() {
+  const realParticipants = sortRealParticipants(state.participants || []);
+  const visibleCount = getPublicVisibleCount(realParticipants.length);
+  const publicParticipants = realParticipants.slice(0, visibleCount);
+  const missingCount = Math.max(0, visibleCount - publicParticipants.length);
+
+  for (let index = 0; index < missingCount; index += 1) {
+    publicParticipants.push(buildPlaceholderParticipant(index, publicParticipants.length + 1));
+  }
+
+  return {
+    visibleCount,
+    publicParticipants,
+  };
+}
+
 function normalizeSnapshot(payload = {}) {
   const champion = payload.champion || payload.championship || payload.summary || {};
   return {
@@ -112,22 +236,17 @@ function getRegisteredCount() {
 }
 
 function updateProgress() {
-  const registered = getRegisteredCount();
+  const { visibleCount } = buildPublicParticipants();
   const total = getTotalSlots();
-  const pct = total > 0 ? Math.min(100, Math.round((registered / total) * 100)) : 0;
+  const pct = total > 0 ? Math.min(100, Math.round((visibleCount / total) * 100)) : 0;
   if (dom.progressFill) dom.progressFill.style.width = `${pct}%`;
-  if (dom.progressCopy) dom.progressCopy.textContent = `${formatInt(registered)} / ${formatInt(total)} participants validés.`;
-  if (dom.standingsCount) dom.standingsCount.textContent = `${formatInt(registered)} inscrits`;
+  if (dom.progressCopy) dom.progressCopy.textContent = `${formatInt(visibleCount)} / ${formatInt(total)} participants validés.`;
+  if (dom.standingsCount) dom.standingsCount.textContent = `${formatInt(visibleCount)} inscrits`;
 }
 
 function renderStandings() {
   if (!dom.standingsList) return;
-  const participants = [...(state.participants || [])].sort((a, b) => {
-    const rankA = safeInt(a.rank || a.position || a.seed || 9999);
-    const rankB = safeInt(b.rank || b.position || b.seed || 9999);
-    if (rankA !== rankB) return rankA - rankB;
-    return String(a.displayName || a.username || a.uid || "").localeCompare(String(b.displayName || b.username || b.uid || ""));
-  });
+  const { publicParticipants: participants } = buildPublicParticipants();
 
   if (!participants.length) {
     dom.standingsList.innerHTML = `<div class="empty">Aucun participant enregistré pour le moment.</div>`;
