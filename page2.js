@@ -151,7 +151,6 @@ const PAGE2_NON_CRITICAL_REFRESH_MS = 2 * 60 * 1000;
 const PAGE2_MORPION_INVITE_POLL_MS = 5000;
 const PAGE2_MORPION_STAKE_DOES = 500;
 const PAGE2_DAME_STAKE_DOES = 500;
-const ENABLE_DAME_MULTIPLAYER = false;
 const PAGE2_BOARD_GAME_MORPION = "morpion";
 const PAGE2_BOARD_GAME_DAME = "dame";
 let page2MorpionInvitePollTimer = null;
@@ -1048,7 +1047,6 @@ function isPage2BlockingOverlayOpen() {
     "sharePromoSuccessOverlay",
     "userImportanceOverlay",
     "gameModeOverlay",
-    "comingSoonOverlay",
     "stakeSelectionOverlay",
     "morpionStakeOverlay",
     "morpionFriendModeOverlay",
@@ -2082,52 +2080,62 @@ export function renderPage2(user, options = {}) {
   `);
 
   pageShell.insertAdjacentHTML("beforeend", `
-    <div id="comingSoonOverlay" class="fixed inset-0 z-[3459] hidden items-center justify-center bg-[#12192b]/72 px-[max(12px,env(safe-area-inset-left))] py-[max(12px,env(safe-area-inset-top))] backdrop-blur-sm sm:px-4 sm:py-4">
-      <div id="comingSoonPanel" class="w-full max-w-md overflow-hidden rounded-[28px] border border-white/15 bg-[linear-gradient(180deg,rgba(82,94,132,0.98),rgba(55,65,95,0.98))] text-white shadow-[0_-16px_38px_rgba(12,18,31,0.42)] sm:rounded-[30px] sm:border-white/20 sm:shadow-[14px_14px_34px_rgba(16,23,40,0.5),-10px_-10px_24px_rgba(112,126,165,0.2)]">
-        <div class="px-5 pb-5 pt-5 sm:px-6 sm:pb-6 sm:pt-6">
+    <div id="stakeSelectionOverlay" class="fixed inset-0 z-[3460] hidden items-end justify-center bg-[#12192b]/72 px-[max(12px,env(safe-area-inset-left))] pb-[max(12px,env(safe-area-inset-bottom))] pt-[max(12px,env(safe-area-inset-top))] backdrop-blur-sm sm:items-center sm:px-4 sm:py-4">
+      <div id="stakeSelectionPanel" class="w-full overflow-hidden rounded-[28px] border border-white/20 bg-[#3F4766]/88 text-white shadow-[0_-16px_38px_rgba(12,18,31,0.42)] sm:max-w-lg sm:rounded-[30px] sm:shadow-[14px_14px_34px_rgba(16,23,40,0.5),-10px_-10px_24px_rgba(112,126,165,0.2)]">
+        <div class="max-h-[calc(100dvh-max(24px,env(safe-area-inset-top))-max(24px,env(safe-area-inset-bottom)))] overflow-y-auto overscroll-contain px-4 pb-[max(1rem,env(safe-area-inset-bottom))] pt-4 sm:max-h-[min(88vh,760px)] sm:px-6 sm:pb-6 sm:pt-6">
           <div class="flex items-start justify-between gap-3">
-            <div class="min-w-0 pr-2">
-              <p class="text-xs font-semibold uppercase tracking-[0.24em] text-white/66">Mise a jour produit</p>
-              <h3 id="comingSoonTitle" class="mt-2 text-[1.2rem] font-bold leading-tight sm:text-[1.45rem]">Jeu en developpement</h3>
-            </div>
-            <button id="comingSoonClose" type="button" class="grid h-10 w-10 shrink-0 place-items-center rounded-full border border-white/20 bg-white/10 text-white">
+            <h3 id="stakeSelectionTitle" class="min-w-0 pr-2 text-[1.15rem] font-bold leading-tight sm:text-xl">Choisis ta mise</h3>
+            <button id="stakeSelectionClose" type="button" class="grid h-10 w-10 shrink-0 place-items-center rounded-full border border-white/20 bg-white/10 text-white">
               <i class="fa-solid fa-xmark"></i>
             </button>
           </div>
-          <p id="comingSoonCopy" class="mt-3 text-sm leading-6 text-white/84">
-            Ce jeu est actuellement en developpement et sera disponible bientot.
+          <p class="mt-2 text-[13px] leading-6 text-white/88 sm:text-sm">
+            Quand vous cliquez sur un des boutons, le jeu débute et la mise sélectionnée est automatiquement pariée selon la configuration active.
           </p>
-          <button id="comingSoonOkBtn" type="button" class="mt-5 h-11 w-full rounded-2xl border border-white/20 bg-white/10 text-sm font-semibold text-white transition hover:-translate-y-0.5 hover:bg-white/15">
-            D'accord
-          </button>
+          <div id="stakeOptionsGrid" class="mt-5 grid grid-cols-1 gap-3 sm:grid-cols-2">
+            <div class="col-span-1 rounded-2xl border border-white/15 bg-white/5 px-4 py-4 text-sm text-white/70 sm:col-span-2">
+              Chargement des mises...
+            </div>
+          </div>
+          <div class="mt-4 border-t border-white/10 pt-4">
+            <button id="playWithFriendsBtn" type="button" class="flex h-12 w-full items-center justify-center gap-2 rounded-2xl border border-white/20 bg-white/10 text-sm font-semibold text-white transition hover:-translate-y-0.5 hover:bg-white/15">
+              <i class="fa-solid fa-user-group text-[15px]"></i>
+              <span>Jouer avec des amis</span>
+            </button>
+            <p class="mt-2 text-center text-xs leading-5 text-white/62">Crée une salle privée, copie un code et invite 3 amis.</p>
+          </div>
         </div>
       </div>
     </div>
   `);
 
   pageShell.insertAdjacentHTML("beforeend", `
-    <div id="stakeSelectionOverlay" class="fixed inset-0 z-[3460] hidden items-center justify-center bg-black/55 p-4 backdrop-blur-sm">
-      <div id="stakeSelectionPanel" class="w-full max-w-lg rounded-3xl border border-white/20 bg-[#3F4766]/80 p-5 text-white shadow-[14px_14px_34px_rgba(16,23,40,0.5),-10px_-10px_24px_rgba(112,126,165,0.2)] backdrop-blur-xl sm:p-6">
-        <div class="flex items-center justify-between gap-3">
-          <h3 class="text-xl font-bold">Choisis ta mise</h3>
-          <button id="stakeSelectionClose" type="button" class="grid h-10 w-10 place-items-center rounded-full border border-white/20 bg-white/10 text-white">
-            <i class="fa-solid fa-xmark"></i>
-          </button>
-        </div>
-        <p class="mt-2 text-sm text-white/90">
-          Quand vous cliquez sur un des boutons, le jeu débute et la mise sélectionnée est automatiquement pariée selon la configuration active.
-        </p>
-        <div id="stakeOptionsGrid" class="mt-5 grid grid-cols-2 gap-3">
-          <div class="col-span-2 rounded-2xl border border-white/15 bg-white/5 px-4 py-4 text-sm text-white/70">
-            Chargement des mises...
+    <div id="dameStakeOverlay" class="fixed inset-0 z-[3461] hidden items-end justify-center bg-[#071822]/72 px-[max(12px,env(safe-area-inset-left))] pb-[max(12px,env(safe-area-inset-bottom))] pt-[max(12px,env(safe-area-inset-top))] backdrop-blur-sm sm:items-center sm:px-4 sm:py-4">
+      <div id="dameStakePanel" class="w-full overflow-hidden rounded-[28px] border border-[#9ef5c9]/18 bg-[linear-gradient(180deg,rgba(35,76,58,0.98),rgba(16,41,30,0.98))] text-white shadow-[0_-16px_38px_rgba(4,18,13,0.45)] sm:max-w-md sm:rounded-[30px] sm:border-[#9ef5c9]/24 sm:shadow-[14px_14px_34px_rgba(7,24,18,0.48),-10px_-10px_24px_rgba(123,208,170,0.12)]">
+        <div class="max-h-[calc(100dvh-max(24px,env(safe-area-inset-top))-max(24px,env(safe-area-inset-bottom)))] overflow-y-auto overscroll-contain px-4 pb-[max(1rem,env(safe-area-inset-bottom))] pt-4 sm:max-h-[min(88vh,760px)] sm:px-6 sm:pb-6 sm:pt-6">
+          <div class="flex items-start justify-between gap-3">
+            <div class="min-w-0 pr-2">
+              <p class="text-xs font-semibold uppercase tracking-[0.24em] text-[#b7ffd9]/82">Jeu de dame</p>
+              <h3 class="mt-2 text-[1.2rem] font-bold leading-tight sm:text-[1.45rem]">Choisis ta mise</h3>
+            </div>
+            <button id="dameStakeClose" type="button" class="grid h-10 w-10 shrink-0 place-items-center rounded-full border border-white/20 bg-white/10 text-white">
+              <i class="fa-solid fa-xmark"></i>
+            </button>
           </div>
-        </div>
-        <div class="mt-4 border-t border-white/10 pt-4">
-          <button id="playWithFriendsBtn" type="button" class="flex h-12 w-full items-center justify-center gap-2 rounded-2xl border border-white/20 bg-white/10 text-sm font-semibold text-white transition hover:-translate-y-0.5 hover:bg-white/15">
-            <i class="fa-solid fa-user-group text-[15px]"></i>
-            <span>Jouer avec des amis</span>
-          </button>
-          <p class="mt-2 text-center text-xs text-white/62">Crée une salle privée, copie un code et invite 3 amis.</p>
+          <p class="mt-3 text-[13px] leading-6 text-white/84 sm:text-sm">
+            La mise du jeu de dame est fixe. Tu lances la recherche du joueur immédiatement après validation.
+          </p>
+          <div id="dameStakeOptionsGrid" class="mt-5 grid grid-cols-1 gap-3">
+            <button
+              data-stake="${PAGE2_DAME_STAKE_DOES}"
+              data-available="1"
+              type="button"
+              class="dame-stake-option-btn h-14 rounded-2xl border border-[#9ef5c9]/35 bg-[linear-gradient(135deg,rgba(72,174,120,0.24),rgba(13,45,39,0.78))] text-sm font-semibold text-white shadow-[8px_8px_20px_rgba(16,52,43,0.28),-6px_-6px_14px_rgba(123,208,170,0.1)] transition hover:-translate-y-0.5"
+            >
+              <span class="block">500 Does</span>
+              <span class="text-[11px] font-medium text-white/75">Recherche d'adversaire incluse</span>
+            </button>
+          </div>
         </div>
       </div>
     </div>
@@ -2609,12 +2617,6 @@ export function renderPage2(user, options = {}) {
   const gameModeMorpionCard = document.getElementById("gameModeMorpionCard");
   const gameModeDameCard = document.getElementById("gameModeDameCard");
   const gameModePongCard = document.getElementById("gameModePongCard");
-  const comingSoonOverlay = document.getElementById("comingSoonOverlay");
-  const comingSoonPanel = document.getElementById("comingSoonPanel");
-  const comingSoonTitle = document.getElementById("comingSoonTitle");
-  const comingSoonCopy = document.getElementById("comingSoonCopy");
-  const comingSoonClose = document.getElementById("comingSoonClose");
-  const comingSoonOkBtn = document.getElementById("comingSoonOkBtn");
   const tournamentIntroOverlay = document.getElementById("tournamentIntroOverlay");
   const tournamentIntroPanel = document.getElementById("tournamentIntroPanel");
   const tournamentIntroContinueBtn = document.getElementById("tournamentIntroContinueBtn");
@@ -2624,7 +2626,12 @@ export function renderPage2(user, options = {}) {
   const stakeSelectionOverlay = document.getElementById("stakeSelectionOverlay");
   const stakeSelectionPanel = document.getElementById("stakeSelectionPanel");
   const stakeSelectionClose = document.getElementById("stakeSelectionClose");
+  const stakeSelectionTitle = document.getElementById("stakeSelectionTitle");
   const stakeOptionsGrid = document.getElementById("stakeOptionsGrid");
+  const dameStakeOverlay = document.getElementById("dameStakeOverlay");
+  const dameStakePanel = document.getElementById("dameStakePanel");
+  const dameStakeClose = document.getElementById("dameStakeClose");
+  const dameStakeOptionsGrid = document.getElementById("dameStakeOptionsGrid");
   const morpionStakeOverlay = document.getElementById("morpionStakeOverlay");
   const morpionStakePanel = document.getElementById("morpionStakePanel");
   const morpionStakeClose = document.getElementById("morpionStakeClose");
@@ -3746,6 +3753,9 @@ export function renderPage2(user, options = {}) {
 
   const openStakeSelection = () => {
     if (!stakeSelectionOverlay) return;
+    if (stakeSelectionTitle) {
+      stakeSelectionTitle.textContent = "Choisis ta mise";
+    }
     stakeSelectionOverlay.classList.remove("hidden");
     stakeSelectionOverlay.classList.add("flex");
     document.body.classList.add("overflow-hidden");
@@ -3755,6 +3765,22 @@ export function renderPage2(user, options = {}) {
     stakeSelectionOverlay.classList.add("hidden");
     stakeSelectionOverlay.classList.remove("flex");
     document.body.classList.remove("overflow-hidden");
+  };
+
+  const openDameStakeSelection = () => {
+    if (!dameStakeOverlay) return;
+    dameStakeOverlay.classList.remove("hidden");
+    dameStakeOverlay.classList.add("flex");
+    document.body.classList.add("overflow-hidden");
+  };
+
+  const closeDameStakeSelection = () => {
+    if (!dameStakeOverlay) return;
+    dameStakeOverlay.classList.add("hidden");
+    dameStakeOverlay.classList.remove("flex");
+    if (!isPage2BlockingOverlayOpen()) {
+      document.body.classList.remove("overflow-hidden");
+    }
   };
 
   const openGameModeSelection = () => {
@@ -3768,28 +3794,6 @@ export function renderPage2(user, options = {}) {
     if (!gameModeOverlay) return;
     gameModeOverlay.classList.add("hidden");
     gameModeOverlay.classList.remove("flex");
-    if (!isPage2BlockingOverlayOpen()) {
-      document.body.classList.remove("overflow-hidden");
-    }
-  };
-
-  const openComingSoonModal = (gameLabel = "Ce jeu") => {
-    if (!comingSoonOverlay) return;
-    if (comingSoonTitle) {
-      comingSoonTitle.textContent = `${gameLabel} en developpement`;
-    }
-    if (comingSoonCopy) {
-      comingSoonCopy.textContent = `${gameLabel} est actuellement en developpement et sera disponible bientot. Merci pour ta patience.`;
-    }
-    comingSoonOverlay.classList.remove("hidden");
-    comingSoonOverlay.classList.add("flex");
-    document.body.classList.add("overflow-hidden");
-  };
-
-  const closeComingSoonModal = () => {
-    if (!comingSoonOverlay) return;
-    comingSoonOverlay.classList.add("hidden");
-    comingSoonOverlay.classList.remove("flex");
     if (!isPage2BlockingOverlayOpen()) {
       document.body.classList.remove("overflow-hidden");
     }
@@ -4180,11 +4184,15 @@ export function renderPage2(user, options = {}) {
     }
     stakeUnavailableOverlay.classList.remove("hidden");
     stakeUnavailableOverlay.classList.add("flex");
+    document.body.classList.add("overflow-hidden");
   };
   const closeUnavailable = () => {
     if (!stakeUnavailableOverlay) return;
     stakeUnavailableOverlay.classList.add("hidden");
     stakeUnavailableOverlay.classList.remove("flex");
+    if (!isPage2BlockingOverlayOpen()) {
+      document.body.classList.remove("overflow-hidden");
+    }
   };
 
   const openTournamentIntro = () => {
@@ -4211,7 +4219,17 @@ export function renderPage2(user, options = {}) {
   let currentMorpionStakeOptions = DEFAULT_MORPION_STAKE_OPTIONS.map((item) => ({ ...item }));
 
   const renderStakeOptions = (options = []) => {
-    currentStakeOptions = normalizeGameStakeOptions(options);
+    if (page2BoardGameSelection === PAGE2_BOARD_GAME_DAME) {
+      currentStakeOptions = [{
+        id: "dame_500",
+        stakeDoes: PAGE2_DAME_STAKE_DOES,
+        rewardDoes: Math.round(PAGE2_DAME_STAKE_DOES * 1.8),
+        enabled: true,
+        sortOrder: 10,
+      }];
+    } else {
+      currentStakeOptions = normalizeGameStakeOptions(options);
+    }
     if (!stakeOptionsGrid) return;
     stakeOptionsGrid.innerHTML = currentStakeOptions.map((option) => {
       const enabled = option.enabled === true;
@@ -4395,10 +4413,9 @@ export function renderPage2(user, options = {}) {
 
   const continueToBoardGame = async (stakeAmount = 500) => {
     if (page2BoardGameSelection === PAGE2_BOARD_GAME_DAME) {
-      const parsedStakeAmount = Number.parseInt(String(stakeAmount ?? PAGE2_DAME_STAKE_DOES), 10);
-      const normalizedStakeAmount = Number.isFinite(parsedStakeAmount) ? parsedStakeAmount : PAGE2_DAME_STAKE_DOES;
+      const normalizedStakeAmount = PAGE2_DAME_STAKE_DOES;
       if (normalizedStakeAmount <= 0) {
-        closeMorpionStakeSelection();
+        closeDameStakeSelection();
         showGlobalLoading("Ouverture de Dame...");
         window.location.href = buildDameGameUrl(0);
         return;
@@ -4407,7 +4424,7 @@ export function renderPage2(user, options = {}) {
       const state = xchangeMod?.getXchangeState?.() || {};
       const playableDoesBalance = getPlayableDoesBalance(state);
       if (playableDoesBalance < normalizedStakeAmount) {
-        closeMorpionStakeSelection();
+        closeDameStakeSelection();
         if (doesRequiredOverlay) {
           doesRequiredOverlay.classList.remove("hidden");
           doesRequiredOverlay.classList.add("flex");
@@ -4415,7 +4432,7 @@ export function renderPage2(user, options = {}) {
         }
         return;
       }
-      closeMorpionStakeSelection();
+      closeDameStakeSelection();
       showGlobalLoading("Ouverture de Dame...");
       window.location.href = buildDameGameUrl(normalizedStakeAmount);
       return;
@@ -4516,21 +4533,12 @@ export function renderPage2(user, options = {}) {
 
   const handleDameEntry = async () => {
     if (page2AccountFrozen) return;
-    if (!isAuthenticated) {
-      showGlobalLoading("Redirection vers la connexion...");
-      window.location.href = "./auth.html";
-      return;
-    }
-    if (isOptimisticAuth) {
-      showGlobalLoading("Finalisation de la session...");
-      window.setTimeout(() => {
-        hideGlobalLoading();
-      }, 1600);
-      return;
-    }
     closeGameModeSelection();
     closeStakeSelection();
-    openComingSoonModal("Jeu de dame");
+    openUnavailable({
+      title: "Jeu en production",
+      message: "Ce jeu est en production et il n'est pas encore disponible.",
+    });
   };
 
   if (startGameBtn) {
@@ -4567,11 +4575,6 @@ export function renderPage2(user, options = {}) {
   });
 
   gameModeDameCard?.addEventListener("click", () => {
-    if (!ENABLE_DAME_MULTIPLAYER) {
-      closeGameModeSelection();
-      openComingSoonModal("Jeu de dame");
-      return;
-    }
     void handleDameEntry();
   });
 
@@ -5279,12 +5282,6 @@ export function renderPage2(user, options = {}) {
     if (ev.target === gameModeOverlay) closeGameModeSelection();
   });
   gameModePanel?.addEventListener("click", (ev) => ev.stopPropagation());
-  if (comingSoonClose) comingSoonClose.addEventListener("click", closeComingSoonModal);
-  if (comingSoonOkBtn) comingSoonOkBtn.addEventListener("click", closeComingSoonModal);
-  comingSoonOverlay?.addEventListener("click", (ev) => {
-    if (ev.target === comingSoonOverlay) closeComingSoonModal();
-  });
-  comingSoonPanel?.addEventListener("click", (ev) => ev.stopPropagation());
   if (stakeSelectionOverlay) {
     stakeSelectionOverlay.addEventListener("click", (ev) => {
       if (ev.target === stakeSelectionOverlay) closeStakeSelection();
@@ -5292,6 +5289,26 @@ export function renderPage2(user, options = {}) {
   }
   if (stakeSelectionPanel) {
     stakeSelectionPanel.addEventListener("click", (ev) => ev.stopPropagation());
+  }
+  if (dameStakeClose) dameStakeClose.addEventListener("click", closeDameStakeSelection);
+  if (dameStakeOverlay) {
+    dameStakeOverlay.addEventListener("click", (ev) => {
+      if (ev.target === dameStakeOverlay) closeDameStakeSelection();
+    });
+  }
+  if (dameStakePanel) {
+    dameStakePanel.addEventListener("click", (ev) => ev.stopPropagation());
+  }
+  if (dameStakeOptionsGrid) {
+    dameStakeOptionsGrid.addEventListener("click", async (event) => {
+      const origin = event.target instanceof HTMLElement ? event.target : null;
+      const btn = origin ? origin.closest(".dame-stake-option-btn") : null;
+      if (!(btn instanceof HTMLElement) || !dameStakeOptionsGrid.contains(btn)) return;
+      if (btn.getAttribute("data-available") !== "1") return;
+      await withButtonLoading(btn, async () => {
+        await continueToBoardGame(PAGE2_DAME_STAKE_DOES);
+      }, { loadingLabel: "Verification..." });
+    });
   }
   if (morpionStakeClose) morpionStakeClose.addEventListener("click", closeMorpionStakeSelection);
   morpionStakeOverlay?.addEventListener("click", (ev) => {
@@ -5557,9 +5574,7 @@ export function renderPage2(user, options = {}) {
           }
           return;
         }
-        closeStakeSelection();
-        showGlobalLoading("Ouverture de la partie...");
-        window.location.href = `./jeu.html?autostart=1&stake=${stakeAmount}`;
+        await continueToBoardGame(stakeAmount);
       }, { loadingLabel: "Vérification..." });
     });
   }
