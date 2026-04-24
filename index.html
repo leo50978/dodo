@@ -173,10 +173,11 @@
       .home-shell__top-inner {
         margin: 0 auto;
         display: flex;
+        flex-direction: column;
         max-width: 1080px;
-        align-items: center;
+        align-items: stretch;
         justify-content: space-between;
-        gap: 16px;
+        gap: 12px;
       }
 
       .home-shell__logo {
@@ -186,23 +187,41 @@
       }
 
       .home-shell__header-cta,
+      .home-shell__help-cta,
       .home-shell__primary,
       .home-shell__secondary {
         text-decoration: none;
       }
 
-      .home-shell__header-cta {
+      .home-shell__header-cta,
+      .home-shell__help-cta {
         display: inline-flex;
         min-height: 44px;
         align-items: center;
         justify-content: center;
         border-radius: 14px;
-        background: #f57c00;
         padding: 0 18px;
-        color: #fff;
         font-size: 14px;
         font-weight: 600;
+      }
+
+      .home-shell__header-cta {
+        background: #f57c00;
+        color: #fff;
         box-shadow: 8px 8px 18px rgba(163, 82, 27, 0.45), -6px -6px 14px rgba(255, 175, 102, 0.16);
+      }
+
+      .home-shell__help-cta {
+        border: 1px solid rgba(255, 255, 255, 0.16);
+        background: rgba(255, 255, 255, 0.08);
+        color: #fff;
+      }
+
+      .home-shell__header-actions {
+        display: flex;
+        flex-direction: column;
+        gap: 10px;
+        width: 100%;
       }
 
       .home-shell__content {
@@ -236,23 +255,164 @@
         line-height: 1.65;
       }
 
+      .home-help-modal {
+        position: fixed;
+        inset: 0;
+        z-index: 4300;
+        display: flex;
+        align-items: flex-end;
+        justify-content: center;
+        padding: 12px;
+      }
+
+      .home-help-modal.hidden {
+        display: none;
+      }
+
+      .home-help-modal__backdrop {
+        position: absolute;
+        inset: 0;
+        background: rgba(8, 13, 25, 0.66);
+        backdrop-filter: blur(8px);
+        -webkit-backdrop-filter: blur(8px);
+      }
+
+      .home-help-modal__card {
+        position: relative;
+        width: min(100%, 560px);
+        max-height: calc(100dvh - 24px);
+        overflow-y: auto;
+        -webkit-overflow-scrolling: touch;
+        touch-action: pan-y;
+        border-radius: 24px;
+        border: 1px solid rgba(255, 255, 255, 0.16);
+        background: rgba(63, 71, 102, 0.95);
+        padding: 18px;
+        box-shadow: 16px 18px 40px rgba(18, 24, 38, 0.48), -10px -10px 24px rgba(110, 126, 165, 0.16);
+      }
+
+      .home-help-modal__badge {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        border-radius: 999px;
+        border: 1px solid rgba(56, 189, 248, 0.35);
+        background: rgba(56, 189, 248, 0.12);
+        padding: 6px 12px;
+        font-size: 11px;
+        font-weight: 700;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+        color: #d9f4ff;
+      }
+
+      .home-help-modal__title {
+        margin: 14px 0 8px;
+        font-size: clamp(1.35rem, 5vw, 1.9rem);
+        line-height: 1.15;
+        font-weight: 700;
+      }
+
+      .home-help-modal__text {
+        margin: 0;
+        font-size: 0.95rem;
+        line-height: 1.6;
+        color: rgba(255, 255, 255, 0.88);
+      }
+
+      .home-help-modal__grid {
+        display: grid;
+        grid-template-columns: 1fr;
+        gap: 10px;
+        margin-top: 16px;
+      }
+
+      .home-help-modal__card-compact {
+        border-radius: 20px;
+        border: 1px solid rgba(255, 255, 255, 0.1);
+        background: rgba(255, 255, 255, 0.06);
+        padding: 14px;
+      }
+
+      .home-help-modal__card-compact h3 {
+        margin: 0;
+        font-size: 0.92rem;
+        line-height: 1.3;
+      }
+
+      .home-help-modal__card-compact p {
+        margin: 8px 0 0;
+        font-size: 0.88rem;
+        line-height: 1.55;
+        color: rgba(255, 255, 255, 0.78);
+      }
+
+      .home-help-modal__actions {
+        display: grid;
+        grid-template-columns: 1fr;
+        gap: 10px;
+        margin-top: 16px;
+      }
+
+      .home-help-modal__btn,
+      .home-help-modal__ghost {
+        display: inline-flex;
+        min-height: 46px;
+        align-items: center;
+        justify-content: center;
+        border-radius: 14px;
+        font-weight: 600;
+      }
+
+      .home-help-modal__btn {
+        background: #f57c00;
+        color: #fff;
+        box-shadow: 8px 8px 18px rgba(163, 82, 27, 0.4), -6px -6px 14px rgba(255, 175, 102, 0.14);
+      }
+
+      .home-help-modal__ghost {
+        border: 1px solid rgba(255, 255, 255, 0.18);
+        background: rgba(255, 255, 255, 0.07);
+        color: #fff;
+      }
+
+      .home-help-modal__close {
+        position: absolute;
+        top: 12px;
+        right: 12px;
+        display: inline-flex;
+        height: 34px;
+        width: 34px;
+        align-items: center;
+        justify-content: center;
+        border-radius: 50%;
+        border: 1px solid rgba(255, 255, 255, 0.22);
+        background: rgba(15, 23, 42, 0.35);
+        color: #fff;
+      }
+
       @media (max-width: 640px) {
         .home-shell__top {
           padding: 0 12px;
         }
 
         .home-shell__top-inner {
-          gap: 12px;
+          gap: 10px;
         }
 
         .home-shell__logo {
           width: min(112px, 26vw);
         }
 
-        .home-shell__header-cta {
+        .home-shell__header-cta,
+        .home-shell__help-cta {
           min-height: 42px;
           padding: 0 14px;
           font-size: 12px;
+        }
+
+        .home-shell__header-actions {
+          gap: 8px;
         }
 
         .home-shell__content {
@@ -261,6 +421,48 @@
 
         .home-shell__card {
           padding: 22px 18px;
+        }
+
+        .home-help-modal {
+          padding: 8px;
+        }
+
+        .home-help-modal__card {
+          max-height: calc(100dvh - 16px);
+          padding: 16px 14px 14px;
+          border-radius: 22px;
+        }
+      }
+
+      @media (min-width: 720px) {
+        .home-shell__top-inner {
+          flex-direction: row;
+          align-items: center;
+          gap: 16px;
+        }
+
+        .home-shell__header-actions {
+          width: auto;
+          flex-direction: row;
+          align-items: center;
+          justify-content: flex-end;
+        }
+
+        .home-help-modal {
+          align-items: center;
+          padding: 20px;
+        }
+
+        .home-help-modal__card {
+          padding: 24px;
+        }
+
+        .home-help-modal__grid {
+          grid-template-columns: repeat(2, minmax(0, 1fr));
+        }
+
+        .home-help-modal__actions {
+          grid-template-columns: repeat(3, minmax(0, 1fr));
         }
       }
 
@@ -337,9 +539,9 @@
         inset: 0;
         z-index: 4200;
         display: flex;
-        align-items: center;
+        align-items: flex-end;
         justify-content: center;
-        padding: 24px 16px max(24px, env(safe-area-inset-bottom));
+        padding: 12px;
       }
 
       .welcome-modal.hidden {
@@ -355,7 +557,11 @@
 
       .welcome-modal__card {
         position: relative;
-        width: min(520px, 92vw);
+        width: min(520px, 100%);
+        max-height: calc(100dvh - 24px);
+        overflow-y: auto;
+        -webkit-overflow-scrolling: touch;
+        touch-action: pan-y;
         border-radius: 24px;
         border: 1px solid rgba(255, 255, 255, 0.16);
         background: rgba(63, 71, 102, 0.92);
@@ -450,7 +656,24 @@
         justify-content: center;
       }
 
+      @media (max-width: 640px) {
+        .welcome-modal {
+          padding: 8px;
+        }
+
+        .welcome-modal__card {
+          max-height: calc(100dvh - 16px);
+          padding: 18px 16px 16px;
+          border-radius: 22px;
+        }
+      }
+
       @media (min-width: 720px) {
+        .welcome-modal {
+          align-items: center;
+          padding: 20px;
+        }
+
         .welcome-modal__card {
           padding: 26px 26px 24px;
         }
@@ -513,7 +736,10 @@
                 height="500"
                 decoding="async"
               />
-              <a class="home-shell__header-cta" href="./auth.html">Connexion / Inscription</a>
+              <div class="home-shell__header-actions">
+                <button id="homeHelpOpenBtn" class="home-shell__help-cta" type="button">Aide</button>
+                <a class="home-shell__header-cta" href="./auth.html">Connexion / Inscription</a>
+              </div>
             </div>
           </header>
         </section>
@@ -547,8 +773,110 @@
         </div>
       </div>
     </div>
+    <div id="homeHelpModal" class="home-help-modal hidden" role="dialog" aria-modal="true" aria-labelledby="homeHelpTitle">
+      <div class="home-help-modal__backdrop" data-home-help-close></div>
+      <div class="home-help-modal__card">
+        <button class="home-help-modal__close" type="button" aria-label="Fermer" data-home-help-close>
+          <i class="fa-solid fa-xmark"></i>
+        </button>
+        <div class="home-help-modal__badge">
+          <i class="fa-solid fa-circle-question"></i>
+          Paj èd
+        </div>
+        <h2 id="homeHelpTitle" class="home-help-modal__title">Ou bezwen konprann sit la byen vit?</h2>
+        <p class="home-help-modal__text">
+          Nou mete yon ti gid an kreyòl pou ede w konprann etap yo. Klike sou "Ale nan paj èd" pou w jwenn tout videyo yo ansanm ak eksplikasyon yo.
+        </p>
+        <div class="home-help-modal__grid">
+          <div class="home-help-modal__card-compact">
+            <h3>Kreye kont ak konekte</h3>
+            <p>W ap wè kijan pou w kòmanse sou sit la san w pa konfuze.</p>
+          </div>
+          <div class="home-help-modal__card-compact">
+            <h3>Depo, Does ak retrè</h3>
+            <p>Nou montre etap kle yo pou fè lajan ou sikile byen sou kont ou.</p>
+          </div>
+        </div>
+        <div class="home-help-modal__actions">
+          <a class="home-help-modal__btn" href="./aide.html">Ale nan paj èd</a>
+          <button id="homeHelpDismissBtn" class="home-help-modal__ghost" type="button">Pa montre ankò</button>
+          <button id="homeHelpKeepBtn" class="home-help-modal__ghost" type="button">Fèmen</button>
+        </div>
+      </div>
+    </div>
     <script src="https://cdn.tailwindcss.com"></script>
     <script type="module" src="./home.js?v=hero-dynamic-v4"></script>
+    <script>
+      (() => {
+        const storageKey = "domino_home_help_modal_hidden_v1";
+        const modal = document.getElementById("homeHelpModal");
+        const openBtn = document.getElementById("homeHelpOpenBtn");
+        const dismissBtn = document.getElementById("homeHelpDismissBtn");
+        const keepBtn = document.getElementById("homeHelpKeepBtn");
+        if (!modal) return;
+
+        const show = () => {
+          modal.classList.remove("hidden");
+          modal.setAttribute("aria-hidden", "false");
+        };
+        const hide = () => {
+          modal.classList.add("hidden");
+          modal.setAttribute("aria-hidden", "true");
+        };
+        const storeHidden = () => {
+          try {
+            localStorage.setItem(storageKey, "1");
+          } catch (_) {}
+        };
+        const isWelcomeVisible = () => {
+          const welcome = document.getElementById("welcomeDepositModal");
+          return Boolean(welcome && !welcome.classList.contains("hidden"));
+        };
+        const maybeAutoOpen = () => {
+          let hidden = false;
+          try {
+            hidden = localStorage.getItem(storageKey) === "1";
+          } catch (_) {
+            hidden = false;
+          }
+          if (hidden || isWelcomeVisible()) return;
+          window.setTimeout(() => {
+            if (!modal.classList.contains("hidden")) return;
+            if (isWelcomeVisible()) return;
+            show();
+          }, 700);
+        };
+
+        modal.setAttribute("aria-hidden", "true");
+        openBtn?.addEventListener("click", show);
+        dismissBtn?.addEventListener("click", () => {
+          storeHidden();
+          hide();
+        });
+        keepBtn?.addEventListener("click", hide);
+        modal.querySelectorAll("[data-home-help-close]").forEach((btn) => {
+          btn.addEventListener("click", hide);
+        });
+        window.addEventListener("keydown", (event) => {
+          if (event.key === "Escape" && !modal.classList.contains("hidden")) {
+            hide();
+          }
+        });
+
+        const welcome = document.getElementById("welcomeDepositModal");
+        if (welcome) {
+          const observer = new MutationObserver(() => {
+            if (welcome.classList.contains("hidden")) {
+              observer.disconnect();
+              maybeAutoOpen();
+            }
+          });
+          observer.observe(welcome, { attributes: true, attributeFilter: ["class"] });
+        } else {
+          maybeAutoOpen();
+        }
+      })();
+    </script>
     <script>
       (() => {
         const storageKey = "dl_welcome_deposit_flow_v2";

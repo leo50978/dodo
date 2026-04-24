@@ -17,6 +17,10 @@
         --accent: #64d4ff;
       }
 
+      html {
+        min-height: 100%;
+      }
+
       * {
         box-sizing: border-box;
       }
@@ -24,6 +28,8 @@
       body {
         margin: 0;
         min-height: 100vh;
+        min-height: 100dvh;
+        min-height: -webkit-fill-available;
         color: var(--text);
         font-family: "Segoe UI", Tahoma, Geneva, Verdana, sans-serif !important;
         background:
@@ -40,10 +46,26 @@
 
       .game-topbar {
         display: flex;
-        align-items: center;
+        flex-wrap: wrap;
+        align-items: flex-start;
         justify-content: space-between;
         gap: 12px;
         margin-bottom: 14px;
+      }
+
+      .game-topbar-center {
+        flex: 1 1 320px;
+        display: grid;
+        gap: 10px;
+        min-width: 0;
+      }
+
+      .game-topbar-actions {
+        display: flex;
+        align-items: center;
+        justify-content: flex-end;
+        gap: 10px;
+        flex-wrap: wrap;
       }
 
       .back-btn {
@@ -54,42 +76,87 @@
         padding: 9px 14px;
         font-weight: 600;
         cursor: pointer;
+        min-height: 44px;
       }
 
-      .mode-badge {
+      .status-pill,
+      .opponent-pill,
+      .search-opponent {
+        border: 1px solid rgba(255, 255, 255, 0.14);
+        background: rgba(255, 255, 255, 0.08);
+        border-radius: 16px;
+      }
+
+      .status-pill {
+        display: flex;
+        align-items: center;
+        min-height: 44px;
+        padding: 10px 14px;
+        color: #edf6ff;
+        font-size: 13px;
+        font-weight: 700;
+        line-height: 1.45;
+      }
+
+      .opponent-pill {
+        display: flex;
+        flex-direction: column;
+        gap: 2px;
+        padding: 10px 14px;
+      }
+
+      .opponent-pill.hidden,
+      .search-opponent.hidden {
+        display: none;
+      }
+
+      .room-label {
+        font-size: 11px;
+        font-weight: 700;
+        letter-spacing: 0.12em;
+        text-transform: uppercase;
+        color: rgba(225, 240, 255, 0.68);
+      }
+
+      .room-value {
+        font-size: 14px;
+        font-weight: 800;
+        color: #f4fbff;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+
+      .balance-badge {
         border: 1px solid rgba(100, 212, 255, 0.5);
         background: rgba(100, 212, 255, 0.12);
         color: #d8f5ff;
         padding: 7px 12px;
         border-radius: 999px;
         font-size: 13px;
+        font-weight: 700;
       }
 
-      .bot-status {
-        margin-top: 10px;
-        border: 1px solid rgba(150, 236, 255, 0.35);
-        background: rgba(79, 190, 255, 0.14);
-        color: #e9f9ff;
-        border-radius: 12px;
-        padding: 9px 10px;
-        font-size: 12px;
+      .leave-btn {
+        border: 1px solid rgba(255, 126, 126, 0.35);
+        background: linear-gradient(135deg, rgba(235, 92, 92, 0.24), rgba(108, 24, 24, 0.88));
+        color: #fff;
+        border-radius: 999px;
+        padding: 9px 14px;
+        font-weight: 700;
+        cursor: pointer;
+        min-height: 44px;
       }
 
       #draughts {
-        float: none;
-        display: grid;
-        grid-template-columns: minmax(0, 1fr);
-        gap: 14px;
-      }
-
-      #draughts > div {
-        float: none;
+        display: flex;
+        justify-content: center;
       }
 
       #board {
-        width: min(92vw, 560px);
-        height: min(92vw, 560px);
-        max-height: 70vh;
+        width: min(94vw, 560px);
+        height: min(94vw, 560px);
+        max-height: calc(100dvh - 124px);
         margin: 0 auto;
         border: 2px solid rgba(255, 255, 255, 0.18);
         border-radius: 18px;
@@ -97,164 +164,362 @@
         box-shadow: 0 22px 42px rgba(4, 11, 26, 0.45);
       }
 
-      #dash {
-        margin: 0;
-        width: 100%;
-        border: 1px solid var(--line);
-        border-radius: 18px;
-        background: var(--card);
-        height: auto;
-        min-height: 160px;
-        display: flex;
-        overflow: hidden;
-      }
-
-      #dash > div {
-        float: none;
-        flex: 1;
-        width: auto;
-        padding: 12px;
-      }
-
-      #dash > .player0 {
-        border-right: 1px solid var(--line);
-      }
-
-      #dash > .player0 > h3,
-      #dash > .player1 > h3 {
-        margin: 0 0 10px;
-        text-align: left;
-        font-size: 15px;
-        color: var(--text);
-      }
-
-      #dash > div > div {
-        height: auto;
-        min-height: 54px;
-      }
-
-      #dash > div > div > div {
-        width: 34px;
-        height: 34px;
-      }
-
-      #banner-msg {
-        position: fixed;
-        z-index: 80;
-        top: 50%;
-        left: 50%;
-        margin: 0;
-        transform: translate(-50%, -50%);
-        border: 1px solid rgba(111, 232, 188, 0.55);
-        border-radius: 18px;
-        background: rgba(21, 44, 47, 0.94);
-        color: #e5fff4;
-        padding: 16px 20px;
-        text-align: center;
-        box-shadow: 0 16px 30px rgba(0, 0, 0, 0.42);
-      }
-
-      #options {
-        display: none;
-      }
-
-      .meta-card {
-        border: 1px solid var(--line);
-        border-radius: 16px;
-        padding: 12px 14px;
-        background: var(--card);
-        color: var(--muted);
-        font-size: 13px;
-        line-height: 1.5;
-        text-align: center;
-      }
-
-      .production-lock {
+      .search-modal {
         position: fixed;
         inset: 0;
-        z-index: 120;
         display: flex;
         align-items: center;
         justify-content: center;
         padding: 18px;
-        background: rgba(4, 10, 22, 0.72);
-        backdrop-filter: blur(10px);
+        background: rgba(8, 14, 28, 0.68);
+        backdrop-filter: blur(12px);
+        z-index: 20;
       }
 
-      .production-lock__card {
-        width: min(520px, 100%);
-        border-radius: 24px;
-        border: 1px solid rgba(148, 214, 255, 0.24);
-        background: linear-gradient(180deg, rgba(21, 37, 66, 0.98), rgba(12, 24, 46, 0.98));
-        box-shadow: 0 24px 48px rgba(4, 10, 22, 0.42);
+      .search-modal.hidden {
+        display: none;
+      }
+
+      .search-card {
+        width: min(100%, 420px);
+        border: 1px solid rgba(255, 255, 255, 0.15);
+        border-radius: 26px;
         padding: 22px;
+        background: linear-gradient(180deg, rgba(33, 50, 90, 0.98), rgba(17, 28, 54, 0.98));
+        box-shadow: 0 24px 44px rgba(4, 11, 26, 0.48);
         text-align: center;
+        max-height: calc(100dvh - 36px);
+        overflow-y: auto;
+        -webkit-overflow-scrolling: touch;
       }
 
-      .production-lock__badge {
+      .search-eyebrow {
+        margin: 0;
+        font-size: 12px;
+        font-weight: 700;
+        letter-spacing: 0.18em;
+        text-transform: uppercase;
+        color: rgba(225, 240, 255, 0.7);
+      }
+
+      .search-title {
+        margin: 10px 0 0;
+        font-size: 24px;
+        line-height: 1.15;
+        font-weight: 800;
+      }
+
+      .search-copy {
+        margin: 10px 0 0;
+        font-size: 14px;
+        line-height: 1.7;
+        color: rgba(235, 242, 255, 0.82);
+      }
+
+      .search-countdown {
+        margin-top: 18px;
+        border: 1px solid rgba(100, 212, 255, 0.25);
+        border-radius: 18px;
+        padding: 14px 16px;
+        background: rgba(100, 212, 255, 0.08);
+        color: #dff7ff;
+        font-size: 16px;
+        font-weight: 800;
+      }
+
+      .search-opponent {
+        margin-top: 14px;
+        padding: 12px 14px;
+        text-align: left;
+      }
+
+      .search-opponent-value {
+        margin-top: 4px;
+        font-size: 17px;
+        line-height: 1.35;
+        font-weight: 800;
+        color: #f4fbff;
+      }
+
+      .expired-modal {
+        position: fixed;
+        inset: 0;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        padding: 18px;
+        background: rgba(5, 11, 24, 0.74);
+        backdrop-filter: blur(14px);
+        z-index: 30;
+      }
+
+      .expired-modal.hidden {
+        display: none;
+      }
+
+      .expired-card {
+        width: min(100%, 460px);
+        border-radius: 28px;
+        border: 1px solid rgba(159, 232, 255, 0.18);
+        background: linear-gradient(180deg, rgba(28, 41, 74, 0.98), rgba(12, 22, 44, 0.98));
+        padding: 22px;
+        color: var(--text);
+        box-shadow: 0 24px 48px rgba(4, 11, 26, 0.5);
+        max-height: calc(100dvh - 36px);
+        overflow-y: auto;
+        -webkit-overflow-scrolling: touch;
+      }
+
+      .expired-flag {
         display: inline-flex;
         align-items: center;
         justify-content: center;
         min-height: 32px;
         padding: 0 12px;
         border-radius: 999px;
-        border: 1px solid rgba(100, 212, 255, 0.46);
-        background: rgba(100, 212, 255, 0.12);
-        color: #d8f5ff;
+        border: 1px solid rgba(159, 232, 255, 0.26);
+        background: rgba(159, 232, 255, 0.1);
+        color: #dcfbff;
         font-size: 12px;
-        font-weight: 700;
+        font-weight: 800;
         letter-spacing: 0.08em;
         text-transform: uppercase;
       }
 
-      .production-lock__title {
-        margin: 14px 0 8px;
-        font-size: clamp(1.5rem, 4vw, 2.05rem);
+      .expired-title {
+        margin: 14px 0 0;
+        font-size: 25px;
         line-height: 1.1;
+        font-weight: 900;
       }
 
-      .production-lock__text {
-        margin: 0;
+      .expired-text {
+        margin: 12px 0 0;
         color: rgba(235, 242, 255, 0.84);
         line-height: 1.65;
-        font-size: 15px;
+        font-size: 14px;
       }
 
-      .production-lock__actions {
-        display: flex;
-        flex-wrap: wrap;
+      .expired-actions {
+        display: grid;
         gap: 10px;
-        justify-content: center;
         margin-top: 18px;
       }
 
-      .production-lock__btn {
-        min-height: 46px;
-        padding: 0 16px;
-        border-radius: 12px;
+      .expired-btn {
+        min-height: 48px;
+        border-radius: 16px;
         border: 1px solid rgba(255, 255, 255, 0.16);
         background: rgba(255, 255, 255, 0.08);
         color: #f5f8ff;
-        text-decoration: none;
-        display: inline-flex;
-        align-items: center;
-        justify-content: center;
         font-weight: 700;
+        cursor: pointer;
       }
 
-      @media (min-width: 980px) {
-        #draughts {
-          grid-template-columns: minmax(0, 1fr) 300px;
-          align-items: start;
-          column-gap: 16px;
+      .expired-btn.primary {
+        border: 1px solid #9ef5c9;
+        background: linear-gradient(135deg, rgba(72, 174, 120, 0.26), rgba(13, 45, 39, 0.92));
+      }
+
+      .expired-btn.accent {
+        border: 1px solid #ffb26e;
+        background: #f57c00;
+      }
+
+      .expired-phone-box {
+        margin-top: 14px;
+        display: none;
+        gap: 10px;
+      }
+
+      .expired-phone-box.visible {
+        display: grid;
+      }
+
+      .expired-input {
+        width: 100%;
+        min-height: 48px;
+        border-radius: 16px;
+        border: 1px solid rgba(255, 255, 255, 0.16);
+        background: rgba(255, 255, 255, 0.06);
+        color: var(--text);
+        padding: 0 14px;
+        outline: none;
+      }
+
+      .expired-note {
+        margin-top: 10px;
+        font-size: 12px;
+        color: rgba(235, 242, 255, 0.68);
+      }
+
+      .expired-actions > * {
+        width: 100%;
+      }
+
+      @media (max-width: 640px) {
+        body {
+          padding: 12px;
+        }
+
+        .game-topbar {
+          margin-bottom: 12px;
+        }
+
+        .game-topbar > * {
+          flex: 0 0 auto;
+        }
+
+        .game-topbar-center {
+          flex: 1 1 100%;
+          order: 3;
+        }
+
+        .game-topbar-actions {
+          margin-left: auto;
+        }
+
+        .back-btn {
+          padding: 8px 12px;
+          font-size: 13px;
+        }
+
+        .balance-badge {
+          font-size: 12px;
+          padding: 7px 10px;
+        }
+
+        .status-pill,
+        .opponent-pill {
+          border-radius: 14px;
+          padding: 10px 12px;
+        }
+
+        .leave-btn {
+          padding: 8px 12px;
+          font-size: 13px;
         }
 
         #board {
-          margin: 0;
+          width: min(94vw, 520px);
+          height: min(94vw, 520px);
+          max-height: calc(100dvh - 112px);
         }
 
-        .meta-card {
-          text-align: left;
+        .search-modal,
+        .expired-modal {
+          align-items: flex-end;
+          padding: 12px 12px calc(12px + env(safe-area-inset-bottom));
+        }
+
+        .search-card,
+        .expired-card {
+          width: 100%;
+          border-radius: 24px 24px 18px 18px;
+          padding: 18px 16px 16px;
+        }
+
+        .search-eyebrow {
+          font-size: 11px;
+        }
+
+        .search-title,
+        .expired-title {
+          font-size: 20px;
+        }
+
+        .search-copy,
+        .expired-text {
+          font-size: 13px;
+          line-height: 1.55;
+        }
+
+        .search-countdown {
+          margin-top: 14px;
+          padding: 12px 14px;
+          font-size: 14px;
+        }
+
+        .search-opponent {
+          margin-top: 12px;
+          padding: 11px 12px;
+        }
+
+        .search-opponent-value {
+          font-size: 15px;
+        }
+
+        .expired-flag {
+          min-height: 30px;
+          font-size: 11px;
+        }
+
+        .expired-actions {
+          gap: 9px;
+          margin-top: 14px;
+        }
+
+        .expired-btn {
+          min-height: 46px;
+          border-radius: 14px;
+          font-size: 14px;
+        }
+
+        .expired-phone-box {
+          margin-top: 12px;
+        }
+
+        .expired-note {
+          font-size: 11px;
+          line-height: 1.45;
+        }
+      }
+
+      @media (min-width: 641px) {
+        .expired-actions {
+          grid-template-columns: repeat(2, minmax(0, 1fr));
+        }
+
+        .expired-actions > *:nth-child(3),
+        .expired-actions > *:nth-child(6) {
+          grid-column: 1 / -1;
+        }
+      }
+
+      @media (max-width: 380px) {
+        body {
+          padding: 10px;
+        }
+
+        .game-topbar {
+          gap: 10px;
+        }
+
+        .game-topbar-center {
+          flex-basis: 100%;
+          order: 3;
+        }
+
+        .search-card,
+        .expired-card {
+          padding: 16px 14px 14px;
+          border-radius: 22px 22px 16px 16px;
+        }
+
+        .search-title,
+        .expired-title {
+          font-size: 18px;
+        }
+
+        .search-copy,
+        .expired-text {
+          font-size: 12px;
+        }
+
+        .expired-btn {
+          min-height: 44px;
+          font-size: 13px;
+          border-radius: 13px;
         }
       }
     </style>
@@ -263,64 +528,59 @@
     <main class="game-shell">
       <header class="game-topbar">
         <button class="back-btn" type="button" onclick="window.location.href='./index.html'">Retour accueil</button>
-        <span class="mode-badge">Jeu de dame · 2 joueurs humains</span>
+        <div class="game-topbar-center">
+          <div id="dameStatusBadge" class="status-pill">Connexion en cours...</div>
+          <div id="dameOpponentBadge" class="opponent-pill hidden">
+            <span class="room-label">Adversaire</span>
+            <strong id="dameOpponentName" class="room-value">-</strong>
+          </div>
+        </div>
+        <div class="game-topbar-actions">
+          <span id="dameBalanceBadge" class="balance-badge">Does: --</span>
+          <button id="dameLeaveBtn" class="leave-btn" type="button">Quitter la partie</button>
+        </div>
       </header>
 
       <section id="draughts">
         <div id="board"></div>
-
-        <aside>
-          <div id="dash">
-            <div class="player0">
-              <h3>Joueur 1</h3>
-              <div class="captured"></div>
-            </div>
-            <div class="player1">
-              <h3>Joueur 2</h3>
-              <div class="captured"></div>
-            </div>
-          </div>
-          <div id="botStatus" class="bot-status">Mode local humain-humain actif.</div>
-          <div class="meta-card" style="margin-top: 12px;">
-            Ce jeu de dame est en mode 2 joueurs humains. Le bot local est desactive.
-          </div>
-        </aside>
-
-        <div id="banner-msg" style="display: none;">
-          <h3>Felisitasyon</h3>
-          <h2></h2>
-          <h3>ou genyen pati a!</h3>
-        </div>
-
-        <div id="options" aria-hidden="true">
-          <div>
-            Fieldsize:
-            <select id="size">
-              <option value="8" selected>8</option>
-            </select>
-          </div>
-          <div>Force attack: <input type="checkbox" id="forceattack" value="1" checked /></div>
-          <div>Force hold piece: <input type="checkbox" id="forcehold" value="1" /></div>
-          <div>Backward attack: <input type="checkbox" id="backwardattack" value="1" /></div>
-          <div>Queen free run: <input type="checkbox" id="queenfreerun" value="1" checked /></div>
-          <div>Queen attack and run: <input type="checkbox" id="queenattackrun" value="1" /></div>
-          <div>Sounds: <input type="checkbox" id="sounds" value="1" /></div>
-        </div>
       </section>
     </main>
 
-    <div class="production-lock" role="dialog" aria-modal="true" aria-labelledby="dameProductionTitle">
-      <div class="production-lock__card">
-        <div class="production-lock__badge">En production</div>
-        <h2 id="dameProductionTitle" class="production-lock__title">Jeu de dame temporairement indisponible</h2>
-        <p class="production-lock__text">
-          Nous finalisons encore le mode de jeu. Cette version est en production et n'est pas encore ouverte aux joueurs.
+    <div id="dameSearchOverlay" class="search-modal hidden" aria-live="polite" aria-atomic="true">
+      <div class="search-card">
+        <p class="search-eyebrow">Dame</p>
+        <h2 class="search-title">Recherche d'un joueur</h2>
+        <p id="dameSearchCopy" class="search-copy">
+          Nous préparons ta partie et cherchons ton adversaire.
         </p>
-        <p class="production-lock__text" style="margin-top:10px;">
-          Reviens un peu plus tard ou retourne a l'accueil pour jouer aux autres modes disponibles.
+        <div id="dameSearchCountdown" class="search-countdown">15 s restantes</div>
+        <div id="dameSearchOpponentBadge" class="search-opponent hidden">
+          <span class="room-label">Adversaire dans la salle</span>
+          <div id="dameSearchOpponentName" class="search-opponent-value">-</div>
+        </div>
+      </div>
+    </div>
+
+    <div id="dameSearchExpiredOverlay" class="expired-modal hidden" aria-live="polite" aria-atomic="true">
+      <div class="expired-card">
+        <span class="expired-flag">Aucun joueur trouvé</span>
+        <h2 class="expired-title">On n’a pas encore trouvé d’adversaire</h2>
+        <p class="expired-text">
+          Tu peux relancer la recherche, rester dans l’attente, rejoindre le groupe WhatsApp ou laisser ton numéro pour être recontacté quand un joueur de dame sera disponible.
         </p>
-        <div class="production-lock__actions">
-          <a class="production-lock__btn" href="./index.html">Retour accueil</a>
+        <div id="dameExpiredAgentValue" class="expired-text" style="margin-top:14px;"></div>
+        <div class="expired-actions">
+          <button id="dameExpiredRetryBtn" type="button" class="expired-btn accent">Attendre 15 s encore</button>
+          <button id="dameExpiredStayBtn" type="button" class="expired-btn primary">Rester en attente</button>
+          <a id="dameExpiredGroupBtn" href="https://chat.whatsapp.com/I8VfW1Tdv6nF1d7ZkMfOg0" target="_blank" rel="noopener noreferrer" class="expired-btn" style="display:flex;align-items:center;justify-content:center;text-decoration:none;">Intègre le groupe WhatsApp</a>
+          <button id="dameExpiredPhoneRevealBtn" type="button" class="expired-btn">Laisser son numéro WhatsApp</button>
+          <button id="dameExpiredViewNumberBtn" type="button" class="expired-btn">Voir le numéro WhatsApp</button>
+          <button id="dameExpiredNotifyBtn" type="button" class="expired-btn primary">Me notifier quand il y a un joueur de dame</button>
+        </div>
+        <div id="dameExpiredPhoneBox" class="expired-phone-box">
+          <input id="dameExpiredPhoneInput" class="expired-input" type="tel" inputmode="tel" placeholder="Ton numéro WhatsApp" />
+          <button id="dameExpiredPhoneSaveBtn" type="button" class="expired-btn accent">Enregistrer mon numéro</button>
+          <p class="expired-note">Ton numéro sera utilisé pour te recontacter au sujet du jeu de dame.</p>
         </div>
       </div>
     </div>

@@ -37,7 +37,16 @@ import {
 import { updateClientProfileSecure } from "./secure-functions.js";
 import { buildSupportWhatsAppUrl } from "./support-contact.js";
 
-let authMode = "signup";
+const authEntryParams = new URLSearchParams(window.location.search || "");
+const authEntryMode = String(authEntryParams.get("mode") || "").trim().toLowerCase();
+const authEntryIdentifier = String(
+  authEntryParams.get("identifier")
+  || authEntryParams.get("email")
+  || authEntryParams.get("phone")
+  || authEntryParams.get("user")
+  || ""
+).trim();
+let authMode = authEntryMode === "signin" || authEntryMode === "reset" ? "signin" : "signup";
 let signupCreationMode = "chooser";
 let oneClickSignupStep = 0;
 let authFlowBusy = false;
@@ -49,6 +58,8 @@ let latestObservedUser = undefined;
 let authFallbackRenderTimer = null;
 let authBootstrapMessage = "";
 let authBootstrapTone = "info";
+let authEntryResetAssistPending = authEntryMode === "reset";
+let authEntryResetAssistOpened = false;
 const PENDING_PROMO_STORAGE_KEY = "domino_pending_promo_code";
 const PENDING_USERNAME_STORAGE_KEY = "domino_pending_username";
 const PENDING_PHONE_STORAGE_KEY = "domino_pending_phone_v1";
@@ -956,20 +967,6 @@ function renderPage1() {
     ? `
       <div class="mt-6 grid grid-cols-1 gap-3">
         <button
-          id="oneClickAuthBtn"
-          type="button"
-          class="group rounded-[1.7rem] border border-white/18 bg-white/8 px-5 py-4 text-left shadow-[8px_8px_18px_rgba(22,29,45,0.28),-6px_-6px_14px_rgba(118,131,172,0.12)] backdrop-blur-md transition hover:-translate-y-0.5 hover:bg-white/12"
-        >
-          <div class="flex items-start justify-between gap-3">
-            <div class="grid h-11 w-11 place-items-center rounded-2xl border border-white/16 bg-white/10 text-white/90">
-              <i class="fa-solid fa-bolt text-base"></i>
-            </div>
-            <span class="rounded-full border border-white/12 bg-white/8 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.22em] text-white/60">Rapide</span>
-          </div>
-          <div class="mt-4 text-sm font-semibold tracking-wide text-white sm:text-base">Créer votre compte en un click</div>
-        </button>
-
-        <button
           id="openPhoneFieldsBtn"
           type="button"
           class="rounded-[1.7rem] border border-[#ffb26e]/55 bg-[linear-gradient(180deg,rgba(245,124,0,0.2),rgba(255,255,255,0.06))] px-5 py-4 text-left shadow-[10px_10px_22px_rgba(163,82,27,0.32),-8px_-8px_18px_rgba(255,183,116,0.1)] backdrop-blur-md"
@@ -1369,12 +1366,27 @@ function renderPage1() {
     syncOneClickStepUi(document.getElementById("oneClickAuthInline"), oneClickSignupStep);
   }
   animatePage1();
+  if (authEntryResetAssistPending && !authEntryResetAssistOpened) {
+    authEntryResetAssistOpened = true;
+    const identifierInput = document.getElementById("identifierInput");
+    if (identifierInput && authEntryIdentifier) {
+      identifierInput.value = authEntryIdentifier;
+    }
+    window.setTimeout(() => {
+      if (authEntryIdentifier) {
+        const refreshedIdentifierInput = document.getElementById("identifierInput");
+        if (refreshedIdentifierInput && !refreshedIdentifierInput.value) {
+          refreshedIdentifierInput.value = authEntryIdentifier;
+        }
+      }
+      openForgotPasswordAssistModal(authEntryIdentifier);
+    }, 180);
+  }
   updateAuthModalBodyLock();
 }
 
 function bindPage1Events() {
   const submitBtn = document.getElementById("authSubmitBtn");
-  const oneClickAuthBtn = document.getElementById("oneClickAuthBtn");
   const form = document.getElementById("authForm");
   const openLegacySigninBtn = document.getElementById("openLegacySigninBtn");
   const openPhoneSignupBtn = document.getElementById("openPhoneSignupBtn");
@@ -1604,17 +1616,6 @@ function bindPage1Events() {
     });
   }
 
-  if (oneClickAuthBtn && oneClickAuthBtn.dataset.bound !== "1") {
-    oneClickAuthBtn.dataset.bound = "1";
-    oneClickAuthBtn.addEventListener("click", () => {
-      const errorEl = document.getElementById("authError");
-      if (errorEl) errorEl.textContent = "";
-      signupCreationMode = "oneclick";
-      oneClickSignupStep = 0;
-      renderPage1();
-    });
-  }
-
   const oneClickRoot = document.getElementById("oneClickAuthInline");
   const oneClickCancelBtn = document.getElementById("oneClickAuthCancelBtn");
   const oneClickSubmitBtn = document.getElementById("oneClickAuthSubmitBtn");
@@ -1823,7 +1824,7 @@ async function animatePage1() {
       ? ["#usernameInput", "#phoneInput", "#passwordInput"]
       : signupCreationMode === "oneclick"
         ? ["#oneClickUsername", "#oneClickPassword", "#oneClickPasswordConfirm"]
-        : ["#oneClickAuthBtn", "#openPhoneFieldsBtn"]);
+        : ["#openPhoneFieldsBtn"]);
   if (authMode === "signup" && signupCreationMode === "phone") {
     animatedInputs.push("#promoCodeInput");
     animatedInputs.push("#passwordConfirmInput");

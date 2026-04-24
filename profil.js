@@ -25,6 +25,7 @@ const ASSISTANCE_PHONE = SUPPORT_WHATSAPP_PHONE;
 const RATE_HTG_TO_DOES = 20;
 const AUTH_PROFILE_HINT_STORAGE_KEY = "domino_auth_profile_hint_v1";
 const WELCOME_LOCKED_SELL_STORAGE_KEY = "domino_welcome_locked_sell_attempt_v1";
+const PROFILE_HELP_MODAL_STORAGE_KEY = "domino_profile_help_modal_hidden_v1";
 const PUBLIC_HOME_URL = "https://dominoeslakay.com/inedex.html";
 let referralLoadToken = 0;
 let referralHintFreezeUntil = 0;
@@ -43,6 +44,13 @@ let profileVisibilityBound = false;
 const PROFILE_CLIENT_REFRESH_MS = 3 * 60 * 1000;
 let profilePendingOpsBound = false;
 let profileWithdrawalEventsBound = false;
+let profileHelpAutoOpenUid = "";
+let profileEntryActionHandled = false;
+
+function getProfileEntryAction() {
+  const params = new URLSearchParams(window.location.search || "");
+  return String(params.get("action") || "").trim().toLowerCase();
+}
 
 function safeCount(value) {
   const n = Number(value);
@@ -108,6 +116,30 @@ function readAuthProfileHint(user) {
 
 function getWelcomeLockedSellStorageKey(uid = "") {
   return `${WELCOME_LOCKED_SELL_STORAGE_KEY}:${String(uid || "").trim()}`;
+}
+
+function getProfileHelpStorageKey(uid = "") {
+  const safeUid = String(uid || "").trim() || "guest";
+  return `${PROFILE_HELP_MODAL_STORAGE_KEY}:${safeUid}`;
+}
+
+function hasHiddenProfileHelpModal(uid = "") {
+  try {
+    return window.localStorage?.getItem(getProfileHelpStorageKey(uid)) === "1";
+  } catch (_) {
+    return false;
+  }
+}
+
+function setHiddenProfileHelpModal(uid = "", hidden = true) {
+  const key = getProfileHelpStorageKey(uid);
+  try {
+    if (hidden) {
+      window.localStorage?.setItem(key, "1");
+    } else {
+      window.localStorage?.removeItem(key);
+    }
+  } catch (_) {}
 }
 
 function readWelcomeLockedSellAttempt(uid = "") {
@@ -481,6 +513,111 @@ function ensureProfilePasswordModal() {
   return overlay;
 }
 
+function ensureProfileHelpModal() {
+  let overlay = document.getElementById("profileHelpOverlay");
+  if (overlay) return overlay;
+
+  overlay = document.createElement("div");
+  overlay.id = "profileHelpOverlay";
+  overlay.className = "fixed inset-0 z-[3060] hidden items-center justify-center bg-black/58 p-4 backdrop-blur-sm";
+  overlay.innerHTML = `
+    <div class="w-full max-w-2xl rounded-3xl border border-white/20 bg-[#3F4766]/88 p-5 text-white shadow-[14px_14px_34px_rgba(16,23,40,0.52),-10px_-10px_24px_rgba(112,126,165,0.2)] backdrop-blur-xl sm:p-6">
+      <div class="flex items-start justify-between gap-3">
+        <div>
+          <p class="text-xs font-semibold uppercase tracking-[0.16em] text-white/70">Gid rapid</p>
+          <h3 class="mt-1 text-2xl font-bold text-white">Ou bezwen ede konprann sit la?</h3>
+        </div>
+        <button id="profileHelpClose" type="button" class="grid h-10 w-10 shrink-0 place-items-center rounded-2xl border border-white/20 bg-white/10 text-white">
+          <i class="fa-solid fa-xmark"></i>
+        </button>
+      </div>
+
+      <p class="mt-3 text-sm leading-6 text-white/86">
+        Nou prepare yon paj espesyal pou ede w konprann kijan sit la mache, etap pa etap.
+        Ou pral jwenn videyo ak eksplikasyon pou kreye kont, konekte, depo, chanjman an Does, jwèt, echanj Does an HTG, ak retrè.
+      </p>
+
+      <div class="mt-5 grid gap-3 sm:grid-cols-2">
+        <div class="rounded-2xl border border-white/10 bg-white/[0.06] p-4">
+          <p class="text-[11px] font-semibold uppercase tracking-[0.14em] text-white/60">Sa w ap aprann</p>
+          <p class="mt-2 text-sm leading-6 text-white/88">Kijan pou antre sou kont ou, fè premye depo ou, epi jwenn wout ou nan jwèt la san konfizyon.</p>
+        </div>
+        <div class="rounded-2xl border border-white/10 bg-white/[0.06] p-4">
+          <p class="text-[11px] font-semibold uppercase tracking-[0.14em] text-white/60">Videyo yo</p>
+          <p class="mt-2 text-sm leading-6 text-white/88">Ou poko fin kreye yo? Pa gen pwoblèm. Paj Aide la ap rete la pou w ajoute yo youn pa youn.</p>
+        </div>
+      </div>
+
+      <div class="mt-5 rounded-2xl border border-sky-300/20 bg-[linear-gradient(135deg,rgba(56,189,248,0.16),rgba(15,23,42,0.82))] p-4">
+        <p class="text-sm leading-6 text-sky-50/95">
+          Si ou bezwen konprann yon sèl etap rapidman, klike sou bouton anba a pou w ale dirèkteman sou paj Aide la.
+        </p>
+      </div>
+
+      <div class="mt-5 grid gap-2 sm:grid-cols-3">
+        <button id="profileHelpGoToAid" type="button" class="h-11 rounded-2xl border border-[#ffb26e] bg-[#F57C00] text-sm font-semibold text-white shadow-[8px_8px_18px_rgba(163,82,27,0.45),-6px_-6px_14px_rgba(255,175,102,0.22)]">
+          Ale nan paj Aide
+        </button>
+        <button id="profileHelpDismiss" type="button" class="h-11 rounded-2xl border border-white/20 bg-white/10 text-sm font-semibold text-white">
+          Pa montre ankò
+        </button>
+        <button id="profileHelpKeepOpen" type="button" class="h-11 rounded-2xl border border-white/20 bg-white/10 text-sm font-semibold text-white">
+          Fèmen
+        </button>
+      </div>
+    </div>
+  `;
+
+  document.body.appendChild(overlay);
+
+  const closeBtn = overlay.querySelector("#profileHelpClose");
+  const goBtn = overlay.querySelector("#profileHelpGoToAid");
+  const dismissBtn = overlay.querySelector("#profileHelpDismiss");
+  const keepOpenBtn = overlay.querySelector("#profileHelpKeepOpen");
+
+  const close = () => {
+    overlay.classList.add("hidden");
+    overlay.classList.remove("flex");
+    document.body.classList.remove("overflow-hidden");
+  };
+
+  const open = () => {
+    overlay.classList.remove("hidden");
+    overlay.classList.add("flex");
+    document.body.classList.add("overflow-hidden");
+    window.setTimeout(() => {
+      closeBtn?.focus();
+    }, 0);
+  };
+
+  closeBtn?.addEventListener("click", close);
+  keepOpenBtn?.addEventListener("click", close);
+  goBtn?.addEventListener("click", () => {
+    close();
+    window.location.href = "./aide.html";
+  });
+  dismissBtn?.addEventListener("click", () => {
+    const uid = String(auth.currentUser?.uid || "").trim();
+    setHiddenProfileHelpModal(uid, true);
+    close();
+  });
+  overlay.addEventListener("click", (event) => {
+    if (event.target === overlay) {
+      close();
+    }
+  });
+
+  window.addEventListener("keydown", (event) => {
+    if (event.key === "Escape" && overlay.classList.contains("flex")) {
+      close();
+    }
+  });
+
+  overlay.__openHelpModal = open;
+  overlay.__closeHelpModal = close;
+  return overlay;
+}
+
 function refreshProfilePendingOperationsModal() {
   const listEl = document.getElementById("profilePendingOpsList");
   const countEl = document.getElementById("profilePendingOpsCount");
@@ -791,6 +928,13 @@ function ensureProfileModal() {
                 Changer mot de passe
               </span>
               <i class="fa-solid fa-shield-halved shrink-0 text-xs text-white/80"></i>
+            </button>
+            <button id="profileHelpBtn" type="button" class="mt-2 inline-flex w-full min-w-0 items-center justify-between gap-2 rounded-xl border border-sky-300/20 bg-[linear-gradient(135deg,rgba(56,189,248,0.24),rgba(255,255,255,0.08))] px-3 py-2 text-sm font-semibold text-white shadow-[8px_8px_18px_rgba(19,25,40,0.34),-6px_-6px_14px_rgba(111,126,164,0.2)]">
+              <span class="inline-flex min-w-0 flex-1 items-center gap-2">
+                <i class="fa-solid fa-circle-question text-[11px]"></i>
+                Aide
+              </span>
+              <i class="fa-solid fa-book-open shrink-0 text-xs text-sky-100/90"></i>
             </button>
           </div>
         </div>
@@ -1715,6 +1859,7 @@ export function mountProfileModal(options = {}) {
       const depositBtn = document.getElementById("profileDepositBtn");
       const withdrawBtn = document.getElementById("profileWithdrawBtn");
       const passwordBtn = document.getElementById("profilePasswordBtn");
+      const helpBtn = document.getElementById("profileHelpBtn");
       if (depositBtn && !depositBtn.dataset.bound) {
         depositBtn.dataset.bound = "1";
         depositBtn.addEventListener("click", () => {
@@ -1738,6 +1883,12 @@ export function mountProfileModal(options = {}) {
         passwordBtn.dataset.bound = "1";
         passwordBtn.addEventListener("click", () => {
           ensureProfilePasswordModal().__openPasswordModal?.();
+        });
+      }
+      if (helpBtn && !helpBtn.dataset.bound) {
+        helpBtn.dataset.bound = "1";
+        helpBtn.addEventListener("click", () => {
+          window.location.href = "./aide.html";
         });
       }
     });
@@ -1790,6 +1941,7 @@ export function mountProfilePage(options = {}) {
   const copyReferralLinkBtn = document.getElementById("profileCopyReferralLink");
   const agentDashboardBtn = document.getElementById("profileAgentDashboardBtn");
   const contactAgentBtn = document.getElementById("profileContactAgentBtn");
+  const helpBtn = document.getElementById("profileHelpBtn");
 
   const closeOverlay = (overlay) => {
     if (!overlay) return;
@@ -1936,6 +2088,13 @@ export function mountProfilePage(options = {}) {
     });
   }
 
+  if (helpBtn && helpBtn.dataset.bound !== "1") {
+    helpBtn.dataset.bound = "1";
+    helpBtn.addEventListener("click", () => {
+      window.location.href = "./aide.html";
+    });
+  }
+
   const pendingOpsOverlay = ensureProfilePendingOperationsModal();
   const pendingOpsBtn = document.getElementById("profilePendingOpsBtn");
   const profilePasswordBtn = document.getElementById("profilePasswordBtn");
@@ -1967,6 +2126,27 @@ export function mountProfilePage(options = {}) {
   mountSoldeModal({ triggerSelector: "#profileDepositBtn" });
   mountXchangeModal({ triggerSelector: "#profileXchangeBtn" });
   mountRetraitModal({ triggerSelector: "#profileWithdrawBtn" });
+
+  if (!profileEntryActionHandled) {
+    profileEntryActionHandled = true;
+    const entryAction = getProfileEntryAction();
+    const actionMap = {
+      deposit: "#profileDepositBtn",
+      xchange: "#profileXchangeBtn",
+      withdraw: "#profileWithdrawBtn",
+      help: "#profileHelpBtn",
+      password: "#profilePasswordBtn",
+    };
+    const triggerSelector = actionMap[entryAction];
+    if (triggerSelector) {
+      window.setTimeout(() => {
+        const trigger = document.querySelector(triggerSelector);
+        if (trigger && !trigger.disabled) {
+          trigger.click();
+        }
+      }, 180);
+    }
+  }
 
   watchAuthState((user) => {
     const activeUser = user || auth.currentUser || null;

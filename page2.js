@@ -112,6 +112,7 @@ const ALLOWED_MORPION_STAKE_AMOUNTS = Object.freeze([500]);
 const MORPION_BOT_TEST_STAKE_DOES = 0;
 const MORPION_FRIEND_FIXED_STAKE_DOES = 500;
 const ENABLE_MORPION_BOT_TEST = false;
+const PAGE2_BOARD_GAME_CLASSIC = "classic";
 let page2NonCriticalRefreshTimer = null;
 let page2NonCriticalVisibilityHandler = null;
 let page2NonCriticalUid = "";
@@ -384,6 +385,14 @@ function buildFriendGameUrl(roomId, seatIndex, stakeDoes) {
   params.set("friendRoomId", String(roomId || "").trim());
   params.set("seat", String(Math.max(0, Number.parseInt(String(seatIndex || 0), 10) || 0)));
   params.set("roomMode", "friends");
+  return `./jeu.html?${params.toString()}`;
+}
+
+function buildClassicGameUrl(stakeDoes = 100) {
+  const params = new URLSearchParams();
+  const parsedStake = Number.parseInt(String(stakeDoes ?? 100), 10);
+  params.set("autostart", "1");
+  params.set("stake", String(Number.isFinite(parsedStake) ? parsedStake : 100));
   return `./jeu.html?${params.toString()}`;
 }
 
@@ -3887,7 +3896,7 @@ export function renderPage2(user, options = {}) {
     stakeDoes: MORPION_FRIEND_FIXED_STAKE_DOES,
     inviteCode: "",
   };
-  let page2BoardGameSelection = PAGE2_BOARD_GAME_MORPION;
+  let page2BoardGameSelection = PAGE2_BOARD_GAME_CLASSIC;
 
   const morpionBotTestRoomDraft = {
     roomId: "",
@@ -4412,6 +4421,26 @@ export function renderPage2(user, options = {}) {
   };
 
   const continueToBoardGame = async (stakeAmount = 500) => {
+    if (page2BoardGameSelection === PAGE2_BOARD_GAME_CLASSIC) {
+      const normalizedStakeAmount = Math.max(1, Number.parseInt(String(stakeAmount || 0), 10) || 100);
+      const xchangeMod = await loadXchangeModule().catch(() => null);
+      const state = xchangeMod?.getXchangeState?.() || {};
+      const playableDoesBalance = getPlayableDoesBalance(state);
+      if (playableDoesBalance < normalizedStakeAmount) {
+        closeStakeSelection();
+        if (doesRequiredOverlay) {
+          doesRequiredOverlay.classList.remove("hidden");
+          doesRequiredOverlay.classList.add("flex");
+          document.body.classList.add("overflow-hidden");
+        }
+        return;
+      }
+      closeStakeSelection();
+      showGlobalLoading("Ouverture du domino...");
+      window.location.href = buildClassicGameUrl(normalizedStakeAmount);
+      return;
+    }
+
     if (page2BoardGameSelection === PAGE2_BOARD_GAME_DAME) {
       const normalizedStakeAmount = PAGE2_DAME_STAKE_DOES;
       if (normalizedStakeAmount <= 0) {
@@ -4562,6 +4591,7 @@ export function renderPage2(user, options = {}) {
 
   gameModeClassicCard?.addEventListener("click", async () => {
     closeGameModeSelection();
+    page2BoardGameSelection = PAGE2_BOARD_GAME_CLASSIC;
     void ensureStakeOptionsLoaded();
     openStakeSelection();
   });

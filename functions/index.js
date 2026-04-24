@@ -24632,6 +24632,9 @@ exports.updateClientProfileSecure = publicOnCall("updateClientProfileSecure", as
   const welcomeBonusPromptStatusInput = normalizeWelcomeBonusPromptStatus(payload.welcomeBonusPromptStatus || "");
   const completeWelcomeBonusTutorial = payload.welcomeBonusTutorialCompleted === true;
   const markSignupBonusModalSeen = payload.signupBonusModalSeen === true;
+  const dameWhatsappNumberInput = sanitizePhone(payload.dameWhatsappNumber || "", 40);
+  const dameWaitingNotificationRequested = payload.dameWaitingNotificationRequested === true;
+  const dameWaitingNotificationRequestedAtMsInput = safeSignedInt(payload.dameWaitingNotificationRequestedAtMs);
   const context = sanitizeAnalyticsContext(payload, request);
   const ref = walletRef(uid);
   const snap = await ref.get();
@@ -24694,6 +24697,11 @@ exports.updateClientProfileSecure = publicOnCall("updateClientProfileSecure", as
     welcomeBonusProofCode: nextWelcomeBonusProofCode,
     welcomeBonusTutorialCompletedAtMs: nextWelcomeBonusTutorialCompletedAtMs,
     signupBonusModalSeenAtMs: nextSignupBonusModalSeenAtMs,
+    dameWhatsappNumber: dameWhatsappNumberInput || sanitizePhone(current.dameWhatsappNumber || ""),
+    dameWaitingNotificationRequested: dameWaitingNotificationRequested || current.dameWaitingNotificationRequested === true,
+    dameWaitingNotificationRequestedAtMs: dameWaitingNotificationRequested
+      ? (dameWaitingNotificationRequestedAtMsInput > 0 ? dameWaitingNotificationRequestedAtMsInput : Date.now())
+      : safeSignedInt(current.dameWaitingNotificationRequestedAtMs),
     lastSeenAt: admin.firestore.FieldValue.serverTimestamp(),
     lastSeenAtMs: Date.now(),
     lastAuthAt: admin.firestore.FieldValue.serverTimestamp(),
@@ -24741,6 +24749,8 @@ exports.updateClientProfileSecure = publicOnCall("updateClientProfileSecure", as
     }
     if (current.welcomeBonusClaimed !== true) profile.welcomeBonusClaimed = false;
     if (!current.welcomeBonusOrderId) profile.welcomeBonusOrderId = sanitizeText(current.welcomeBonusOrderId || "", 160);
+    if (typeof current.dameWaitingNotificationRequested !== "boolean") profile.dameWaitingNotificationRequested = current.dameWaitingNotificationRequested === true;
+    if (typeof current.dameWaitingNotificationRequestedAtMs !== "number") profile.dameWaitingNotificationRequestedAtMs = safeSignedInt(current.dameWaitingNotificationRequestedAtMs);
   }
 
   await ref.set(profile, { merge: true });
@@ -24799,6 +24809,9 @@ exports.updateClientProfileSecure = publicOnCall("updateClientProfileSecure", as
       signupBonusAutoGrantedAtMs: safeInt(finalProfile.signupBonusAutoGrantedAtMs || profile.signupBonusAutoGrantedAtMs),
       signupBonusAutoGrantedHtg: safeInt(finalProfile.signupBonusAutoGrantedHtg || profile.signupBonusAutoGrantedHtg),
       signupBonusModalSeenAtMs: safeInt(finalProfile.signupBonusModalSeenAtMs || profile.signupBonusModalSeenAtMs),
+      dameWhatsappNumber: sanitizePhone(finalProfile.dameWhatsappNumber || profile.dameWhatsappNumber || ""),
+      dameWaitingNotificationRequested: finalProfile.dameWaitingNotificationRequested === true || profile.dameWaitingNotificationRequested === true,
+      dameWaitingNotificationRequestedAtMs: safeInt(finalProfile.dameWaitingNotificationRequestedAtMs || profile.dameWaitingNotificationRequestedAtMs),
       updatedAt: new Date().toISOString(),
     },
     referralApplied: referralBootstrap.applied === true,

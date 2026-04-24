@@ -1456,7 +1456,8 @@ window.addEventListener('load', function () {
             // Game with audio feedback dude! The cherry for the cake
             
             // No sounds... Ohhh :( but the user is always right! :)
-            if (!draughts.querySelector('#sounds').checked) {
+            var soundsToggle = draughts.querySelector('#sounds');
+            if (!soundsToggle || !soundsToggle.checked) {
                 return;
             }
 
@@ -1523,12 +1524,18 @@ window.addEventListener('load', function () {
     
     function updateBoard() {
         opt.element = draughts.querySelector('#board');
-        opt.size = draughts.querySelector('#size').value;
-        opt.forceAttack = draughts.querySelector('#forceattack').checked;
-        opt.forcePieceHold = draughts.querySelector('#forcehold').checked;
-        opt.allowBackwardAttack = draughts.querySelector('#backwardattack').checked;
-        opt.allowQueenRun = draughts.querySelector('#queenfreerun').checked;
-        opt.allowQueenAttackRun = draughts.querySelector('#queenattackrun').checked;
+        var sizeInput = draughts.querySelector('#size');
+        var forceAttackInput = draughts.querySelector('#forceattack');
+        var forceHoldInput = draughts.querySelector('#forcehold');
+        var backwardAttackInput = draughts.querySelector('#backwardattack');
+        var queenFreeRunInput = draughts.querySelector('#queenfreerun');
+        var queenAttackRunInput = draughts.querySelector('#queenattackrun');
+        opt.size = sizeInput ? sizeInput.value : 8;
+        opt.forceAttack = !!(forceAttackInput && forceAttackInput.checked);
+        opt.forcePieceHold = !!(forceHoldInput && forceHoldInput.checked);
+        opt.allowBackwardAttack = !!(backwardAttackInput && backwardAttackInput.checked);
+        opt.allowQueenRun = !!(queenFreeRunInput && queenFreeRunInput.checked);
+        opt.allowQueenAttackRun = !!(queenAttackRunInput && queenAttackRunInput.checked);
         board = new DraughtsBoard(opt);
         
         // Sorry GC, I don't have time to shim the removeEventListener to IE8
@@ -1538,13 +1545,20 @@ window.addEventListener('load', function () {
     }
     addEvents();
     
-    (function () {
-        draughts.querySelector('#size').addEventListener('change', updateBoard);
-        draughts.querySelector('#forceattack').addEventListener('change', updateBoard);
-        draughts.querySelector('#forcehold').addEventListener('change', updateBoard);
-        draughts.querySelector('#backwardattack').addEventListener('change', updateBoard);
-        draughts.querySelector('#queenfreerun').addEventListener('change', updateBoard);
-        draughts.querySelector('#queenattackrun').addEventListener('change', updateBoard);
-    })();
+        (function () {
+            var sizeInput = draughts.querySelector('#size');
+            var forceAttackInput = draughts.querySelector('#forceattack');
+            var forceHoldInput = draughts.querySelector('#forcehold');
+            var backwardAttackInput = draughts.querySelector('#backwardattack');
+            var queenFreeRunInput = draughts.querySelector('#queenfreerun');
+            var queenAttackRunInput = draughts.querySelector('#queenattackrun');
+
+            if (sizeInput) sizeInput.addEventListener('change', updateBoard);
+            if (forceAttackInput) forceAttackInput.addEventListener('change', updateBoard);
+            if (forceHoldInput) forceHoldInput.addEventListener('change', updateBoard);
+            if (backwardAttackInput) backwardAttackInput.addEventListener('change', updateBoard);
+            if (queenFreeRunInput) queenFreeRunInput.addEventListener('change', updateBoard);
+            if (queenAttackRunInput) queenAttackRunInput.addEventListener('change', updateBoard);
+        })();
     
 });
