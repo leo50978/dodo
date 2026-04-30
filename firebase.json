@@ -17,7 +17,8 @@
       "**/node_modules/**",
       "functions/**",
       ".git/**",
-      "**/.git/**"
+      "**/.git/**",
+      "videolakay/accedersite.mp4"
     ]
   }
 }
