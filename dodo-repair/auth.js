@@ -1,0 +1,696 @@
+import {
+  auth,
+  GoogleAuthProvider,
+  signInWithPopup,
+  signInWithRedirect,
+  getRedirectResult,
+  onAuthStateChanged,
+  signInWithEmailAndPassword,
+  createUserWithEmailAndPassword,
+  sendPasswordResetEmail,
+  signOut,
+  sendEmailVerification,
+  reload,
+  applyActionCode,
+  updateProfile,
+} from "./firebase-init.js";
+
+const GOOGLE_REDIRECT_PENDING_KEY = "domino_google_redirect_pending_v1";
+const GOOGLE_REDIRECT_PENDING_TTL_MS = 15 * 60 * 1000;
+const USERNAME_EMAIL_DOMAIN = "username.dominoeslakay.local";
+const PHONE_LOGIN_EMAIL_DOMAIN = "phone.dominoeslakay.local";
+
+function authDebug(event, data = {}) {
+  try {
+    const payload = {
+      ts: new Date().toISOString(),
+      href: typeof window !== "undefined" ? String(window.location?.href || "") : "",
+      ...data,
+    };
+    console.log(`[AUTH_DEBUG][AUTH] ${event}`, payload);
+  } catch (error) {
+    console.log(`[AUTH_DEBUG][AUTH] ${event}`, { ts: new Date().toISOString(), logError: String(error?.message || error) });
+  }
+}
+
+function formatAuthError(err, fallback) {
+  const code = err && err.code ? String(err.code) : "";
+  const map = {
+    "auth/operation-not-allowed": "Méthode Email/Mot de passe non activée dans Firebase Auth.",
+    "auth/invalid-api-key": "API key Firebase invalide.",
+    "auth/unauthorized-domain": "Domaine non autorisé dans Firebase Authentication.",
+    "auth/invalid-email": "Adresse email invalide.",
+    "auth/invalid-username": "Username invalide.",
+    "auth/invalid-phone-login": "Numero de telephone ou WhatsApp invalide.",
+    "auth/username-already-in-use": "Ce username est déjà utilisé.",
+    "auth/email-already-in-use": "Cet email est déjà utilisé.",
+    "auth/phone-already-in-use": "Ce numero est deja utilise par un autre compte.",
+    "auth/weak-password": "Mot de passe trop faible (min 6 caractères).",
+    "auth/network-request-failed": "Erreur réseau vers Firebase.",
+    "auth/too-many-requests": "Trop de tentatives, réessaie plus tard.",
+    "auth/invalid-credential": "Email ou mot de passe incorrect.",
+    "auth/user-not-found": "Compte introuvable.",
+    "auth/wrong-password": "Mot de passe incorrect.",
+    "auth/popup-closed-by-user": "Connexion Google annulée.",
+    "auth/popup-blocked": "Popup Google bloquée par le navigateur.",
+    "auth/cancelled-popup-request": "Requête popup Google annulée.",
+    "auth/account-exists-with-different-credential": "Ce compte existe déjà avec une autre méthode de connexion.",
+    "auth/invalid-action-code": "Le code de vérification est invalide ou déjà utilisé.",
+    "auth/expired-action-code": "Le code de vérification a expiré.",
+    "auth/device-account-exists": "Un compte existe déjà sur cet appareil. Connecte-toi avec ce compte ou contacte l'assistance au 50940507232.",
+  };
+
+  if (code && map[code]) return map[code] + " (" + code + ")";
+  if (code) return (fallback || "Erreur d'authentification") + " (" + code + ")";
+  return (err && err.message) || fallback || "Erreur d'authentification";
+}
+
+function isValidEmail(email) {
+  return /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(String(email || "").trim());
+}
+
+function normalizeUsername(username) {
+  return String(username || "")
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9._-]/g, "")
+    .slice(0, 24);
+}
+
+function isValidUsername(username) {
+  const normalized = normalizeUsername(username);
+  return /^[a-z0-9](?:[a-z0-9._-]{1,22}[a-z0-9])$/.test(normalized);
+}
+
+function usernameToSyntheticEmail(username) {
+  const normalized = normalizeUsername(username);
+  if (!isValidUsername(normalized)) {
+    const err = new Error("Nom d'utilisateur invalide.");
+    err.code = "auth/invalid-username";
+    throw err;
+  }
+  return `${normalized}@${USERNAME_EMAIL_DOMAIN}`;
+}
+
+function normalizePhoneLogin(phone) {
+  let digits = String(phone || "").replace(/\D/g, "");
+  if (!digits) return "";
+  if (digits.startsWith("00")) digits = digits.slice(2);
+  if (digits.length === 8) digits = `509${digits}`;
+  return digits.slice(0, 15);
+}
+
+function isValidPhoneLogin(phone) {
+  const normalized = normalizePhoneLogin(phone);
+  return /^\d{11,15}$/.test(normalized);
+}
+
+function phoneToSyntheticEmail(phone) {
+  const normalized = normalizePhoneLogin(phone);
+  if (!isValidPhoneLogin(normalized)) {
+    const err = new Error("Numero de telephone ou WhatsApp invalide.");
+    err.code = "auth/invalid-phone-login";
+    throw err;
+  }
+  return `${normalized}@${PHONE_LOGIN_EMAIL_DOMAIN}`;
+}
+
+function isOneClickAuthEmail(email) {
+  const normalized = String(email || "").trim().toLowerCase();
+  return normalized.endsWith(`@${USERNAME_EMAIL_DOMAIN}`);
+}
+
+function isPhoneAuthEmail(email) {
+  const normalized = String(email || "").trim().toLowerCase();
+  return normalized.endsWith(`@${PHONE_LOGIN_EMAIL_DOMAIN}`);
+}
+
+function createOneClickAccountId() {
+  const stamp = Date.now().toString(36).toUpperCase();
+  const random = Math.random().toString(36).slice(2, 8).toUpperCase();
+  return `DLK-${stamp}-${random}`;
+}
+
+function isValidPassword(pass) {
+  return typeof pass === "string" && pass.length >= 6;
+}
+
+async function loginWithEmail(email, password) {
+  return signInWithEmailAndPassword(auth, String(email || "").trim(), String(password || ""));
+}
+
+async function signupWithEmail(email, password) {
+  return createUserWithEmailAndPassword(auth, String(email || "").trim(), String(password || ""));
+}
+
+async function loginWithPhone(phone, password) {
+  const email = phoneToSyntheticEmail(phone);
+  return signInWithEmailAndPassword(auth, email, String(password || ""));
+}
+
+async function signupWithPhone(phone, password) {
+  const email = phoneToSyntheticEmail(phone);
+  try {
+    return await createUserWithEmailAndPassword(auth, email, String(password || ""));
+  } catch (err) {
+    const code = String(err?.code || "");
+    if (code === "auth/email-already-in-use") {
+      const conflict = new Error("Ce numero est deja utilise.");
+      conflict.code = "auth/phone-already-in-use";
+      throw conflict;
+    }
+    throw err;
+  }
+}
+
+async function loginWithUsername(username, password) {
+  const email = usernameToSyntheticEmail(username);
+  return signInWithEmailAndPassword(auth, email, String(password || ""));
+}
+
+async function signupWithUsername(username, password) {
+  const email = usernameToSyntheticEmail(username);
+  try {
+    return await createUserWithEmailAndPassword(auth, email, String(password || ""));
+  } catch (err) {
+    const code = String(err?.code || "");
+    if (code === "auth/email-already-in-use") {
+      const conflict = new Error("Ce username est déjà utilisé.");
+      conflict.code = "auth/username-already-in-use";
+      throw conflict;
+    }
+    throw err;
+  }
+}
+
+async function sendPasswordReset(email) {
+  return sendPasswordResetEmail(auth, String(email || "").trim());
+}
+
+async function sendSignupVerificationEmail(user = auth.currentUser) {
+  if (!user) throw new Error("Utilisateur introuvable pour envoyer l'email de vérification.");
+  return sendEmailVerification(user);
+}
+
+async function refreshCurrentUser(user = auth.currentUser) {
+  if (!user) return null;
+  await reload(user);
+  return auth.currentUser;
+}
+
+async function applyEmailVerificationCode(code) {
+  return applyActionCode(auth, String(code || "").trim());
+}
+
+async function syncCurrentUserDisplayName(displayName, user = auth.currentUser) {
+  const normalized = String(displayName || "").trim().slice(0, 80);
+  if (!user || !normalized) return user || null;
+  authDebug("syncCurrentUserDisplayName:begin", {
+    uid: String(user?.uid || ""),
+    requestedDisplayName: normalized,
+    beforeDisplayName: String(user?.displayName || ""),
+    email: String(user?.email || ""),
+  });
+  if (String(user.displayName || "").trim() === normalized) {
+    authDebug("syncCurrentUserDisplayName:skipAlreadySet", {
+      uid: String(user?.uid || ""),
+      displayName: String(user?.displayName || ""),
+    });
+    return user;
+  }
+  await updateProfile(user, { displayName: normalized });
+  const resolvedUser = auth.currentUser || user;
+  authDebug("syncCurrentUserDisplayName:done", {
+    uid: String(resolvedUser?.uid || ""),
+    afterDisplayName: String(resolvedUser?.displayName || ""),
+    email: String(resolvedUser?.email || ""),
+  });
+  return resolvedUser;
+}
+
+function isEmailPasswordUser(user) {
+  if (!user || !Array.isArray(user.providerData)) return false;
+  return user.providerData.some((provider) => provider?.providerId === "password");
+}
+
+async function logoutCurrentUser() {
+  return signOut(auth);
+}
+
+function isGoogleRedirectSupportedOnCurrentHost() {
+  if (typeof window === "undefined") return false;
+  const host = String(window.location?.hostname || "").trim().toLowerCase();
+  const protocol = String(window.location?.protocol || "").trim().toLowerCase();
+  if (!host) return false;
+  if (protocol === "file:") return false;
+  if (protocol !== "http:" && protocol !== "https:") return false;
+  if (host === "localhost" || host === "127.0.0.1" || host === "::1" || host.endsWith(".local")) {
+    return false;
+  }
+  return true;
+}
+
+function shouldPreferGoogleRedirect() {
+  if (typeof window === "undefined") return false;
+  const ua = String(window.navigator?.userAgent || "").toLowerCase();
+  const coarsePointer = typeof window.matchMedia === "function"
+    ? window.matchMedia("(pointer: coarse)").matches
+    : false;
+  const smallViewport = Math.min(
+    Number(window.screen?.width || 0),
+    Number(window.screen?.height || 0)
+  ) > 0 && Math.min(
+    Number(window.screen?.width || 0),
+    Number(window.screen?.height || 0)
+  ) <= 900;
+  const mobileUa =
+    ua.includes("android") ||
+    ua.includes("iphone") ||
+    ua.includes("ipad") ||
+    ua.includes("ipod") ||
+    ua.includes("mobile");
+  return coarsePointer || smallViewport || mobileUa;
+}
+
+function markGoogleRedirectPending() {
+  if (typeof window === "undefined") return;
+  try {
+    const payload = {
+      startedAt: Date.now(),
+      host: String(window.location?.host || ""),
+      path: String(window.location?.pathname || ""),
+    };
+    window.sessionStorage?.setItem(GOOGLE_REDIRECT_PENDING_KEY, JSON.stringify(payload));
+    authDebug("redirectPending:set", payload);
+  } catch (_) {}
+}
+
+function readGoogleRedirectPending() {
+  if (typeof window === "undefined") return null;
+  try {
+    const raw = window.sessionStorage?.getItem(GOOGLE_REDIRECT_PENDING_KEY) || "";
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    if (!parsed || typeof parsed !== "object") return null;
+    const startedAt = Number(parsed.startedAt || 0);
+    if (!Number.isFinite(startedAt) || startedAt <= 0) return null;
+    if ((Date.now() - startedAt) > GOOGLE_REDIRECT_PENDING_TTL_MS) {
+      window.sessionStorage?.removeItem(GOOGLE_REDIRECT_PENDING_KEY);
+      authDebug("redirectPending:expired", { startedAt });
+      return null;
+    }
+    authDebug("redirectPending:read", parsed);
+    return parsed;
+  } catch (_) {
+    return null;
+  }
+}
+
+function clearGoogleRedirectPending() {
+  if (typeof window === "undefined") return;
+  try {
+    window.sessionStorage?.removeItem(GOOGLE_REDIRECT_PENDING_KEY);
+    authDebug("redirectPending:clear");
+  } catch (_) {}
+}
+
+async function waitForResolvedPopupUser(timeoutMs = 4500) {
+  if (auth.currentUser) return auth.currentUser;
+
+  return new Promise((resolve) => {
+    let settled = false;
+    const finalize = (user) => {
+      if (settled) return;
+      settled = true;
+      try {
+        unsubscribe();
+      } catch (_) {}
+      window.clearTimeout(timer);
+      resolve(user || null);
+    };
+
+    const unsubscribe = onAuthStateChanged(auth, (user) => {
+      if (user) finalize(user);
+    });
+
+    const timer = window.setTimeout(() => {
+      finalize(auth.currentUser || null);
+    }, Math.max(250, Number(timeoutMs) || 1800));
+  });
+}
+
+async function loginWithGoogle() {
+  const provider = new GoogleAuthProvider();
+  provider.setCustomParameters({ prompt: "select_account" });
+  const canUseRedirect = isGoogleRedirectSupportedOnCurrentHost();
+  const preferRedirect = canUseRedirect && shouldPreferGoogleRedirect();
+  authDebug("loginWithGoogle:start", {
+    canUseRedirect,
+    preferRedirect,
+    host: typeof window !== "undefined" ? String(window.location?.hostname || "") : "",
+    protocol: typeof window !== "undefined" ? String(window.location?.protocol || "") : "",
+  });
+
+  // Prefer redirect on mobile-like contexts, popup first on desktop-like.
+  if (preferRedirect) {
+    markGoogleRedirectPending();
+    authDebug("loginWithGoogle:useRedirect");
+    await signInWithRedirect(auth, provider);
+    authDebug("loginWithGoogle:redirectTriggered");
+    return { mode: "redirect", result: null };
+  }
+
+  try {
+    authDebug("loginWithGoogle:usePopup");
+    const res = await signInWithPopup(auth, provider);
+    authDebug("loginWithGoogle:popupSuccess", {
+      uid: String(res?.user?.uid || ""),
+      email: String(res?.user?.email || ""),
+    });
+    return { mode: "popup", result: res };
+  } catch (err) {
+    const code = err?.code ? String(err.code) : "";
+    authDebug("loginWithGoogle:error", {
+      code,
+      message: String(err?.message || ""),
+    });
+    if (code === "auth/popup-blocked" && canUseRedirect) {
+      markGoogleRedirectPending();
+      authDebug("loginWithGoogle:popupBlocked->redirect");
+      await signInWithRedirect(auth, provider);
+      authDebug("loginWithGoogle:redirectTriggeredAfterPopupBlocked");
+      return { mode: "redirect", result: null };
+    }
+    if (code === "auth/popup-closed-by-user" || code === "auth/cancelled-popup-request") {
+      authDebug("loginWithGoogle:popupClosedOrCancelled:waitUser");
+      const resolvedUser = await waitForResolvedPopupUser(12000);
+      if (resolvedUser) {
+        authDebug("loginWithGoogle:resolvedUserAfterPopupClose", {
+          uid: String(resolvedUser?.uid || ""),
+          email: String(resolvedUser?.email || ""),
+        });
+        return { mode: "popup", result: { user: resolvedUser } };
+      }
+      // Redirect fallback only on mobile-like contexts where popup flow is often blocked.
+      // On desktop-like contexts, avoid forced redirect loops and surface an explicit error.
+      if (preferRedirect && canUseRedirect) {
+        markGoogleRedirectPending();
+        authDebug("loginWithGoogle:noResolvedUser->redirect");
+        await signInWithRedirect(auth, provider);
+        authDebug("loginWithGoogle:redirectTriggeredAfterPopupClose");
+        return { mode: "redirect", result: null };
+      }
+      authDebug("loginWithGoogle:noResolvedUser:noRedirectFallback", {
+        canUseRedirect,
+        preferRedirect,
+      });
+    }
+    throw err;
+  }
+}
+
+async function completeGoogleRedirectIfAny() {
+  authDebug("completeRedirect:start", {
+    hasCurrentUserBefore: Boolean(auth.currentUser),
+    currentUidBefore: String(auth.currentUser?.uid || ""),
+  });
+  const result = await getRedirectResult(auth);
+  authDebug("completeRedirect:rawResult", {
+    hasResult: Boolean(result),
+    hasResultUser: Boolean(result?.user),
+    resultUid: String(result?.user?.uid || ""),
+  });
+  if (result?.user) {
+    clearGoogleRedirectPending();
+    authDebug("completeRedirect:resultUser", {
+      uid: String(result.user?.uid || ""),
+      email: String(result.user?.email || ""),
+    });
+    return result;
+  }
+  if (auth.currentUser) {
+    clearGoogleRedirectPending();
+    authDebug("completeRedirect:fallbackCurrentUser", {
+      uid: String(auth.currentUser?.uid || ""),
+      email: String(auth.currentUser?.email || ""),
+    });
+    return { user: auth.currentUser };
+  }
+
+  const hasPendingMarker = Boolean(readGoogleRedirectPending());
+  if (hasPendingMarker) {
+    authDebug("completeRedirect:pendingWithoutUser:retryScheduled");
+    await new Promise((resolve) => window.setTimeout(resolve, 1200));
+    const retryResult = await getRedirectResult(auth);
+    authDebug("completeRedirect:retryResult", {
+      hasRetryResult: Boolean(retryResult),
+      hasRetryUser: Boolean(retryResult?.user),
+      retryUid: String(retryResult?.user?.uid || ""),
+      hasCurrentUserAfterRetry: Boolean(auth.currentUser),
+      currentUidAfterRetry: String(auth.currentUser?.uid || ""),
+    });
+    if (retryResult?.user) {
+      clearGoogleRedirectPending();
+      return retryResult;
+    }
+    if (auth.currentUser) {
+      clearGoogleRedirectPending();
+      return { user: auth.currentUser };
+    }
+  }
+
+  authDebug("completeRedirect:noUser");
+  return result;
+}
+
+function hasPendingGoogleRedirect() {
+  const pending = Boolean(readGoogleRedirectPending());
+  authDebug("redirectPending:has", { pending });
+  return pending;
+}
+
+function clearPendingGoogleRedirect() {
+  clearGoogleRedirectPending();
+}
+
+function watchAuthState(callback) {
+  return onAuthStateChanged(auth, (user) => {
+    authDebug("onAuthStateChanged", {
+      hasUser: Boolean(user),
+      uid: String(user?.uid || ""),
+      email: String(user?.email || ""),
+      emailVerified: user?.emailVerified === true,
+      providerIds: Array.isArray(user?.providerData) ? user.providerData.map((p) => String(p?.providerId || "")) : [],
+    });
+    callback(user);
+  });
+}
+
+export {
+  auth,
+  formatAuthError,
+  isValidEmail,
+  normalizePhoneLogin,
+  isValidPhoneLogin,
+  normalizeUsername,
+  isValidUsername,
+  isOneClickAuthEmail,
+  isPhoneAuthEmail,
+  createOneClickAccountId,
+  isValidPassword,
+  loginWithEmail,
+  loginWithPhone,
+  loginWithUsername,
+  loginWithGoogle,
+  completeGoogleRedirectIfAny,
+  hasPendingGoogleRedirect,
+  clearPendingGoogleRedirect,
+  signupWithEmail,
+  signupWithPhone,
+  signupWithUsername,
+  sendPasswordReset,
+  sendSignupVerificationEmail,
+  refreshCurrentUser,
+  applyEmailVerificationCode,
+  syncCurrentUserDisplayName,
+  isEmailPasswordUser,
+  logoutCurrentUser,
+  watchAuthState,
+};
+
+function initLegacyAuthUI() {
+  const wrap = document.createElement("div");
+  wrap.id = "AuthRoot";
+  wrap.className = "MarcoCanvas";
+  wrap.setAttribute("visible", "true");
+  wrap.style.position = "fixed";
+  wrap.style.top = "1rem";
+  wrap.style.left = "1rem";
+  wrap.style.zIndex = "1500";
+  wrap.style.padding = "0.6rem";
+  wrap.style.background = "rgba(37,35,40,0.92)";
+  wrap.style.color = "#fff";
+  wrap.style.maxWidth = "22rem";
+
+  wrap.innerHTML = `
+    <div id="AuthLoggedOut">
+      <div style="font-size:1.1rem; margin-bottom:0.4rem;">Compte</div>
+      <label for="AuthEmail" style="display:block; font-size:0.9rem; margin-bottom:0.2rem;">Email *</label>
+      <input id="AuthEmail" type="email" placeholder="nom@domaine.com" autocomplete="email" autocapitalize="off" spellcheck="false" style="width:100%;margin-bottom:0.15rem;" />
+      <div id="AuthEmailHint" style="font-size:0.78rem; color:#cde7ff; margin-bottom:0.45rem;">Format attendu: nom@domaine.com</div>
+
+      <label for="AuthPassword" style="display:block; font-size:0.9rem; margin-bottom:0.2rem;">Mot de passe *</label>
+      <input id="AuthPassword" type="password" placeholder="Au moins 6 caractères" autocomplete="new-password" style="width:100%;margin-bottom:0.15rem;" />
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:0.45rem;">
+        <div id="AuthPasswordHint" style="font-size:0.78rem; color:#cde7ff;">Minimum 6 caractères</div>
+        <button id="AuthTogglePwdBtn" type="button" style="font-size:0.75rem;padding:0.2rem 0.4rem;">Afficher</button>
+      </div>
+
+      <div style="display:flex;gap:0.4rem;">
+        <button id="AuthLoginBtn" style="flex:1;" disabled>Connexion</button>
+        <button id="AuthSignupBtn" style="flex:1;" disabled>Créer compte</button>
+      </div>
+      <div id="AuthError" role="alert" style="color:#ff9c9c; margin-top:0.4rem; min-height:1.2rem;"></div>
+    </div>
+    <div id="AuthLoggedIn" style="display:none;">
+      <div>Connecté: <span id="AuthUserEmail"></span></div>
+      <div style="display:flex; gap:0.4rem; margin-top:0.4rem;">
+        <button id="AuthLogoutBtn" style="flex:1;">Déconnexion</button>
+        <button id="AuthLeaveRoomBtn" style="flex:1;">Quitter salle</button>
+      </div>
+      <div id="AuthStatus" style="margin-top:0.4rem; color:#cde7ff;"></div>
+    </div>
+  `;
+
+  document.body.appendChild(wrap);
+
+  const read = () => ({
+    email: (document.getElementById("AuthEmail").value || "").trim(),
+    pass: document.getElementById("AuthPassword").value || "",
+  });
+
+  const setError = (message) => {
+    const el = document.getElementById("AuthError");
+    if (el) el.textContent = message || "";
+  };
+
+  const setLoggedInUI = (user) => {
+    const out = document.getElementById("AuthLoggedOut");
+    const inEl = document.getElementById("AuthLoggedIn");
+    const email = document.getElementById("AuthUserEmail");
+    if (out) out.style.display = user ? "none" : "block";
+    if (inEl) inEl.style.display = user ? "block" : "none";
+    if (email) email.textContent = user ? user.email || user.uid : "";
+  };
+
+  const updateFormValidity = (showFieldErrors) => {
+    const { email, pass } = read();
+    const emailHint = document.getElementById("AuthEmailHint");
+    const passHint = document.getElementById("AuthPasswordHint");
+    const loginBtn = document.getElementById("AuthLoginBtn");
+    const signupBtn = document.getElementById("AuthSignupBtn");
+
+    const emailOk = isValidEmail(email);
+    const passOk = isValidPassword(pass);
+    const valid = emailOk && passOk;
+
+    if (loginBtn) loginBtn.disabled = !valid;
+    if (signupBtn) signupBtn.disabled = !valid;
+
+    if (showFieldErrors) {
+      if (emailHint) {
+        emailHint.textContent = emailOk || email.length === 0 ? "Format attendu: nom@domaine.com" : "Email invalide (exemple: nom@domaine.com)";
+        emailHint.style.color = emailOk || email.length === 0 ? "#cde7ff" : "#ff9c9c";
+      }
+      if (passHint) {
+        passHint.textContent = passOk || pass.length === 0 ? "Minimum 6 caractères" : "Mot de passe trop court (min 6 caractères)";
+        passHint.style.color = passOk || pass.length === 0 ? "#cde7ff" : "#ff9c9c";
+      }
+    }
+
+    return { valid, email, pass };
+  };
+
+  const onLogin = async () => {
+    const state = updateFormValidity(true);
+    setError("");
+    if (!state.valid) {
+      setError("Vérifie les champs avant de continuer.");
+      return;
+    }
+    try {
+      await loginWithEmail(state.email, state.pass);
+    } catch (err) {
+      console.error("Firebase login error:", err);
+      setError(formatAuthError(err, "Erreur de connexion"));
+    }
+  };
+
+  const onSignup = async () => {
+    const state = updateFormValidity(true);
+    setError("");
+    if (!state.valid) {
+      setError("Vérifie les champs avant de continuer.");
+      return;
+    }
+    try {
+      await signupWithEmail(state.email, state.pass);
+    } catch (err) {
+      console.error("Firebase signup error:", err);
+      setError(formatAuthError(err, "Erreur de création de compte"));
+    }
+  };
+
+  const emailEl = document.getElementById("AuthEmail");
+  const passEl = document.getElementById("AuthPassword");
+  const togglePwdBtn = document.getElementById("AuthTogglePwdBtn");
+
+  document.getElementById("AuthLoginBtn").addEventListener("click", onLogin);
+  document.getElementById("AuthSignupBtn").addEventListener("click", onSignup);
+  document.getElementById("AuthLogoutBtn").addEventListener("click", logoutCurrentUser);
+  document.getElementById("AuthLeaveRoomBtn").addEventListener("click", async () => {
+    if (window.LogiqueJeu && typeof window.LogiqueJeu.leaveRoom === "function") {
+      await window.LogiqueJeu.leaveRoom();
+    }
+  });
+
+  emailEl.addEventListener("input", () => {
+    setError("");
+    updateFormValidity(false);
+  });
+  passEl.addEventListener("input", () => {
+    setError("");
+    updateFormValidity(false);
+  });
+  emailEl.addEventListener("blur", () => updateFormValidity(true));
+  passEl.addEventListener("blur", () => updateFormValidity(true));
+
+  const submitOnEnter = (ev) => {
+    if (ev.key === "Enter") {
+      ev.preventDefault();
+      onLogin();
+    }
+  };
+  emailEl.addEventListener("keydown", submitOnEnter);
+  passEl.addEventListener("keydown", submitOnEnter);
+
+  togglePwdBtn.addEventListener("click", () => {
+    if (passEl.type === "password") {
+      passEl.type = "text";
+      togglePwdBtn.textContent = "Masquer";
+    } else {
+      passEl.type = "password";
+      togglePwdBtn.textContent = "Afficher";
+    }
+  });
+
+  updateFormValidity(false);
+  watchAuthState((user) => {
+    setLoggedInUI(user || null);
+    setError("");
+  });
+}
+
+if (window.__USE_LEGACY_AUTH_UI__ === true) {
+  initLegacyAuthUI();
+}

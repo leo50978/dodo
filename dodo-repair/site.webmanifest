@@ -1,0 +1,25 @@
+{
+  "name": "Dominoes Lakay",
+  "short_name": "Dominoes",
+  "description": "Plateforme web de domino en ligne entre joueurs avec mise, acces rapide et interface optimisee.",
+  "id": "/",
+  "start_url": "/",
+  "scope": "/",
+  "icons": [
+    {
+      "src": "/web-app-manifest-192x192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "maskable"
+    },
+    {
+      "src": "/web-app-manifest-512x512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
+    }
+  ],
+  "theme_color": "#3f4766",
+  "background_color": "#3f4766",
+  "display": "standalone"
+}

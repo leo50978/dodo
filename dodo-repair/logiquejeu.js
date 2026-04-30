@@ -1,0 +1,2915 @@
+import {
+  auth,
+  db,
+  collection,
+  doc,
+  query,
+  where,
+  orderBy,
+  limit,
+  getDocs,
+  onSnapshot,
+  onAuthStateChanged,
+} from "./firebase-init.js";
+import { getXchangeState, ensureXchangeState } from "./xchange.js";
+import {
+  joinMatchmakingSecure,
+  ensureRoomReadySecure,
+  touchRoomPresenceSecure,
+  ackRoomStartSeenSecure,
+  leaveRoomSecure,
+  finalizeGameSecure,
+  claimWinRewardSecure,
+  submitActionSecure,
+} from "./secure-functions.js";
+import { startMorpionLiveNotice } from "./morpion-live-notice.js";
+
+const ROOMS = "rooms";
+const TURN_LIMIT_SECONDS = 15;
+const TURN_LIMIT_MS = TURN_LIMIT_SECONDS * 1000;
+const PRESENCE_PING_MS = 20 * 1000;
+const ACTION_CACHE_PREFIX = "domino_actions_";
+const ROOM_DECK_CACHE_PREFIX = "domino_deck_";
+const ROOM_SETTLEMENT_PREFIX = "domino_settle_";
+const HOW_TO_PLAY_STORAGE_KEY = "domino_how_to_play_seen_v1";
+const HUD_MINIMAL_STORAGE_KEY = "domino_game_hud_minimal_v1";
+const DEFAULT_ENTRY_COST_DOES = 100;
+const DEFAULT_STAKE_REWARD_MULTIPLIER = 3;
+const ONLINE_USERS_MIN = 30000;
+const ONLINE_USERS_MAX = 100000;
+const ONLINE_USERS_STEP_MS = 30000;
+const ONLINE_USERS_WAVE_PERIOD = 29;
+const ONLINE_USERS_SEED = 0x9e3779b9;
+const URL_PARAMS = new URLSearchParams(window.location.search);
+const SHOULD_AUTOSTART = URL_PARAMS.get("autostart") === "1";
+const FRIEND_ROOM_ID_QUERY = String(URL_PARAMS.get("friendRoomId") || "").trim();
+const FRIEND_ROOM_SEAT_QUERY = (() => {
+  const parsed = Number.parseInt(String(URL_PARAMS.get("seat") || "-1"), 10);
+  return Number.isFinite(parsed) && parsed >= 0 && parsed < 4 ? parsed : -1;
+})();
+const START_CINEMATIC_TOTAL_MS = 5000;
+const START_CINEMATIC_SHUFFLE_MS = 1800;
+const START_CINEMATIC_DEAL_MS = 2200;
+const START_CINEMATIC_REVEAL_MS = 1000;
+const START_CINEMATIC_TILE_COUNT = 28;
+const START_CINEMATIC_DEAL_GAP_MS = 46;
+const START_CINEMATIC_TILE_TRAVEL_MS = 310;
+
+startMorpionLiveNotice();
+
+function resolveEntryCostDoes(searchParams) {
+  const rawStake = searchParams.get("stake");
+  if (!rawStake) return DEFAULT_ENTRY_COST_DOES;
+  const parsed = Number.parseInt(rawStake, 10);
+  if (!Number.isFinite(parsed) || parsed <= 0) return DEFAULT_ENTRY_COST_DOES;
+  return Math.floor(parsed);
+}
+
+function resolveRewardDoesFromEntry(entryCostDoes) {
+  const parsed = Number.parseInt(String(entryCostDoes || 0), 10);
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    return DEFAULT_ENTRY_COST_DOES * DEFAULT_STAKE_REWARD_MULTIPLIER;
+  }
+  return Math.floor(parsed) * DEFAULT_STAKE_REWARD_MULTIPLIER;
+}
+
+function resolveRoomRewardDoes(roomData = {}) {
+  const explicit = Number.parseInt(String(roomData?.rewardAmountDoes || 0), 10);
+  if (Number.isFinite(explicit) && explicit > 0) return Math.floor(explicit);
+  return resolveRewardDoesFromEntry(roomData?.entryCostDoes || roomData?.stakeDoes || DEFAULT_ENTRY_COST_DOES);
+}
+
+function getSessionRewardDoes() {
+  return resolveRoomRewardDoes(window.GameSession || {});
+}
+
+function getSessionEntryCostDoes() {
+  return Number.parseInt(String(window.GameSession?.entryCostDoes || ENTRY_COST_DOES_RESOLVED), 10) || DEFAULT_ENTRY_COST_DOES;
+}
+
+function getCurrentRoomRewardDoes(roomData = null) {
+  if (roomData) return resolveRoomRewardDoes(roomData);
+  return getSessionRewardDoes();
+}
+
+function getCurrentRoomEntryCostDoes(roomData = null) {
+  if (roomData) {
+    const explicit = Number.parseInt(String(roomData?.entryCostDoes || roomData?.stakeDoes || 0), 10);
+    if (Number.isFinite(explicit) && explicit > 0) return Math.floor(explicit);
+  }
+  return getSessionEntryCostDoes();
+}
+
+const ENTRY_COST_DOES_RESOLVED = resolveEntryCostDoes(URL_PARAMS);
+
+function buildAutostartUrl() {
+  return `./jeu.html?autostart=1&stake=${ENTRY_COST_DOES_RESOLVED}`;
+}
+
+function isFriendRoomData(roomData = null) {
+  return String(roomData?.roomMode || "") === "friends";
+}
+
+let roomUnsub = null;
+let actionsUnsub = null;
+let roomId = null;
+let seatIndex = -1;
+let botTurnNudgeKey = "";
+let startTimer = null;
+let waitingStartKickInFlightId = "";
+let waitingStartKickLastAtMs = 0;
+let turnTimer = null;
+let turnTimerKey = "";
+let turnTick = null;
+let presenceTick = null;
+let presenceRoomId = "";
+let presenceInFlight = false;
+let gameLaunched = false;
+let matchmakingBusy = false;
+let resumePromise = null;
+let autostartTried = false;
+let resumeDeclined = false;
+let pendingStartAfterRotate = false;
+let onlineUsersTick = null;
+let onlineUsersBucket = -1;
+let fullscreenHintTimer = null;
+let howToPlayPromptPromise = null;
+let roomActionsReadyId = "";
+let lastRoomSnapshotData = null;
+let finalizeGameTimer = null;
+let finalizeGameTargetRoomId = "";
+let launchRetryTimer = null;
+let rehydrationRetryTimer = null;
+let startRevealAckInFlightId = "";
+let startRevealAckDoneId = "";
+let deckOrderSyncRoomId = "";
+let botTurnWakeTimer = null;
+let botTurnWakeKey = "";
+let startCinematicKey = "";
+let startCinematicAnimationFrame = 0;
+let startCinematicTiles = [];
+
+function readHudMinimalMode() {
+  try {
+    return window.localStorage?.getItem(HUD_MINIMAL_STORAGE_KEY) === "1";
+  } catch (_) {
+    return false;
+  }
+}
+
+function writeHudMinimalMode(isMinimal) {
+  try {
+    if (isMinimal) {
+      window.localStorage?.setItem(HUD_MINIMAL_STORAGE_KEY, "1");
+    } else {
+      window.localStorage?.removeItem(HUD_MINIMAL_STORAGE_KEY);
+    }
+  } catch (_) {
+    // Ignore storage failures and keep the live UI state only.
+  }
+}
+
+function randomBetween(min, max) {
+  const safeMin = Math.max(0, Number(min) || 0);
+  const safeMax = Math.max(safeMin, Number(max) || safeMin);
+  return Math.floor(Math.random() * (safeMax - safeMin + 1)) + safeMin;
+}
+
+function pickRandomFromList(list = []) {
+  if (!Array.isArray(list) || !list.length) return "";
+  const index = randomBetween(0, list.length - 1);
+  return list[index] || "";
+}
+
+function makeClientActionId() {
+  return `act_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 10)}`;
+}
+
+function clearRoomActionsReady(targetRoomId = "") {
+  roomActionsReadyId = "";
+}
+
+function markRoomActionsReady(targetRoomId) {
+  roomActionsReadyId = String(targetRoomId || "");
+}
+
+function areRoomActionsReady(targetRoomId) {
+  return roomActionsReadyId !== "" && roomActionsReadyId === String(targetRoomId || "");
+}
+
+function normalizeDeckOrder(raw) {
+  if (!Array.isArray(raw) || raw.length !== 28) return [];
+  const seen = new Set();
+  const out = [];
+  for (let i = 0; i < raw.length; i += 1) {
+    const tileId = Number(raw[i]);
+    if (!Number.isFinite(tileId) || tileId < 0 || tileId >= 28 || seen.has(tileId)) {
+      return [];
+    }
+    seen.add(tileId);
+    out.push(Math.trunc(tileId));
+  }
+  return out;
+}
+
+function roomDeckCacheKey(id) {
+  return `${ROOM_DECK_CACHE_PREFIX}${String(id || "").trim()}`;
+}
+
+function readRoomDeckOrder(id) {
+  const safeId = String(id || "").trim();
+  if (!safeId) return [];
+  try {
+    const raw = localStorage.getItem(roomDeckCacheKey(safeId));
+    if (!raw) return [];
+    return normalizeDeckOrder(JSON.parse(raw));
+  } catch (_) {
+    return [];
+  }
+}
+
+function writeRoomDeckOrder(id, rawDeckOrder) {
+  const safeId = String(id || "").trim();
+  const deckOrder = normalizeDeckOrder(rawDeckOrder);
+  if (!safeId || deckOrder.length !== 28) return [];
+  try {
+    localStorage.setItem(roomDeckCacheKey(safeId), JSON.stringify(deckOrder));
+  } catch (_) {}
+  return deckOrder;
+}
+
+function clearRoomDeckOrder(id) {
+  const safeId = String(id || "").trim();
+  if (!safeId) return;
+  try {
+    localStorage.removeItem(roomDeckCacheKey(safeId));
+  } catch (_) {}
+}
+
+function setMatchLoading(visible, text) {
+  const overlay = document.getElementById("MatchLoadingOverlay");
+  const txt = document.getElementById("MatchLoadingText");
+  if (txt && typeof text === "string" && text.length > 0) txt.textContent = text;
+  if (!overlay) return;
+  if (visible) {
+    overlay.classList.remove("hidden");
+    overlay.classList.add("flex");
+  } else {
+    overlay.classList.add("hidden");
+    overlay.classList.remove("flex");
+  }
+}
+
+function lerpNumber(from, to, progress) {
+  return from + ((to - from) * progress);
+}
+
+function easeInOutCubic(progress) {
+  if (progress <= 0) return 0;
+  if (progress >= 1) return 1;
+  return progress < 0.5
+    ? 4 * progress * progress * progress
+    : 1 - Math.pow(-2 * progress + 2, 3) / 2;
+}
+
+function easeOutBack(progress) {
+  if (progress <= 0) return 0;
+  if (progress >= 1) return 1;
+  const c1 = 1.70158;
+  const c3 = c1 + 1;
+  return 1 + (c3 * Math.pow(progress - 1, 3)) + (c1 * Math.pow(progress - 1, 2));
+}
+
+function getRoomStartedAtMs(roomData = null) {
+  if (!roomData || typeof roomData !== "object") return 0;
+  const explicit = Number.parseInt(String(roomData.startedAtMs || 0), 10);
+  if (Number.isFinite(explicit) && explicit > 0) return explicit;
+  return tsToMs(roomData.startedAt);
+}
+
+function getRoomStartCinematicKey(roomData = null, targetRoomId = roomId) {
+  const safeRoomId = String(targetRoomId || "").trim();
+  const startedAtMs = getRoomStartedAtMs(roomData);
+  if (!safeRoomId || startedAtMs <= 0) return "";
+  return `${safeRoomId}:${startedAtMs}`;
+}
+
+function getStartCinematicElapsedMs(roomData = null) {
+  const startedAtMs = getRoomStartedAtMs(roomData);
+  if (startedAtMs <= 0) return START_CINEMATIC_TOTAL_MS;
+  return Math.max(0, Date.now() - startedAtMs);
+}
+
+function hasLocalStartCinematicElapsed(roomData = null) {
+  return getStartCinematicElapsedMs(roomData) >= START_CINEMATIC_TOTAL_MS;
+}
+
+function shouldHoldStartCinematic(roomData = null) {
+  if (!roomData || String(roomData.status || "") !== "playing") return false;
+  const startedAtMs = getRoomStartedAtMs(roomData);
+  if (startedAtMs <= 0) return false;
+  return roomData.startRevealPending === true || hasLocalStartCinematicElapsed(roomData) !== true;
+}
+
+function ensureStartCinematicNodes() {
+  const overlay = document.getElementById("GameStartCinematicOverlay");
+  const board = document.getElementById("GameStartCinematicBoard");
+  const layer = document.getElementById("GameStartCinematicTileLayer");
+  const text = document.getElementById("GameStartCinematicText");
+  const stage = document.getElementById("GameStartCinematicStage");
+  const revealTile = document.getElementById("GameStartCinematicRevealTile");
+  if (!overlay || !board || !layer || !text || !stage || !revealTile) {
+    return null;
+  }
+
+  if (startCinematicTiles.length !== START_CINEMATIC_TILE_COUNT || layer.children.length !== START_CINEMATIC_TILE_COUNT) {
+    layer.innerHTML = "";
+    startCinematicTiles = [];
+    for (let i = 0; i < START_CINEMATIC_TILE_COUNT; i += 1) {
+      const tile = document.createElement("div");
+      tile.className = "game-start-tile";
+      tile.setAttribute("aria-hidden", "true");
+      layer.appendChild(tile);
+      startCinematicTiles.push(tile);
+    }
+  }
+
+  return {
+    overlay,
+    board,
+    layer,
+    text,
+    stage,
+    revealTile,
+  };
+}
+
+function getRelativeSeatIndex(seat) {
+  const localSeat = Number.isFinite(Number(seatIndex)) && seatIndex >= 0 ? seatIndex : 0;
+  const safeSeat = Number.isFinite(Number(seat)) ? Math.trunc(Number(seat)) : 0;
+  return ((safeSeat - localSeat) + 4) % 4;
+}
+
+function getCinematicTargetPose(relativeSeat, handIndex, boardWidth, boardHeight) {
+  const spacing = Math.min(boardWidth, boardHeight) * 0.084;
+  const laneOffset = handIndex - 3;
+  const edgeX = boardWidth * 0.325;
+  const edgeY = boardHeight * 0.325;
+
+  if (relativeSeat === 0) {
+    return {
+      x: laneOffset * spacing,
+      y: edgeY,
+      rotateDeg: 90 + (laneOffset * 2.6),
+      scale: 0.98,
+    };
+  }
+
+  if (relativeSeat === 1) {
+    return {
+      x: edgeX,
+      y: laneOffset * spacing,
+      rotateDeg: laneOffset * 2.2,
+      scale: 0.98,
+    };
+  }
+
+  if (relativeSeat === 2) {
+    return {
+      x: laneOffset * spacing,
+      y: -edgeY,
+      rotateDeg: 90 - (laneOffset * 2.6),
+      scale: 0.98,
+    };
+  }
+
+  return {
+    x: -edgeX,
+    y: laneOffset * spacing,
+    rotateDeg: -(laneOffset * 2.2),
+    scale: 0.98,
+  };
+}
+
+function computeShufflePose(index, elapsedMs, boardWidth, boardHeight, deckOrder = []) {
+  const seedValue = Array.isArray(deckOrder) && Number.isFinite(Number(deckOrder[index]))
+    ? Math.trunc(Number(deckOrder[index]))
+    : index;
+  const seconds = elapsedMs / 1000;
+  const orbitBase = Math.min(boardWidth, boardHeight) * (0.044 + ((seedValue % 7) * 0.011));
+  const pulse = 1 + (0.18 * Math.sin((seconds * 4.6) + (seedValue * 0.39)));
+  const angle = ((seconds * (1.68 + ((seedValue % 5) * 0.19))) * Math.PI * 2) + (seedValue * 0.61);
+  const driftX = Math.sin((seconds * 3.2) + seedValue) * boardWidth * 0.028;
+  const driftY = Math.cos((seconds * 2.45) + (seedValue * 0.37)) * boardHeight * 0.024;
+  return {
+    x: (Math.cos(angle) * orbitBase * pulse) + driftX,
+    y: (Math.sin(angle * 1.11) * orbitBase * 0.82 * pulse) + driftY,
+    rotateDeg: ((angle * 57.2958) % 360) + (((seedValue % 4) - 1.5) * 9),
+    scale: 0.92 + ((seedValue % 5) * 0.018),
+  };
+}
+
+function applyStartCinematicTilePose(tile, pose, opacity = 1, zIndex = 1) {
+  if (!tile || !pose) return;
+  tile.style.opacity = String(opacity);
+  tile.style.zIndex = String(zIndex);
+  tile.style.transform =
+    `translate(-50%, -50%) translate(${pose.x.toFixed(2)}px, ${pose.y.toFixed(2)}px) rotate(${pose.rotateDeg.toFixed(2)}deg) scale(${pose.scale.toFixed(3)})`;
+}
+
+function renderStartCinematic(roomData = null) {
+  const nodes = ensureStartCinematicNodes();
+  if (!nodes || !roomData) return false;
+
+  const key = getRoomStartCinematicKey(roomData);
+  if (!key) {
+    hideStartCinematic(true);
+    return false;
+  }
+
+  const startedAtMs = getRoomStartedAtMs(roomData);
+  const elapsedMs = Math.max(0, Date.now() - startedAtMs);
+  const clampedElapsedMs = Math.min(elapsedMs, START_CINEMATIC_TOTAL_MS);
+  const boardWidth = Math.max(280, nodes.board.clientWidth || 0);
+  const boardHeight = Math.max(280, nodes.board.clientHeight || 0);
+  const deckOrder = Array.isArray(window.GameSession?.deckOrder) && window.GameSession.deckOrder.length === 28
+    ? window.GameSession.deckOrder
+    : (Array.isArray(roomData.privateDeckOrder) && roomData.privateDeckOrder.length === 28
+      ? roomData.privateDeckOrder
+      : (Array.isArray(roomData.deckOrder) && roomData.deckOrder.length === 28 ? roomData.deckOrder : []));
+
+  if (startCinematicKey !== key) {
+    startCinematicKey = key;
+    nodes.revealTile.classList.remove("visible");
+  }
+
+  nodes.overlay.classList.add("active");
+  nodes.overlay.setAttribute("aria-hidden", "false");
+
+  if (clampedElapsedMs < START_CINEMATIC_SHUFFLE_MS) {
+    nodes.stage.textContent = "Preparation de la main";
+    nodes.text.textContent = "Brassage des dominos en cours...";
+  } else if (clampedElapsedMs < START_CINEMATIC_SHUFFLE_MS + START_CINEMATIC_DEAL_MS) {
+    nodes.stage.textContent = "Distribution";
+    nodes.text.textContent = "Distribution des dominos a chaque joueur...";
+  } else if (roomData.startRevealPending === true && clampedElapsedMs >= START_CINEMATIC_TOTAL_MS) {
+    nodes.stage.textContent = "Verification";
+    nodes.text.textContent = "Chaque joueur confirme la mise en place...";
+  } else {
+    nodes.stage.textContent = "Ouverture";
+    nodes.text.textContent = "Le double six ouvre la main.";
+  }
+
+  const shuffleFinishedPoseMs = START_CINEMATIC_SHUFFLE_MS;
+  const revealPhaseProgress = clampNumber(
+    (clampedElapsedMs - (START_CINEMATIC_SHUFFLE_MS + START_CINEMATIC_DEAL_MS)) / START_CINEMATIC_REVEAL_MS,
+    0,
+    1
+  );
+
+  startCinematicTiles.forEach((tile, index) => {
+    const shufflePose = computeShufflePose(index, shuffleFinishedPoseMs, boardWidth, boardHeight, deckOrder);
+    const seat = index % 4;
+    const handIndex = Math.floor(index / 4);
+    const targetPose = getCinematicTargetPose(getRelativeSeatIndex(seat), handIndex, boardWidth, boardHeight);
+
+    let pose = shufflePose;
+    let opacity = 1;
+    let zIndex = 50 + index;
+
+    if (clampedElapsedMs < START_CINEMATIC_SHUFFLE_MS) {
+      pose = computeShufflePose(index, clampedElapsedMs, boardWidth, boardHeight, deckOrder);
+      zIndex = 160 + index;
+    } else {
+      const dealElapsedMs = clampedElapsedMs - START_CINEMATIC_SHUFFLE_MS;
+      const tileDelayMs = index * START_CINEMATIC_DEAL_GAP_MS;
+      const travelProgress = clampNumber(
+        (dealElapsedMs - tileDelayMs) / START_CINEMATIC_TILE_TRAVEL_MS,
+        0,
+        1
+      );
+      const eased = easeInOutCubic(travelProgress);
+      pose = {
+        x: lerpNumber(shufflePose.x, targetPose.x, eased),
+        y: lerpNumber(shufflePose.y, targetPose.y, eased),
+        rotateDeg: lerpNumber(shufflePose.rotateDeg, targetPose.rotateDeg, eased),
+        scale: lerpNumber(shufflePose.scale, targetPose.scale, eased),
+      };
+      opacity = revealPhaseProgress > 0 ? lerpNumber(1, 0.52, revealPhaseProgress) : 1;
+      zIndex = 90 - Math.floor(index / 4);
+    }
+
+    applyStartCinematicTilePose(tile, pose, opacity, zIndex);
+  });
+
+  if (revealPhaseProgress > 0) {
+    const revealScale = lerpNumber(0.68, 1, easeOutBack(revealPhaseProgress));
+    const revealRotate = lerpNumber(-14, 0, revealPhaseProgress);
+    const revealOpacity = lerpNumber(0.2, 1, revealPhaseProgress);
+    nodes.revealTile.classList.add("visible");
+    nodes.revealTile.style.opacity = String(revealOpacity);
+    nodes.revealTile.style.zIndex = "220";
+    nodes.revealTile.style.transform =
+      `translate(-50%, -50%) translate(0px, 0px) rotate(${revealRotate.toFixed(2)}deg) scale(${revealScale.toFixed(3)})`;
+  } else {
+    nodes.revealTile.classList.remove("visible");
+    nodes.revealTile.style.opacity = "0";
+    nodes.revealTile.style.transform = "translate(-50%, -50%) scale(0.72)";
+  }
+
+  return true;
+}
+
+function stopStartCinematicLoop() {
+  if (startCinematicAnimationFrame) {
+    cancelAnimationFrame(startCinematicAnimationFrame);
+    startCinematicAnimationFrame = 0;
+  }
+}
+
+function hideStartCinematic(forceReset = false) {
+  stopStartCinematicLoop();
+  const overlay = document.getElementById("GameStartCinematicOverlay");
+  const revealTile = document.getElementById("GameStartCinematicRevealTile");
+  if (overlay) {
+    overlay.classList.remove("active");
+    overlay.setAttribute("aria-hidden", "true");
+  }
+  if (revealTile) {
+    revealTile.classList.remove("visible");
+    revealTile.style.opacity = "0";
+    revealTile.style.transform = "translate(-50%, -50%) scale(0.72)";
+  }
+  if (forceReset) {
+    startCinematicKey = "";
+    startCinematicTiles = [];
+  }
+}
+
+function syncStartCinematic(roomData = null) {
+  hideStartCinematic();
+  return shouldHoldStartCinematic(roomData);
+}
+
+function hasSeenHowToPlayPrompt() {
+  try {
+    return window.localStorage?.getItem(HOW_TO_PLAY_STORAGE_KEY) === "1";
+  } catch (_) {
+    return false;
+  }
+}
+
+function markHowToPlayPromptSeen() {
+  try {
+    window.localStorage?.setItem(HOW_TO_PLAY_STORAGE_KEY, "1");
+  } catch (_) {
+    // Ignore storage failures; the tutorial may reappear next time.
+  }
+}
+
+function ensureHowToPlayModal() {
+  let overlay = document.getElementById("HowToPlayOverlay");
+  if (overlay) return overlay;
+
+  overlay = document.createElement("div");
+  overlay.id = "HowToPlayOverlay";
+  overlay.className = "fixed inset-0 z-[2600] hidden items-center justify-center bg-black/70 p-4 backdrop-blur-md";
+  overlay.innerHTML = `
+    <div class="w-[min(94vw,34rem)] rounded-3xl border border-white/20 bg-[#24304a]/90 p-5 text-white shadow-[14px_14px_34px_rgba(8,14,28,0.48),-10px_-10px_24px_rgba(67,93,142,0.18)] backdrop-blur-xl sm:p-6">
+      <div class="text-xs font-semibold uppercase tracking-[0.22em] text-[#8ed8ff]">Comment jouer</div>
+      <h2 class="mt-2 text-xl font-bold sm:text-2xl">Ton premier match</h2>
+      <div class="mt-4 space-y-3 text-sm text-white/85 sm:text-[15px]">
+        <p>Pour jouer un domino, clique simplement sur le domino que tu veux poser.</p>
+        <p>Si le domino peut se jouer par les deux cotes, clique sur le cote que tu choisis.</p>
+        <p class="rounded-2xl border border-[#58c4ff]/20 bg-[#58c4ff]/10 px-4 py-3 text-white/92">
+          Tu as <span class="font-semibold text-[#ffd8b5]">${TURN_LIMIT_SECONDS} secondes</span> pour jouer chaque coup.
+        </p>
+        <p class="rounded-2xl border border-white/15 bg-white/8 px-4 py-3 text-white/90">
+          Exemple: avec <span class="font-semibold text-[#ffd8b5]">6-3</span>, si tu peux jouer soit par le <span class="font-semibold">6</span> soit par le <span class="font-semibold">3</span>, clique directement sur le <span class="font-semibold">6</span> ou sur le <span class="font-semibold">3</span>.
+        </p>
+      </div>
+      <button id="HowToPlayContinueBtn" type="button" class="mt-5 h-11 w-full rounded-2xl border border-[#58c4ff]/45 bg-[#1293d8] text-sm font-semibold text-white shadow-[8px_8px_18px_rgba(10,49,82,0.45),-6px_-6px_14px_rgba(88,196,255,0.18)] transition hover:-translate-y-0.5">
+        J'ai compris
+      </button>
+    </div>
+  `;
+  document.body.appendChild(overlay);
+  return overlay;
+}
+
+function ensureHowToPlayPromptAccepted() {
+  if (hasSeenHowToPlayPrompt()) return Promise.resolve();
+  if (howToPlayPromptPromise) return howToPlayPromptPromise;
+
+  const overlay = ensureHowToPlayModal();
+  const continueBtn = document.getElementById("HowToPlayContinueBtn");
+  if (!overlay || !continueBtn) {
+    markHowToPlayPromptSeen();
+    return Promise.resolve();
+  }
+
+  overlay.classList.remove("hidden");
+  overlay.classList.add("flex");
+
+  howToPlayPromptPromise = new Promise((resolve) => {
+    const accept = () => {
+      continueBtn.removeEventListener("click", accept);
+      markHowToPlayPromptSeen();
+      overlay.classList.add("hidden");
+      overlay.classList.remove("flex");
+      howToPlayPromptPromise = null;
+      resolve();
+    };
+    continueBtn.addEventListener("click", accept);
+  });
+
+  return howToPlayPromptPromise;
+}
+
+function askResumeRoomDecision() {
+  const overlay = document.getElementById("ResumeRoomOverlay");
+  const joinBtn = document.getElementById("ResumeRoomJoinBtn");
+  const leaveBtn = document.getElementById("ResumeRoomLeaveBtn");
+
+  if (!overlay || !joinBtn || !leaveBtn) {
+    return Promise.resolve(
+      window.confirm("Une partie en cours a été trouvée.\nOK = Rentrer dans la salle\nAnnuler = Quitter la salle")
+    );
+  }
+
+  return new Promise((resolve) => {
+    const cleanup = () => {
+      joinBtn.removeEventListener("click", onJoin);
+      leaveBtn.removeEventListener("click", onLeave);
+      overlay.classList.add("hidden");
+      overlay.classList.remove("flex");
+    };
+    const onJoin = () => {
+      cleanup();
+      resolve(true);
+    };
+    const onLeave = () => {
+      cleanup();
+      resolve(false);
+    };
+
+    joinBtn.addEventListener("click", onJoin);
+    leaveBtn.addEventListener("click", onLeave);
+    overlay.classList.remove("hidden");
+    overlay.classList.add("flex");
+  });
+}
+
+function extractUrl(text) {
+  if (!text) return null;
+  const m = String(text).match(/https?:\/\/[^\s)"]+/);
+  return m ? m[0] : null;
+}
+
+function logFirestoreError(context, err) {
+  const code = err && err.code ? err.code : "unknown";
+  const message = err && err.message ? err.message : String(err);
+  const link = extractUrl(message);
+  console.error(`[Firestore][${context}] code=${code}`, err);
+  if (link) {
+    console.log(`[Firestore][${context}] index/create link: ${link}`);
+    setStatus(`Erreur Firestore (${code}). Ouvre la console: lien d'index détecté.`);
+  } else {
+    setStatus(`Erreur Firestore (${code}). Voir console.`);
+  }
+}
+
+function debugMatch(stage, details = {}) {
+  try {
+    const payload = {
+      ts: new Date().toISOString(),
+      roomId,
+      seatIndex,
+      ...details,
+    };
+    console.log(`[MATCH_DEBUG] ${stage} ${JSON.stringify(payload)}`, payload);
+  } catch (_) {
+    // Ignore logging failures
+  }
+}
+
+function requireUser() {
+  const user = auth.currentUser;
+  if (!user) throw new Error("Tu dois être connecté pour jouer en multijoueur.");
+  return user;
+}
+
+function setStatus(msg) {
+  if (window.AuthState && typeof window.AuthState.setStatus === "function") {
+    window.AuthState.setStatus(msg);
+  }
+}
+
+function clampNumber(value, min, max) {
+  return Math.min(max, Math.max(min, value));
+}
+
+function formatOnlineUsers(value) {
+  return Number(value || 0).toLocaleString("fr-FR").replace(/\u202f/g, " ");
+}
+
+function setOnlineUsersHud(value) {
+  const hud = document.getElementById("OnlineUsersHud");
+  if (!hud) return;
+  hud.textContent = `Utilisateurs en ligne: ${formatOnlineUsers(value)}`;
+}
+
+function hashUnitInterval(seed) {
+  let x = (seed ^ ONLINE_USERS_SEED) >>> 0;
+  x ^= x >>> 16;
+  x = Math.imul(x, 0x7feb352d);
+  x ^= x >>> 15;
+  x = Math.imul(x, 0x846ca68b);
+  x ^= x >>> 16;
+  return (x >>> 0) / 0xffffffff;
+}
+
+function computeSharedOnlineUsers(ms = Date.now()) {
+  const range = ONLINE_USERS_MAX - ONLINE_USERS_MIN;
+  const bucket = Math.floor(ms / ONLINE_USERS_STEP_MS);
+  const wave = (Math.sin(bucket / ONLINE_USERS_WAVE_PERIOD) + 1) / 2;
+  const noise = hashUnitInterval(bucket);
+  const ratio = clampNumber((wave * 0.68) + (noise * 0.32), 0, 1);
+  const value = ONLINE_USERS_MIN + Math.round(range * ratio);
+  return clampNumber(value, ONLINE_USERS_MIN, ONLINE_USERS_MAX);
+}
+
+function startOnlineUsersTicker() {
+  const hud = document.getElementById("OnlineUsersHud");
+  if (!hud) return;
+
+  if (onlineUsersTick) {
+    clearInterval(onlineUsersTick);
+    onlineUsersTick = null;
+  }
+  onlineUsersBucket = -1;
+  const refreshHud = () => {
+    const now = Date.now();
+    const nextBucket = Math.floor(now / ONLINE_USERS_STEP_MS);
+    if (nextBucket === onlineUsersBucket) return;
+    onlineUsersBucket = nextBucket;
+    setOnlineUsersHud(computeSharedOnlineUsers(now));
+  };
+  refreshHud();
+  onlineUsersTick = setInterval(() => {
+    refreshHud();
+  }, 1000);
+}
+
+function fullscreenElement() {
+  return document.fullscreenElement || document.webkitFullscreenElement || document.msFullscreenElement || null;
+}
+
+function requestFullscreenCompat(target) {
+  if (!target) return null;
+  if (typeof target.requestFullscreen === "function") return target.requestFullscreen();
+  if (typeof target.webkitRequestFullscreen === "function") return target.webkitRequestFullscreen();
+  if (typeof target.msRequestFullscreen === "function") return target.msRequestFullscreen();
+  return null;
+}
+
+function exitFullscreenCompat() {
+  if (typeof document.exitFullscreen === "function") return document.exitFullscreen();
+  if (typeof document.webkitExitFullscreen === "function") return document.webkitExitFullscreen();
+  if (typeof document.msExitFullscreen === "function") return document.msExitFullscreen();
+  return null;
+}
+
+function isFullscreenSupported() {
+  const root = document.documentElement;
+  return Boolean(
+    (root && (
+      typeof root.requestFullscreen === "function" ||
+      typeof root.webkitRequestFullscreen === "function" ||
+      typeof root.msRequestFullscreen === "function"
+    )) ||
+    typeof document.exitFullscreen === "function" ||
+    typeof document.webkitExitFullscreen === "function" ||
+    typeof document.msExitFullscreen === "function"
+  );
+}
+
+function isIOSDevice() {
+  const ua = String(navigator?.userAgent || "");
+  const iOSUA = /iPad|iPhone|iPod/i.test(ua);
+  const iPadOS = navigator?.platform === "MacIntel" && ((navigator?.maxTouchPoints || 0) > 1);
+  return iOSUA || iPadOS;
+}
+
+function isStandaloneDisplayMode() {
+  return Boolean(
+    window.matchMedia?.("(display-mode: standalone)")?.matches ||
+    navigator?.standalone === true
+  );
+}
+
+function setFullscreenHint(text) {
+  const hint = document.getElementById("FullscreenHint");
+  if (!hint) return;
+  hint.textContent = text || "Plein ecran non supporte sur cet appareil.";
+  hint.classList.remove("hidden");
+  if (fullscreenHintTimer) clearTimeout(fullscreenHintTimer);
+  fullscreenHintTimer = setTimeout(() => {
+    const liveHint = document.getElementById("FullscreenHint");
+    if (!liveHint) return;
+    liveHint.classList.add("hidden");
+  }, 2600);
+}
+
+function setFullscreenIcon(isActive) {
+  const icon = document.getElementById("FullscreenToggleIcon");
+  if (!icon) return;
+  if (isActive) {
+    icon.innerHTML = `
+      <path d="M9 9H5V5"></path>
+      <path d="M15 9h4V5"></path>
+      <path d="M9 15H5v4"></path>
+      <path d="M15 15h4v4"></path>
+    `;
+    return;
+  }
+  icon.innerHTML = `
+    <path d="M8 3H5a2 2 0 0 0-2 2v3"></path>
+    <path d="M16 3h3a2 2 0 0 1 2 2v3"></path>
+    <path d="M8 21H5a2 2 0 0 1-2-2v-3"></path>
+    <path d="M16 21h3a2 2 0 0 0 2-2v-3"></path>
+  `;
+}
+
+function setHudViewIcon(isMinimal) {
+  const icon = document.getElementById("HudViewToggleIcon");
+  if (!icon) return;
+  if (isMinimal) {
+    icon.innerHTML = `
+      <path d="M2 12s3.6-6 10-6c2.24 0 4.13.74 5.7 1.72"></path>
+      <path d="M20.06 16.94C18.34 18.21 15.95 19 12 19c-6.4 0-10-7-10-7a21.8 21.8 0 0 1 4.31-4.92"></path>
+      <path d="M10.58 10.58A2 2 0 0 0 10 12a2 2 0 0 0 2 2c.52 0 1-.2 1.36-.54"></path>
+      <path d="M3 3l18 18"></path>
+    `;
+    return;
+  }
+  icon.innerHTML = `
+    <path d="M2 12s3.6-6 10-6 10 6 10 6-3.6 6-10 6S2 12 2 12Z"></path>
+    <circle cx="12" cy="12" r="2.8"></circle>
+  `;
+}
+
+function syncFloatingHudVisibility() {
+  const goBtn = document.getElementById("GameEndGoBtn");
+  const hudViewBtn = document.getElementById("HudViewToggleBtn");
+  const goVisible = !!(goBtn && !goBtn.classList.contains("hidden"));
+
+  if (hudViewBtn) {
+    hudViewBtn.classList.toggle("hidden", goVisible);
+    hudViewBtn.classList.toggle("grid", !goVisible);
+  }
+}
+
+function applyHudMinimalMode(isMinimal) {
+  document.body?.classList.toggle("game-hud-minimal", !!isMinimal);
+  const btn = document.getElementById("HudViewToggleBtn");
+  if (btn) {
+    const label = isMinimal ? "Afficher les panneaux" : "Masquer les panneaux";
+    btn.setAttribute("aria-pressed", isMinimal ? "true" : "false");
+    btn.setAttribute("aria-label", label);
+    btn.setAttribute("title", label);
+  }
+  setHudViewIcon(!!isMinimal);
+  syncFloatingHudVisibility();
+}
+
+function toggleHudMinimalMode() {
+  const nextValue = !(document.body?.classList.contains("game-hud-minimal"));
+  applyHudMinimalMode(nextValue);
+  writeHudMinimalMode(nextValue);
+}
+
+function bindHudViewToggle() {
+  const btn = document.getElementById("HudViewToggleBtn");
+  if (!btn || btn.dataset.bound === "1") return;
+  btn.dataset.bound = "1";
+  btn.addEventListener("click", () => {
+    toggleHudMinimalMode();
+  });
+  applyHudMinimalMode(readHudMinimalMode());
+}
+
+window.syncFloatingHudVisibility = syncFloatingHudVisibility;
+
+function syncFullscreenButtonState() {
+  const btn = document.getElementById("FullscreenToggleBtn");
+  if (!btn) return;
+  const active = !!fullscreenElement();
+  btn.setAttribute("aria-label", active ? "Quitter le plein ecran" : "Passer en plein ecran");
+  btn.setAttribute("title", active ? "Quitter le plein ecran" : "Passer en plein ecran");
+  setFullscreenIcon(active);
+}
+
+async function toggleFullscreen() {
+  if (!isFullscreenSupported()) {
+    if (isIOSDevice() && !isStandaloneDisplayMode()) {
+      setFullscreenHint("Safari iPhone ne supporte pas ce plein ecran. Ajoute le site a l'ecran d'accueil pour un mode plein ecran.");
+      return;
+    }
+    setFullscreenHint("Plein ecran non supporte sur cet appareil.");
+    return;
+  }
+  try {
+    if (fullscreenElement()) {
+      await exitFullscreenCompat();
+    } else {
+      const result = requestFullscreenCompat(document.documentElement);
+      if (result === null) {
+        setFullscreenHint("Plein ecran non supporte sur cet appareil.");
+        return;
+      }
+      if (result && typeof result.then === "function") await result;
+    }
+  } catch (err) {
+    console.warn("[FULLSCREEN] toggle failed", err);
+    setFullscreenHint("Impossible d'activer le plein ecran.");
+  } finally {
+    syncFullscreenButtonState();
+  }
+}
+
+function bindFullscreenToggle() {
+  const btn = document.getElementById("FullscreenToggleBtn");
+  if (!btn || btn.dataset.bound === "1") return;
+  btn.dataset.bound = "1";
+  btn.addEventListener("click", () => {
+    toggleFullscreen();
+  });
+  document.addEventListener("fullscreenchange", syncFullscreenButtonState);
+  document.addEventListener("webkitfullscreenchange", syncFullscreenButtonState);
+  document.addEventListener("msfullscreenchange", syncFullscreenButtonState);
+  document.addEventListener("MSFullscreenChange", syncFullscreenButtonState);
+  syncFullscreenButtonState();
+}
+
+function isLikelyMobileDevice() {
+  const touch = ("ontouchstart" in window) || ((navigator && navigator.maxTouchPoints) || 0) > 0;
+  const smallViewport = window.matchMedia && window.matchMedia("(max-width: 1024px)").matches;
+  return touch && smallViewport;
+}
+
+function isPortraitNow() {
+  if (window.matchMedia) return window.matchMedia("(orientation: portrait)").matches;
+  return window.innerHeight >= window.innerWidth;
+}
+
+function isLandscapeRequiredAndMissing() {
+  return isLikelyMobileDevice() && isPortraitNow();
+}
+
+function updateOrientationGuard() {
+  const overlay = document.getElementById("OrientationGuardOverlay");
+  const title = document.getElementById("OrientationGuardTitle");
+  const risk = document.getElementById("OrientationGuardRisk");
+  if (!overlay) return true;
+
+  const blocked = isLandscapeRequiredAndMissing();
+  const isPlaying = !!(window.GameSession && window.GameSession.status === "playing");
+
+  if (!blocked) {
+    overlay.classList.add("hidden");
+    overlay.classList.remove("flex");
+    return true;
+  }
+
+  if (title) {
+    title.textContent = isPlaying
+      ? "Remets le telephone en mode horizontal maintenant"
+      : "Tourne ton telephone pour jouer";
+  }
+  if (risk) risk.classList.toggle("hidden", !isPlaying);
+  overlay.classList.remove("hidden");
+  overlay.classList.add("flex");
+  return false;
+}
+
+function ensureLandscapeReadyBeforeStart() {
+  if (updateOrientationGuard() === true) return true;
+  pendingStartAfterRotate = true;
+  setStatus("Tourne le telephone a l'horizontale pour lancer la partie.");
+  setMatchLoading(false);
+  return false;
+}
+
+function onOrientationMaybeChanged() {
+  const ready = updateOrientationGuard();
+  if (!ready) {
+    if (window.GameSession && window.GameSession.status === "playing") {
+      setStatus("Mode horizontal requis: remets vite le telephone a l'horizontale.");
+    }
+    return;
+  }
+  if (pendingStartAfterRotate && auth.currentUser) {
+    pendingStartAfterRotate = false;
+    startGameFlow().catch((err) => {
+      setStatus(err && err.message ? err.message : "Erreur matchmaking");
+    });
+  }
+}
+
+function refreshDoesHud() {
+  const el = document.getElementById("LocalDoesValue");
+  if (!el) return;
+  try {
+    const uid = auth.currentUser?.uid || "guest";
+    const xState = getXchangeState(window.__userBaseBalance || window.__userBalance || 0, uid);
+    el.textContent = String(xState?.does || 0);
+  } catch (_) {
+    el.textContent = "0";
+  }
+}
+
+function maybeSyncFriendRoomEntryCharge(roomData) {
+  if (!roomData || !isFriendRoomData(roomData) || !roomId) return;
+  const user = auth.currentUser;
+  if (!user) return;
+
+  const funding = roomData.entryFundingByUid && typeof roomData.entryFundingByUid === "object"
+    ? roomData.entryFundingByUid[user.uid]
+    : null;
+  if (!funding) return;
+
+  const settlement = readSettlement(roomId, user.uid);
+  if (settlement?.entryPaid === true) return;
+
+  writeSettlement(roomId, user.uid, { entryPaid: true, rewardPaid: settlement?.rewardPaid === true });
+  Promise.resolve()
+    .then(async () => {
+      await ensureXchangeState(user.uid);
+      refreshDoesHud();
+    })
+    .catch((error) => {
+      console.warn("[FRIEND_ROOM] impossible de synchroniser le débit d'entrée", error);
+    });
+}
+
+function settlementKey(id, uid) {
+  return `${ROOM_SETTLEMENT_PREFIX}${id || "none"}_${uid || "guest"}`;
+}
+
+function readSettlement(id, uid) {
+  try {
+    const raw = localStorage.getItem(settlementKey(id, uid));
+    if (!raw) return { entryPaid: false, rewardPaid: false };
+    const parsed = JSON.parse(raw);
+    return {
+      entryPaid: parsed && parsed.entryPaid === true,
+      rewardPaid: parsed && parsed.rewardPaid === true,
+    };
+  } catch (_) {
+    return { entryPaid: false, rewardPaid: false };
+  }
+}
+
+function writeSettlement(id, uid, patch) {
+  const prev = readSettlement(id, uid);
+  const next = {
+    entryPaid: patch && typeof patch.entryPaid === "boolean" ? patch.entryPaid : prev.entryPaid,
+    rewardPaid: patch && typeof patch.rewardPaid === "boolean" ? patch.rewardPaid : prev.rewardPaid,
+  };
+  try {
+    localStorage.setItem(settlementKey(id, uid), JSON.stringify(next));
+  } catch (_) {}
+}
+
+function ensureEndActionsButtonsBound() {
+  const replayBtn = document.getElementById("GameEndReplayBtn");
+  const backBtn = document.getElementById("GameEndBackBtn");
+  if (replayBtn && replayBtn.dataset.bound !== "1") {
+    replayBtn.dataset.bound = "1";
+    replayBtn.onclick = function() {
+      window.location.href = buildAutostartUrl();
+    };
+  }
+  if (backBtn && backBtn.dataset.bound !== "1") {
+    backBtn.dataset.bound = "1";
+    backBtn.onclick = function() {
+      window.location.href = "./inedex.html";
+    };
+  }
+}
+
+function showReplayReturnOverlay(message) {
+  const overlay = document.getElementById("GameEndOverlay");
+  const winnerEl = document.getElementById("GameEndWinnerText");
+  const infoEl = document.getElementById("GameEndInfoText");
+  const trophy = document.getElementById("GameEndTrophy");
+  const viewWrap = document.getElementById("GameEndViewWrap");
+  const actionsWrap = document.getElementById("GameEndActionsWrap");
+  const goBtn = document.getElementById("GameEndGoBtn");
+
+  ensureEndActionsButtonsBound();
+  if (!overlay || !actionsWrap) return;
+  if (winnerEl) winnerEl.textContent = "Salle quittée";
+  if (infoEl) infoEl.textContent = message || "Tu peux rejouer ou retourner à l'accueil.";
+  if (trophy) trophy.classList.add("hidden");
+  if (viewWrap) {
+    viewWrap.classList.add("hidden");
+    viewWrap.classList.remove("block");
+  }
+  if (goBtn) {
+    goBtn.classList.add("hidden");
+    goBtn.classList.remove("block");
+  }
+  syncFloatingHudVisibility();
+  actionsWrap.classList.remove("hidden");
+  actionsWrap.classList.add("grid");
+  overlay.classList.remove("hidden");
+  overlay.classList.add("flex");
+}
+
+function clearTimer() {
+  if (startTimer) {
+    clearTimeout(startTimer);
+    clearInterval(startTimer);
+    startTimer = null;
+  }
+  waitingStartKickInFlightId = "";
+  waitingStartKickLastAtMs = 0;
+}
+
+function clearTurnTimer() {
+  if (turnTimer) {
+    clearTimeout(turnTimer);
+    turnTimer = null;
+  }
+  if (turnTick) {
+    clearInterval(turnTick);
+    turnTick = null;
+  }
+  turnTimerKey = "";
+  const el = document.getElementById("TurnTimer");
+  if (el) {
+    el.textContent = "--";
+    el.setAttribute("Urgent", "false");
+  }
+}
+
+function clearBotTurnWakeTimer() {
+  if (botTurnWakeTimer) {
+    clearTimeout(botTurnWakeTimer);
+    botTurnWakeTimer = null;
+  }
+  botTurnWakeKey = "";
+}
+
+async function touchPresence(reason = "") {
+  const activeRoomId = String(roomId || "").trim();
+  if (!activeRoomId || !auth.currentUser) return;
+  if (presenceInFlight) return;
+  presenceInFlight = true;
+  try {
+    await touchRoomPresenceSecure({ roomId: activeRoomId });
+  } catch (err) {
+    debugMatch("presence:error", {
+      reason,
+      message: String(err && err.message ? err.message : err),
+      code: err && err.code ? String(err.code) : "",
+    });
+  } finally {
+    presenceInFlight = false;
+  }
+}
+
+function stopPresenceHeartbeat() {
+  if (presenceTick) {
+    clearInterval(presenceTick);
+    presenceTick = null;
+  }
+  presenceRoomId = "";
+  presenceInFlight = false;
+}
+
+function startPresenceHeartbeat(targetRoomId) {
+  const safeRoomId = String(targetRoomId || "").trim();
+  if (!safeRoomId) return;
+  if (presenceRoomId === safeRoomId && presenceTick) return;
+  stopPresenceHeartbeat();
+  presenceRoomId = safeRoomId;
+  touchPresence("start");
+  presenceTick = setInterval(() => {
+    touchPresence("tick");
+  }, PRESENCE_PING_MS);
+}
+
+function clearFinalizeGameTimer() {
+  if (finalizeGameTimer) {
+    clearTimeout(finalizeGameTimer);
+    finalizeGameTimer = null;
+  }
+  finalizeGameTargetRoomId = "";
+}
+
+function clearRehydrationRetryTimer() {
+  if (rehydrationRetryTimer) {
+    clearTimeout(rehydrationRetryTimer);
+    rehydrationRetryTimer = null;
+  }
+}
+
+function clearLaunchRetryTimer() {
+  if (launchRetryTimer) {
+    clearTimeout(launchRetryTimer);
+    launchRetryTimer = null;
+  }
+}
+
+function isDominoEngineReady() {
+  const partida = window.Domino && window.Domino.Partida ? window.Domino.Partida : null;
+  return !!(
+    window.Domino &&
+    window.Domino.Escena &&
+    partida &&
+    typeof partida.Empezar === "function" &&
+    window.UI &&
+    typeof window.UI.MostrarEmpezar === "function"
+  );
+}
+
+function scheduleLaunchRetry(roomData = null) {
+  if (launchRetryTimer) return;
+  if (roomData) {
+    lastRoomSnapshotData = roomData;
+  }
+  launchRetryTimer = setTimeout(() => {
+    launchRetryTimer = null;
+    const liveRoomData = lastRoomSnapshotData || null;
+    if (!roomId || !liveRoomData) return;
+    if (String(liveRoomData.status || "") !== "playing") return;
+    launchLocalGame(liveRoomData);
+  }, 120);
+}
+
+function syncPrivateDeckOrderIfNeeded(targetRoomId, reason = "", roomData = null) {
+  const safeRoomId = String(targetRoomId || "").trim();
+  if (!safeRoomId) return;
+  const cachedDeckOrder = readRoomDeckOrder(safeRoomId);
+  const sessionDeckOrder =
+    window.GameSession &&
+    String(window.GameSession.roomId || "") === safeRoomId &&
+    Array.isArray(window.GameSession.deckOrder)
+      ? window.GameSession.deckOrder
+      : [];
+  if (cachedDeckOrder.length === 28 || sessionDeckOrder.length === 28) return;
+  if (deckOrderSyncRoomId === safeRoomId) return;
+
+  deckOrderSyncRoomId = safeRoomId;
+  debugMatch("deckOrderSync:begin", {
+    targetRoomId: safeRoomId,
+    reason,
+    status: roomData?.status || lastRoomSnapshotData?.status || "",
+    cachedDeckOrderLength: cachedDeckOrder.length,
+    sessionDeckOrderLength: sessionDeckOrder.length,
+  });
+  startRoomIfNeeded(safeRoomId)
+    .catch(() => {})
+    .finally(() => {
+      if (deckOrderSyncRoomId === safeRoomId) {
+        deckOrderSyncRoomId = "";
+      }
+    });
+}
+
+function setTurnTimerUI(remainingSec, currentPlayer) {
+  const S = window.GameSession || null;
+  const localSeat = (S && typeof S.seatIndex === "number") ? S.seatIndex : -1;
+  let isLocalTurn = (typeof currentPlayer === "number" && localSeat === currentPlayer);
+  const partida = window.Domino && window.Domino.Partida ? window.Domino.Partida : null;
+  if (partida && partida.ModoRehidratacion !== true && typeof partida.EsTurnoHumanoLocal === "function") {
+    isLocalTurn = partida.EsTurnoHumanoLocal() === true;
+  }
+
+  const legacy = document.getElementById("TurnTimer");
+  const labelEl = document.getElementById("LocalTurnLabel");
+  const valueEl = document.getElementById("LocalTurnValue");
+  const barEl = document.getElementById("LocalTurnBar");
+  if (!isLocalTurn) {
+    if (legacy) {
+      legacy.textContent = "--";
+      legacy.setAttribute("Urgent", "false");
+    }
+    if (labelEl) labelEl.textContent = "En attente";
+    if (valueEl) valueEl.textContent = "--";
+    if (barEl) {
+      barEl.style.width = "100%";
+      barEl.style.opacity = "0.35";
+    }
+    return;
+  }
+
+  const safe = Math.max(0, Math.ceil(remainingSec));
+  if (legacy) {
+    legacy.textContent = String(safe);
+    legacy.setAttribute("Urgent", safe <= 5 ? "true" : "false");
+  }
+  if (!labelEl || !valueEl) return;
+  const pct = Math.max(0, Math.min(100, Math.floor((safe / (TURN_LIMIT_MS / 1000)) * 100)));
+  labelEl.textContent = "Ton tour";
+  valueEl.textContent = String(safe);
+  if (barEl) {
+    barEl.style.width = `${pct}%`;
+    barEl.style.opacity = "1";
+    barEl.classList.toggle("from-red-500", safe <= 5);
+    barEl.classList.toggle("to-rose-300", safe <= 5);
+    barEl.classList.toggle("from-orange-500", safe > 5);
+    barEl.classList.toggle("to-amber-300", safe > 5);
+  }
+}
+
+function tsToMs(ts) {
+  if (!ts) return 0;
+  if (typeof ts.toMillis === "function") return ts.toMillis();
+  if (typeof ts.seconds === "number") return ts.seconds * 1000;
+  return 0;
+}
+
+function clearSubs() {
+  if (roomUnsub) roomUnsub();
+  if (actionsUnsub) actionsUnsub();
+  roomUnsub = null;
+  actionsUnsub = null;
+  clearBotTurnWakeTimer();
+  clearLaunchRetryTimer();
+  clearRehydrationRetryTimer();
+  clearRoomActionsReady(roomId);
+  stopPresenceHeartbeat();
+  startRevealAckInFlightId = "";
+  startRevealAckDoneId = "";
+  lastRoomSnapshotData = null;
+  clearTurnTimer();
+  gameLaunched = false;
+  hideStartCinematic();
+}
+
+function actionCacheKey(id) {
+  return `${ACTION_CACHE_PREFIX}${id}`;
+}
+
+function clearActionCache(id) {
+  if (!id) return;
+  try {
+    localStorage.removeItem(actionCacheKey(id));
+  } catch (e) {
+    console.warn("[CACHE] clearActionCache error", e);
+  }
+  clearRoomDeckOrder(id);
+}
+
+function readActionCache(id) {
+  if (!id) return [];
+  try {
+    const raw = localStorage.getItem(actionCacheKey(id));
+    if (!raw) return [];
+    const arr = JSON.parse(raw);
+    if (!Array.isArray(arr)) return [];
+    arr.sort((a, b) => (a.seq || 0) - (b.seq || 0));
+    return arr;
+  } catch (e) {
+    console.warn("[CACHE] readActionCache error", e);
+    return [];
+  }
+}
+
+function saveActionToCache(id, action) {
+  if (!id || !action || typeof action.seq !== "number") return;
+  try {
+    const arr = readActionCache(id);
+    const last = arr.length > 0 ? arr[arr.length - 1] : null;
+    if (last && typeof last.seq === "number" && action.seq <= last.seq) {
+      if (action.seq === last.seq) return;
+      // si l'ordre n'est pas strictement croissant, on déduplique par seq
+      const map = {};
+      for (let i = 0; i < arr.length; i++) map[arr[i].seq] = arr[i];
+      map[action.seq] = action;
+      const next = Object.keys(map).map((k) => map[k]).sort((a, b) => a.seq - b.seq);
+      localStorage.setItem(actionCacheKey(id), JSON.stringify(next.slice(-200)));
+      return;
+    }
+    arr.push(action);
+    localStorage.setItem(actionCacheKey(id), JSON.stringify(arr.slice(-200)));
+  } catch (e) {
+    console.warn("[CACHE] saveActionToCache error", e);
+  }
+}
+
+function applyCachedActionsInstant(id) {
+  const actions = readActionCache(id);
+  if (!actions.length) return;
+  // Le cache doit être strictement continu depuis seq=0, sinon on l'ignore.
+  if (typeof actions[0].seq !== "number" || actions[0].seq !== 0) {
+    clearActionCache(id);
+    return;
+  }
+  for (let i = 1; i < actions.length; i++) {
+    if (typeof actions[i].seq !== "number" || actions[i].seq !== actions[i - 1].seq + 1) {
+      clearActionCache(id);
+      return;
+    }
+  }
+  if (!window.Domino || !window.Domino.Partida) return;
+  if (typeof window.Domino.Partida.AplicarAccionMultijugador !== "function") return;
+  for (let i = 0; i < actions.length; i++) {
+    const action = actions[i];
+    if (typeof action.seq !== "number") continue;
+    window.Domino.Partida.AplicarAccionMultijugador(action);
+  }
+}
+
+function resetSessionState() {
+  clearTimer();
+  clearSubs();
+  clearFinalizeGameTimer();
+  clearLaunchRetryTimer();
+  clearRehydrationRetryTimer();
+  clearBotTurnWakeTimer();
+  setMatchLoading(false);
+  roomId = null;
+  seatIndex = -1;
+  botTurnNudgeKey = "";
+  waitingStartKickInFlightId = "";
+  deckOrderSyncRoomId = "";
+  matchmakingBusy = false;
+  window.GameSession = null;
+  setLeaveRoomButtonVisible(false);
+  updateOrientationGuard();
+  hideStartCinematic(true);
+}
+
+function scheduleRehydrationRetry(targetRoomId, retryFn, reason, data = {}) {
+  if (rehydrationRetryTimer) return;
+  rehydrationRetryTimer = setTimeout(() => {
+    rehydrationRetryTimer = null;
+    if (!roomId || String(roomId) !== String(targetRoomId || "")) return;
+    const partida = window.Domino && window.Domino.Partida ? window.Domino.Partida : null;
+    if (!partida || partida.ModoRehidratacion !== true) return;
+    debugMatch(reason || "rehydration:retryTick", data);
+    retryFn();
+  }, 90);
+}
+
+async function ackRoomStartSeen(targetRoomId, reason = "") {
+  const safeRoomId = String(targetRoomId || "").trim();
+  if (!safeRoomId) return null;
+  if (!auth.currentUser) return null;
+  if (!lastRoomSnapshotData || String(lastRoomSnapshotData.status || "") !== "playing") return null;
+  if (lastRoomSnapshotData.startRevealPending !== true) return null;
+  if (startRevealAckDoneId === safeRoomId || startRevealAckInFlightId === safeRoomId) return null;
+
+  startRevealAckInFlightId = safeRoomId;
+  debugMatch("startReveal:ackSend", {
+    targetRoomId: safeRoomId,
+    reason,
+    roomLastActionSeq: lastRoomSnapshotData.lastActionSeq,
+  });
+  try {
+    const result = await ackRoomStartSeenSecure({ roomId: safeRoomId });
+    if (safeRoomId === roomId && window.GameSession && window.GameSession.roomId === safeRoomId) {
+      window.GameSession.startRevealPending = result?.pending === true;
+    }
+    if (result?.pending !== true) {
+      startRevealAckDoneId = safeRoomId;
+    }
+    debugMatch("startReveal:ackResult", {
+      targetRoomId: safeRoomId,
+      reason,
+      pending: result?.pending === true,
+      released: result?.released === true,
+      ackCount: result?.ackCount,
+      humanCount: result?.humanCount,
+    });
+    return result;
+  } catch (err) {
+    debugMatch("startReveal:ackError", {
+      targetRoomId: safeRoomId,
+      reason,
+      code: err?.code || "unknown",
+      message: err?.message || String(err),
+    });
+    throw err;
+  } finally {
+    if (startRevealAckInFlightId === safeRoomId) {
+      startRevealAckInFlightId = "";
+    }
+  }
+}
+
+function maybeNudgeServerForBotTurn(id, roomData) {
+  if (!id || !roomData || String(roomData.status || "") !== "playing") return;
+  if (roomData.startRevealPending === true) {
+    botTurnNudgeKey = "";
+    clearBotTurnWakeTimer();
+    return;
+  }
+  const currentPlayer = Number(roomData.currentPlayer);
+  const turnActual = Number(roomData.turnActual);
+  if (!Number.isFinite(currentPlayer) || !Number.isFinite(turnActual)) return;
+
+  const humanSeats = Array.isArray(window.GameSession?.humanSeats) ? window.GameSession.humanSeats : [];
+  if (humanSeats.indexOf(currentPlayer) !== -1) {
+    botTurnNudgeKey = "";
+    clearBotTurnWakeTimer();
+    return;
+  }
+
+  const lockUntilMs = Number(roomData.turnLockedUntilMs);
+  const safeLockUntilMs = Number.isFinite(lockUntilMs) ? Math.trunc(lockUntilMs) : 0;
+  const nowMs = Date.now();
+  const wakeKey = `${id}:${Math.trunc(turnActual)}:${Math.trunc(currentPlayer)}:${safeLockUntilMs}`;
+
+  if (safeLockUntilMs > nowMs + 40) {
+    if (botTurnWakeKey !== wakeKey || !botTurnWakeTimer) {
+      clearBotTurnWakeTimer();
+      botTurnWakeKey = wakeKey;
+      const waitMs = Math.max(80, (safeLockUntilMs - nowMs) + 80);
+      debugMatch("botTurn:wakeScheduled", {
+        currentPlayer: Math.trunc(currentPlayer),
+        turnActual: Math.trunc(turnActual),
+        turnLockedUntilMs: safeLockUntilMs,
+        waitMs,
+      });
+      botTurnWakeTimer = setTimeout(() => {
+        botTurnWakeTimer = null;
+        if (botTurnWakeKey !== wakeKey) return;
+        const liveRoom = lastRoomSnapshotData || null;
+        if (!liveRoom || String(roomId || "") !== String(id)) return;
+        if (String(liveRoom.status || "") !== "playing") return;
+        if (Number(liveRoom.currentPlayer) !== Math.trunc(currentPlayer)) return;
+        if (Number(liveRoom.turnActual) !== Math.trunc(turnActual)) return;
+        maybeNudgeServerForBotTurn(id, liveRoom);
+      }, waitMs);
+    }
+    botTurnNudgeKey = "";
+    return;
+  }
+
+  clearBotTurnWakeTimer();
+  const key = `${id}:${Math.trunc(turnActual)}:${Math.trunc(currentPlayer)}:${safeLockUntilMs}`;
+  if (botTurnNudgeKey === key) return;
+  botTurnNudgeKey = key;
+
+  debugMatch("botTurn:nudge", {
+    currentPlayer: Math.trunc(currentPlayer),
+    turnActual: Math.trunc(turnActual),
+    turnLockedUntilMs: safeLockUntilMs,
+  });
+
+  startRoomIfNeeded(id).catch((err) => {
+    debugMatch("botTurn:nudgeError", {
+      currentPlayer: Math.trunc(currentPlayer),
+      turnActual: Math.trunc(turnActual),
+      code: err?.code || "unknown",
+      message: err?.message || String(err),
+    });
+  });
+}
+
+function parseSeatsMap(seats) {
+  const humanSeats = [];
+  if (!seats || typeof seats !== "object") return humanSeats;
+  Object.keys(seats).forEach((uid) => {
+    const s = seats[uid];
+    if (typeof s === "number" && s >= 0 && s < 4) humanSeats.push(s);
+  });
+  humanSeats.sort((a, b) => a - b);
+  return humanSeats;
+}
+
+async function findWaitingRoom() {
+  // Evite une dépendance à un index composite Firestore sur les nouveaux projets.
+  const q = query(
+    collection(db, ROOMS),
+    where("status", "==", "waiting"),
+    limit(25)
+  );
+  try {
+    const snap = await getDocs(q);
+    if (snap.empty) return null;
+
+    function tsValue(t) {
+      if (!t) return 0;
+      if (typeof t.toMillis === "function") return t.toMillis();
+      if (typeof t.seconds === "number") return t.seconds * 1000;
+      return 0;
+    }
+
+    const candidates = [];
+    for (let i = 0; i < snap.docs.length; i++) {
+      const d = snap.docs[i];
+      const data = d.data() || {};
+      const humans = Number.isFinite(Number(data.humanCount)) ? Number(data.humanCount) : 1;
+      if (humans >= 4) continue;
+      candidates.push({
+        id: d.id,
+        humans,
+        createdAtMs: tsValue(data.createdAt),
+      });
+    }
+
+    if (candidates.length === 0) return null;
+
+    candidates.sort((a, b) => {
+      if (b.humans !== a.humans) return b.humans - a.humans; // priorise les salles presque pleines
+      return a.createdAtMs - b.createdAtMs; // puis la plus ancienne
+    });
+    return candidates[0].id;
+  } catch (err) {
+    logFirestoreError("findWaitingRoom", err);
+    throw err;
+  }
+}
+
+async function findActiveRoomForUser(uid) {
+  const q = query(
+    collection(db, ROOMS),
+    where("playerUids", "array-contains", uid),
+    limit(10)
+  );
+  try {
+    const snap = await getDocs(q);
+    if (snap.empty) return null;
+
+    function tsValue(t) {
+      if (!t) return 0;
+      if (typeof t.toMillis === "function") return t.toMillis();
+      if (typeof t.seconds === "number") return t.seconds * 1000;
+      return 0;
+    }
+
+    let waiting = null;
+    let waitingTs = 0;
+    let playing = null;
+    let playingTs = 0;
+
+    for (let i = 0; i < snap.docs.length; i++) {
+      const d = snap.docs[i];
+      const data = d.data();
+      if (!data || !data.status) continue;
+
+      if (data.status === "playing") {
+        const t = tsValue(data.startedAt) || tsValue(data.createdAt);
+        if (playing === null || t > playingTs) {
+          playing = { id: d.id, data };
+          playingTs = t;
+        }
+      } else if (data.status === "waiting") {
+        const t = tsValue(data.createdAt);
+        if (waiting === null || t > waitingTs) {
+          waiting = { id: d.id, data };
+          waitingTs = t;
+        }
+      }
+    }
+    return playing || waiting;
+  } catch (err) {
+    logFirestoreError("findActiveRoomForUser", err);
+    throw err;
+  }
+}
+
+async function startRoomIfNeeded(id) {
+  debugMatch("startRoomIfNeeded:begin", { targetRoomId: id });
+  try {
+    const result = await ensureRoomReadySecure({ roomId: id });
+    if (
+      result &&
+      String(result.status || "") === "waiting" &&
+      lastRoomSnapshotData &&
+      String(roomId || "") === String(id)
+    ) {
+      lastRoomSnapshotData = {
+        ...lastRoomSnapshotData,
+        waitingDeadlineMs: Number.isFinite(Number(result.waitingDeadlineMs))
+          ? Number(result.waitingDeadlineMs)
+          : lastRoomSnapshotData.waitingDeadlineMs,
+        humanCount: Number.isFinite(Number(result.humanCount))
+          ? Number(result.humanCount)
+          : lastRoomSnapshotData.humanCount,
+        botCount: Number.isFinite(Number(result.botCount))
+          ? Number(result.botCount)
+          : lastRoomSnapshotData.botCount,
+      };
+    }
+    if (Array.isArray(result?.privateDeckOrder) && result.privateDeckOrder.length === 28) {
+      const deckOrder = writeRoomDeckOrder(id, result.privateDeckOrder);
+      if (
+        id === roomId &&
+        window.GameSession &&
+        String(window.GameSession.roomId || "") === String(id)
+      ) {
+        window.GameSession.deckOrder = deckOrder.slice(0, 28);
+      }
+      debugMatch("startRoomIfNeeded:deckOrderReady", {
+        targetRoomId: id,
+        deckOrderLength: deckOrder.length,
+        status: result?.status || "",
+      });
+    }
+    debugMatch("startRoomIfNeeded:success", { targetRoomId: id });
+    return result;
+  } catch (err) {
+    debugMatch("startRoomIfNeeded:error", {
+      targetRoomId: id,
+      code: err?.code || "unknown",
+      message: err?.message || String(err),
+    });
+    logFirestoreError("startRoomIfNeeded", err);
+    throw err;
+  }
+}
+
+function scheduleWaitingCountdown(id, roomData) {
+  clearTimer();
+  if (!id || !roomData || String(roomData.status || "") !== "waiting") return;
+
+  const kickServerStart = () => {
+    if (waitingStartKickInFlightId === String(id)) return;
+    const nowMs = Date.now();
+    if (nowMs - waitingStartKickLastAtMs < 1000) return;
+    waitingStartKickLastAtMs = nowMs;
+    waitingStartKickInFlightId = String(id);
+    startRoomIfNeeded(id)
+      .catch((err) => {
+        setStatus(err?.message || "Erreur démarrage");
+      })
+      .finally(() => {
+        if (waitingStartKickInFlightId === String(id)) {
+          waitingStartKickInFlightId = "";
+        }
+      });
+  };
+
+  const updateCountdown = () => {
+    if (!roomId || String(roomId) !== String(id)) {
+      clearTimer();
+      return;
+    }
+    const liveRoom = lastRoomSnapshotData && String(roomId) === String(id) ? lastRoomSnapshotData : roomData;
+    const humans = Number.isFinite(Number(liveRoom?.humanCount)) ? Number(liveRoom.humanCount) : 1;
+    const requiredHumans = Number.isFinite(Number(liveRoom?.requiredHumans))
+      ? Math.max(2, Math.min(4, Number(liveRoom.requiredHumans)))
+      : 4;
+    const deadlineMs = Number.isFinite(Number(liveRoom?.waitingDeadlineMs)) ? Number(liveRoom.waitingDeadlineMs) : 0;
+    const isFriendRoom = isFriendRoomData(liveRoom);
+
+    if (humans >= requiredHumans) {
+      const readyLabel = isFriendRoom
+        ? `Salle privée (${humans}/${requiredHumans}). Tous les amis sont là, démarrage...`
+        : `Salle en attente (${humans}/4). Tous les joueurs sont là, démarrage...`;
+      setStatus(readyLabel);
+      kickServerStart();
+      return;
+    }
+
+    if (deadlineMs <= 0) {
+      const pendingLabel = isFriendRoom
+        ? `Salle privée (${humans}/${requiredHumans}). En attente des amis...`
+        : `Salle en attente (${humans}/4). Le serveur prépare encore le démarrage.`;
+      setStatus(pendingLabel);
+      kickServerStart();
+      return;
+    }
+
+    const remainingMs = Math.max(0, deadlineMs - Date.now());
+    if (remainingMs <= 0) {
+      const expiringLabel = isFriendRoom
+        ? `Salle privée (${humans}/${requiredHumans}). Vérification de l'invitation...`
+        : `Salle en attente (${humans}/4). Démarrage...`;
+      setStatus(expiringLabel);
+      kickServerStart();
+      return;
+    }
+
+    if (isFriendRoom) {
+      setStatus(`Salle privée (${humans}/${requiredHumans}). Invite tes amis, expiration dans ${Math.ceil(remainingMs / 1000)}s.`);
+      return;
+    }
+
+    setStatus(`Salle en attente (${humans}/4). Démarrage dans ${Math.ceil(remainingMs / 1000)}s, puis les bots complètent si besoin.`);
+  };
+
+  updateCountdown();
+  startTimer = setInterval(updateCountdown, 250);
+}
+
+async function endGameClick() {
+  const user = auth.currentUser;
+  if (!user || !roomId) {
+    setStatus("Aucune salle active.");
+    return "no_room";
+  }
+  const targetRoomId = String(roomId || "");
+  if (String(lastRoomSnapshotData?.status || "") !== "ended") {
+    setStatus("La partie se finalise encore. Réessaie dans un instant.");
+    debugMatch("endGameClick:notEndedYet", {
+      targetRoomId,
+      status: String(lastRoomSnapshotData?.status || ""),
+    });
+    return "error";
+  }
+
+  try {
+    await finalizeGameSecure({ roomId: targetRoomId });
+  } catch (err) {
+    debugMatch("endGameClick:finalizeBestEffortError", {
+      targetRoomId,
+      code: err?.code || "unknown",
+      message: err?.message || String(err),
+    });
+  }
+
+  const maxAttempts = 7;
+  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+    const leaveResult = await leaveRoom({
+      roomId: targetRoomId,
+      strict: true,
+      forceResetOnError: false,
+      silentStatusOnSuccess: true,
+    });
+    if (leaveResult?.left === true || leaveResult?.state === "no_room") {
+      setStatus("Salle quittée.");
+      return "left";
+    }
+
+    const code = String(leaveResult?.errorCode || "");
+    const canRetry = code === "failed-precondition";
+    debugMatch("endGameClick:leaveRetry", {
+      targetRoomId,
+      attempt,
+      maxAttempts,
+      code,
+      canRetry,
+    });
+    if (!canRetry || attempt >= maxAttempts) break;
+
+    try {
+      await finalizeGameSecure({ roomId: targetRoomId });
+    } catch (_) {
+      // Best effort only; leaveRoom retry remains the source of truth.
+    }
+    await new Promise((resolve) => setTimeout(resolve, 350 + (attempt * 200)));
+  }
+
+  setStatus("Impossible de quitter la salle pour le moment. Réessaie.");
+  return "error";
+}
+
+async function handleEndedRoom(roomData) {
+  const user = auth.currentUser;
+  if (!user || !roomId || !roomData) return;
+
+  const winnerSeat = typeof roomData.winnerSeat === "number" ? roomData.winnerSeat : -1;
+  const winnerUid = String(roomData.winnerUid || "").trim();
+  const hasWinner = winnerUid.length > 0 || winnerSeat >= 0;
+  if (!hasWinner) return;
+
+  const didWin = winnerUid ? winnerUid === user.uid : seatIndex === winnerSeat;
+
+  if (!didWin) return;
+
+  const settle = readSettlement(roomId, user.uid);
+  if (settle.rewardPaid === true) return;
+
+  try {
+    const rewardRes = await claimWinRewardSecure({ roomId });
+    const rewardAmountDoes = Number.parseInt(
+      String(rewardRes?.rewardAmountDoes || getCurrentRoomRewardDoes(roomData)),
+      10
+    ) || getCurrentRoomRewardDoes(roomData);
+    if (rewardRes?.rewardGranted === true) {
+      writeSettlement(roomId, user.uid, { entryPaid: true, rewardPaid: true });
+      setStatus(`Victoire: +${rewardAmountDoes} Does.`);
+      await ensureXchangeState(user.uid);
+      refreshDoesHud();
+    } else {
+      writeSettlement(roomId, user.uid, { entryPaid: true, rewardPaid: true });
+      setStatus("Gain déjà validé.");
+      await ensureXchangeState(user.uid);
+      refreshDoesHud();
+    }
+  } catch (err) {
+    console.error("[REWARD] claimWinReward error", err);
+    setStatus("Impossible de valider le gain pour le moment.");
+  }
+}
+
+async function onGameEnded(winnerSeat) {
+  if (!roomId) return;
+  const currentRoomId = roomId;
+  const isHost = !!(window.GameSession && window.GameSession.isHost === true);
+  if (!isHost) return;
+  if (!areRoomActionsReady(currentRoomId)) {
+    debugMatch("onGameEnded:waitActionsReady", {
+      targetRoomId: currentRoomId,
+      winnerSeat,
+      roomStatus: String(lastRoomSnapshotData?.status || ""),
+    });
+    clearFinalizeGameTimer();
+    finalizeGameTargetRoomId = currentRoomId;
+    finalizeGameTimer = setTimeout(() => {
+      finalizeGameTimer = null;
+      if (finalizeGameTargetRoomId !== currentRoomId) return;
+      if (roomId !== currentRoomId) return;
+      onGameEnded(winnerSeat).catch((err) => {
+        console.error("[MATCH] onGameEnded retry error", err);
+      });
+    }, 150);
+    return;
+  }
+  if (String(lastRoomSnapshotData?.status || "") === "ended") return;
+
+  clearFinalizeGameTimer();
+  finalizeGameTargetRoomId = currentRoomId;
+  finalizeGameTimer = setTimeout(async () => {
+    finalizeGameTimer = null;
+    if (finalizeGameTargetRoomId !== currentRoomId) return;
+    if (roomId !== currentRoomId) return;
+    if (String(lastRoomSnapshotData?.status || "") === "ended") return;
+
+    try {
+      await finalizeGameSecure({
+        roomId: currentRoomId,
+      });
+      setStatus("Partie terminée. Clique sur Aller pour continuer.");
+    } catch (err) {
+      if (String(err?.code || "") !== "failed-precondition") {
+        logFirestoreError("onGameEnded", err);
+      } else {
+        debugMatch("onGameEnded:awaitServer", {
+          targetRoomId: currentRoomId,
+          winnerSeat,
+          message: err?.message || String(err),
+        });
+      }
+    }
+  }, 450);
+}
+
+async function pushAction(action) {
+  if (!roomId) throw new Error("Aucune salle active.");
+  debugMatch("pushAction:send", {
+    actionType: action?.type || "",
+    actionPlayer: action?.player,
+    actionBranch: action?.branch || action?.side || "",
+    actionTilePos: action?.tilePos,
+    sessionTurnActual: window.GameSession?.turnActual,
+    sessionCurrentPlayer: window.GameSession?.currentPlayer,
+  });
+  try {
+    await submitActionSecure({
+      roomId,
+      clientActionId: makeClientActionId(),
+      action,
+    });
+    debugMatch("pushAction:success", {
+      actionType: action?.type || "",
+    });
+  } catch (err) {
+    debugMatch("pushAction:error", {
+      actionType: action?.type || "",
+      code: err?.code || "unknown",
+      message: err?.message || String(err),
+    });
+    console.error("[MATCH] submitAction error", err);
+    throw err;
+  }
+}
+
+function syncGameSessionFromRoom(roomData) {
+  if (!window.GameSession || !roomData) return;
+  const seats = roomData.seats && typeof roomData.seats === "object" ? roomData.seats : {};
+  const humanSeats = parseSeatsMap(seats);
+  const hostSeat = seats[roomData.ownerUid] !== undefined ? seats[roomData.ownerUid] : window.GameSession.hostSeat || 0;
+  const startedAtMs = getRoomStartedAtMs(roomData);
+  window.GameSession.status = roomData.status;
+  window.GameSession.hostSeat = hostSeat;
+  window.GameSession.isHost = window.GameSession.seatIndex === hostSeat;
+  window.GameSession.playerUids = Array.isArray(roomData.playerUids) ? roomData.playerUids.slice(0, 4) : window.GameSession.playerUids;
+  window.GameSession.playerNames = Array.isArray(roomData.playerNames)
+    ? roomData.playerNames.slice(0, 4)
+    : (Array.isArray(roomData.playerEmails) ? roomData.playerEmails.slice(0, 4) : window.GameSession.playerNames);
+  window.GameSession.humanSeats = humanSeats;
+  window.GameSession.humans = roomData.humanCount || humanSeats.length || 1;
+  window.GameSession.bots = typeof roomData.botCount === "number" ? roomData.botCount : window.GameSession.bots;
+  window.GameSession.startRevealPending = roomData.startRevealPending === true;
+  window.GameSession.currentPlayer = typeof roomData.currentPlayer === "number" ? roomData.currentPlayer : window.GameSession.currentPlayer;
+  window.GameSession.turnActual = typeof roomData.turnActual === "number" ? roomData.turnActual : window.GameSession.turnActual;
+  window.GameSession.lastActionSeq = typeof roomData.lastActionSeq === "number" ? roomData.lastActionSeq : window.GameSession.lastActionSeq;
+  window.GameSession.entryCostDoes = getCurrentRoomEntryCostDoes(roomData);
+  window.GameSession.rewardAmountDoes = getCurrentRoomRewardDoes(roomData);
+  window.GameSession.startedAtMs = startedAtMs > 0 ? startedAtMs : (window.GameSession.startedAtMs || 0);
+  debugMatch("syncGameSessionFromRoom", {
+    status: roomData.status || "",
+    startRevealPending: roomData.startRevealPending === true,
+    currentPlayer: roomData.currentPlayer,
+    turnActual: roomData.turnActual,
+    lastActionSeq: roomData.lastActionSeq,
+    humanCount: roomData.humanCount,
+    botCount: roomData.botCount,
+    humanSeats,
+    startedAtMs,
+  });
+  if (window.Domino && window.Domino.Partida && typeof window.Domino.Partida.PrepararSesion === "function") {
+    window.Domino.Partida.PrepararSesion();
+  }
+}
+
+function scheduleTurnTimeout(id, roomData) {
+  clearTurnTimer();
+  if (!roomData || roomData.status !== "playing") return;
+  if (typeof roomData.currentPlayer !== "number" || typeof roomData.turnActual !== "number") return;
+  if (roomData.startRevealPending === true) {
+    debugMatch("turnTimer:skipStartReveal", {
+      targetRoomId: id,
+      currentPlayer: roomData.currentPlayer,
+      turnActual: roomData.turnActual,
+    });
+    return;
+  }
+  if (!areRoomActionsReady(id)) {
+    debugMatch("turnTimer:skipBootstrap", {
+      targetRoomId: id,
+      currentPlayer: roomData.currentPlayer,
+      turnActual: roomData.turnActual,
+    });
+    return;
+  }
+
+  const turnStartedMs = tsToMs(roomData.turnStartedAt);
+  const elapsedMs = turnStartedMs > 0 ? Math.max(0, Date.now() - turnStartedMs) : 0;
+  const remainingMs = Math.max(0, TURN_LIMIT_MS - elapsedMs);
+  const baseStartMs = Date.now() - elapsedMs;
+  setTurnTimerUI(remainingMs / 1000, roomData.currentPlayer);
+  turnTick = setInterval(() => {
+    const liveLeft = Math.max(0, TURN_LIMIT_MS - (Date.now() - baseStartMs));
+    setTurnTimerUI(liveLeft / 1000, roomData.currentPlayer);
+  }, 250);
+
+  const key = `${id}:${roomData.turnActual}:${roomData.currentPlayer}`;
+  turnTimerKey = key;
+
+  turnTimer = setTimeout(async () => {
+    if (turnTimerKey !== key) return;
+    setTurnTimerUI(0, roomData.currentPlayer);
+
+    const session = window.GameSession || null;
+    const localSeat = (session && typeof session.seatIndex === "number") ? session.seatIndex : -1;
+    const isStillLocalTurn =
+      !!session &&
+      session.roomId === id &&
+      session.status === "playing" &&
+      typeof session.turnActual === "number" &&
+      typeof session.currentPlayer === "number" &&
+      session.turnActual === roomData.turnActual &&
+      session.currentPlayer === roomData.currentPlayer &&
+      localSeat === roomData.currentPlayer;
+
+    if (!isStillLocalTurn) {
+      debugMatch("turnTimer:skipAutoPlay", {
+        reason: "not-local-turn-anymore",
+        currentPlayer: roomData.currentPlayer,
+        turnActual: roomData.turnActual,
+        sessionCurrentPlayer: session?.currentPlayer,
+        sessionTurnActual: session?.turnActual,
+      });
+      return;
+    }
+
+    const partida = window.Domino && window.Domino.Partida ? window.Domino.Partida : null;
+    if (!partida || typeof partida.JugarAutomaticoSeat !== "function") {
+      debugMatch("turnTimer:skipAutoPlay", {
+        reason: "missing-partida",
+        currentPlayer: roomData.currentPlayer,
+        turnActual: roomData.turnActual,
+      });
+      return;
+    }
+
+    if (typeof partida.EsTurnoHumanoLocal === "function" && partida.EsTurnoHumanoLocal() !== true) {
+      debugMatch("turnTimer:skipAutoPlay", {
+        reason: "partida-not-local-turn-anymore",
+        currentPlayer: roomData.currentPlayer,
+        turnActual: roomData.turnActual,
+      });
+      return;
+    }
+
+    let autoPlayed = false;
+    try {
+      autoPlayed = partida.JugarAutomaticoSeat(localSeat, true) === true;
+    } catch (err) {
+      debugMatch("turnTimer:autoPlayError", {
+        currentPlayer: roomData.currentPlayer,
+        turnActual: roomData.turnActual,
+        message: err && err.message ? err.message : String(err || ""),
+      });
+      return;
+    }
+
+    debugMatch("turnTimer:autoPlay", {
+      currentPlayer: roomData.currentPlayer,
+      turnActual: roomData.turnActual,
+      localSeat,
+      autoPlayed,
+    });
+  }, remainingMs);
+}
+
+function watchActions(id) {
+  if (actionsUnsub) actionsUnsub();
+  clearRoomActionsReady(id);
+  clearRehydrationRetryTimer();
+  const q = query(collection(db, ROOMS, id, "actions"), orderBy("seq", "asc"));
+  let firstSnapshot = true;
+
+  function maybeFinishRehydration() {
+    const partida = window.Domino && window.Domino.Partida ? window.Domino.Partida : null;
+    const session = window.GameSession || null;
+    if (!partida || partida.ModoRehidratacion !== true) return;
+    if (typeof partida.FinalizarRehidratacion !== "function") return;
+
+    const revealPending =
+      !!session &&
+      String(session.roomId || "") === String(id) &&
+      lastRoomSnapshotData &&
+      lastRoomSnapshotData.startRevealPending === true;
+
+    if (revealPending === true) {
+      const openingApplied = partida.TurnoActual >= 1 && partida.SiguienteAccionSeq >= 1;
+      const openingAnimationDone =
+        typeof partida.HayAnimacionColocarActiva === "function"
+          ? partida.HayAnimacionColocarActiva() === false
+          : true;
+
+      if (openingApplied !== true || openingAnimationDone !== true) {
+        debugMatch("rehydration:wait-startRevealOpening", {
+          localTurn: partida.TurnoActual,
+          localPlayer: partida.JugadorActual,
+          nextSeq: partida.SiguienteAccionSeq,
+          openingApplied,
+          openingAnimationDone,
+        });
+        scheduleRehydrationRetry(id, maybeFinishRehydration, "rehydration:retryStartRevealOpening", {
+          localTurn: partida.TurnoActual,
+          nextSeq: partida.SiguienteAccionSeq,
+          openingApplied,
+          openingAnimationDone,
+        });
+        return;
+      }
+
+      if (hasLocalStartCinematicElapsed(lastRoomSnapshotData) !== true) {
+        syncStartCinematic(lastRoomSnapshotData);
+        debugMatch("rehydration:wait-startCinematic", {
+          localTurn: partida.TurnoActual,
+          localPlayer: partida.JugadorActual,
+          nextSeq: partida.SiguienteAccionSeq,
+          cinematicElapsedMs: getStartCinematicElapsedMs(lastRoomSnapshotData),
+          cinematicRemainingMs: Math.max(0, START_CINEMATIC_TOTAL_MS - getStartCinematicElapsedMs(lastRoomSnapshotData)),
+        });
+        scheduleRehydrationRetry(id, maybeFinishRehydration, "rehydration:retryStartCinematic", {
+          localTurn: partida.TurnoActual,
+          nextSeq: partida.SiguienteAccionSeq,
+          cinematicElapsedMs: getStartCinematicElapsedMs(lastRoomSnapshotData),
+        });
+        return;
+      }
+
+      debugMatch("rehydration:finish-startReveal", {
+        localTurn: partida.TurnoActual,
+        localPlayer: partida.JugadorActual,
+        nextSeq: partida.SiguienteAccionSeq,
+      });
+      partida.FinalizarRehidratacion();
+      if (id === roomId) {
+        ackRoomStartSeen(id, "rehydration-start-reveal-finished").catch(() => {});
+      }
+      return;
+    }
+
+    const expectedTurn = Number.isFinite(Number(session?.turnActual)) ? Math.trunc(Number(session.turnActual)) : 0;
+    const expectedPlayer = Number.isFinite(Number(session?.currentPlayer)) ? Math.trunc(Number(session.currentPlayer)) : -1;
+
+    // Les listeners room/actions peuvent arriver dans un ordre différent.
+    // Si le journal d'actions est déjà "en avance" sur le snapshot room,
+    // il ne faut pas rester figé en réhydratation.
+    if (partida.TurnoActual < expectedTurn) {
+      debugMatch("rehydration:wait-turn", {
+        localTurn: partida.TurnoActual,
+        expectedTurn,
+        localPlayer: partida.JugadorActual,
+        expectedPlayer,
+      });
+      scheduleRehydrationRetry(id, maybeFinishRehydration, "rehydration:retryWaitTurn", {
+        localTurn: partida.TurnoActual,
+        expectedTurn,
+      });
+      return;
+    }
+    if (partida.TurnoActual === expectedTurn && expectedPlayer >= 0 && partida.JugadorActual !== expectedPlayer) {
+      debugMatch("rehydration:wait-player", {
+        localTurn: partida.TurnoActual,
+        expectedTurn,
+        localPlayer: partida.JugadorActual,
+        expectedPlayer,
+      });
+      scheduleRehydrationRetry(id, maybeFinishRehydration, "rehydration:retryWaitPlayer", {
+        localPlayer: partida.JugadorActual,
+        expectedPlayer,
+      });
+      return;
+    }
+
+    debugMatch("rehydration:finish", {
+      localTurn: partida.TurnoActual,
+      expectedTurn,
+      localPlayer: partida.JugadorActual,
+      expectedPlayer,
+    });
+    partida.FinalizarRehidratacion();
+    if (id === roomId && lastRoomSnapshotData && lastRoomSnapshotData.startRevealPending === true) {
+      ackRoomStartSeen(id, "rehydration-finished").catch(() => {});
+    }
+  }
+
+  actionsUnsub = onSnapshot(
+    q,
+    (snap) => {
+      if (
+        firstSnapshot &&
+        window.Domino &&
+        window.Domino.Partida &&
+        typeof window.Domino.Partida.AplicarAccionMultijugador === "function"
+      ) {
+        firstSnapshot = false;
+        debugMatch("watchActions:firstSnapshot", {
+          docs: snap.size,
+          empty: snap.empty,
+        });
+
+        const session = window.GameSession || null;
+        const cachedDeckOrder = readRoomDeckOrder(id);
+        const sessionDeckOrder = Array.isArray(session?.deckOrder) ? session.deckOrder : [];
+        const shouldAckStartReveal =
+          !!session &&
+          String(session.roomId || "") === String(id) &&
+          String(lastRoomSnapshotData?.status || "") === "playing" &&
+          lastRoomSnapshotData?.startRevealPending === true;
+        debugMatch("watchActions:firstSnapshot:deckOrder", {
+          docs: snap.size,
+          empty: snap.empty,
+          sessionDeckOrderLength: sessionDeckOrder.length,
+          cachedDeckOrderLength: cachedDeckOrder.length,
+          roomStatus: lastRoomSnapshotData?.status || "",
+          startRevealPending: shouldAckStartReveal,
+          currentPlayer: lastRoomSnapshotData?.currentPlayer,
+          turnActual: lastRoomSnapshotData?.turnActual,
+        });
+
+        if (session && cachedDeckOrder.length === 28 && sessionDeckOrder.length !== 28) {
+          session.deckOrder = cachedDeckOrder.slice(0, 28);
+          debugMatch("watchActions:firstSnapshot:deckOrderHydratedFromCache", {
+            cachedDeckOrderLength: cachedDeckOrder.length,
+          });
+        }
+
+        const effectiveDeckOrder = Array.isArray(session?.deckOrder) ? session.deckOrder : [];
+        if (
+          session &&
+          String(session.roomId || "") === String(id) &&
+          String(lastRoomSnapshotData?.status || "") === "playing" &&
+          effectiveDeckOrder.length !== 28
+        ) {
+          syncPrivateDeckOrderIfNeeded(id, "watchActions:firstSnapshot:missingDeckOrder", lastRoomSnapshotData || null);
+          debugMatch("watchActions:firstSnapshot:missingDeckOrder", {
+            docs: snap.size,
+            empty: snap.empty,
+            sessionDeckOrderLength: effectiveDeckOrder.length,
+            cachedDeckOrderLength: cachedDeckOrder.length,
+          });
+          setMatchLoading(true, "Synchronisation sécurisée de la partie...");
+          scheduleLaunchRetry(lastRoomSnapshotData || null);
+          return;
+        }
+
+        if (typeof window.Domino.Partida.IniciarRehidratacion === "function") {
+          window.Domino.Partida.IniciarRehidratacion();
+        }
+        // Rebuild autoritaire depuis Firestore pour éviter toute dérive du cache local.
+        if (typeof window.Domino.Partida.Empezar === "function") {
+          window.Domino.Partida.Empezar();
+        }
+
+        const hydrateInitialSnapshot = () => {
+          if (
+            window.Domino &&
+            window.Domino.Partida &&
+            typeof window.Domino.Partida.HayAnimacionInicioActiva === "function" &&
+            window.Domino.Partida.HayAnimacionInicioActiva() === true
+          ) {
+            setMatchLoading(false);
+            updateOrientationGuard();
+            debugMatch("watchActions:firstSnapshot:waitDealIntro", {
+              docs: snap.size,
+              empty: snap.empty,
+              introElapsedMs: typeof window.Domino.Partida.ObtenerElapsedAnimacionInicioMs === "function"
+                ? window.Domino.Partida.ObtenerElapsedAnimacionInicioMs()
+                : -1,
+            });
+            scheduleRehydrationRetry(id, hydrateInitialSnapshot, "watchActions:retryWaitDealIntro", {
+              docs: snap.size,
+              empty: snap.empty,
+            });
+            return;
+          }
+
+          try {
+            if (shouldAckStartReveal === true) {
+              setMatchLoading(false);
+              updateOrientationGuard();
+              debugMatch("watchActions:firstSnapshot:startRevealVisible", {
+                docs: snap.size,
+                currentPlayer: lastRoomSnapshotData?.currentPlayer,
+                turnActual: lastRoomSnapshotData?.turnActual,
+              });
+            }
+            if (snap.empty) {
+              maybeFinishRehydration();
+              return;
+            }
+            snap.docs.forEach((d) => {
+              const action = d.data();
+              if (typeof action.seq !== "number") return;
+              debugMatch("watchActions:replay", {
+                seq: action.seq,
+                type: action.type,
+                player: action.player,
+                branch: action.branch || "",
+              });
+              saveActionToCache(id, action);
+              window.Domino.Partida.AplicarAccionMultijugador(action);
+            });
+          } finally {
+            markRoomActionsReady(id);
+            maybeFinishRehydration();
+            if (id === roomId && lastRoomSnapshotData && lastRoomSnapshotData.status === "playing") {
+              if (lastRoomSnapshotData.startRevealPending !== true) {
+                setMatchLoading(false);
+              }
+              updateOrientationGuard();
+              scheduleTurnTimeout(id, lastRoomSnapshotData);
+            }
+          }
+        };
+
+        hydrateInitialSnapshot();
+        return;
+      }
+
+      firstSnapshot = false;
+      snap.docChanges().forEach((change) => {
+        if (change.type !== "added") return;
+        const action = change.doc.data();
+        if (typeof action.seq !== "number") return;
+        debugMatch("watchActions:added", {
+          seq: action.seq,
+          type: action.type,
+          player: action.player,
+          branch: action.branch || "",
+        });
+        saveActionToCache(id, action);
+
+        if (window.Domino && window.Domino.Partida && typeof window.Domino.Partida.AplicarAccionMultijugador === "function") {
+          window.Domino.Partida.AplicarAccionMultijugador(action);
+        }
+      });
+      maybeFinishRehydration();
+    },
+    (err) => {
+      logFirestoreError("watchActions", err);
+    });
+}
+
+function launchLocalGame(roomData) {
+  const seats = roomData.seats || {};
+  const humanSeats = parseSeatsMap(seats);
+  const hostSeat = seats[roomData.ownerUid] !== undefined ? seats[roomData.ownerUid] : 0;
+  const startedAtMs = getRoomStartedAtMs(roomData);
+  const effectiveDeckOrder = Array.isArray(roomData.privateDeckOrder) && roomData.privateDeckOrder.length === 28
+    ? writeRoomDeckOrder(roomId, roomData.privateDeckOrder)
+    : (Array.isArray(roomData.deckOrder) && roomData.deckOrder.length === 28
+      ? writeRoomDeckOrder(roomId, roomData.deckOrder)
+      : readRoomDeckOrder(roomId));
+
+  window.GameSession = {
+    roomId,
+    seatIndex,
+    hostSeat,
+    isHost: seatIndex === hostSeat,
+    playerUids: roomData.playerUids || [],
+    playerNames: roomData.playerNames || roomData.playerEmails || [],
+    humanSeats,
+    humans: roomData.humanCount || humanSeats.length || 1,
+    bots: roomData.botCount || 0,
+    status: roomData.status,
+    startRevealPending: roomData.startRevealPending === true,
+    currentPlayer: typeof roomData.currentPlayer === "number" ? roomData.currentPlayer : 0,
+    turnActual: typeof roomData.turnActual === "number" ? roomData.turnActual : 0,
+    lastActionSeq: typeof roomData.lastActionSeq === "number" ? roomData.lastActionSeq : -1,
+    entryCostDoes: getCurrentRoomEntryCostDoes(roomData),
+    rewardAmountDoes: getCurrentRoomRewardDoes(roomData),
+    startedAtMs,
+    deckOrder: effectiveDeckOrder,
+  };
+  if (String(roomData.status || "") === "playing" && effectiveDeckOrder.length !== 28) {
+    syncPrivateDeckOrderIfNeeded(roomId, "launchLocalGame:waitDeckOrder", roomData);
+    debugMatch("launchLocalGame:waitDeckOrder", {
+      status: roomData.status || "",
+      currentPlayer: window.GameSession.currentPlayer,
+      turnActual: window.GameSession.turnActual,
+      lastActionSeq: window.GameSession.lastActionSeq,
+      sessionDeckOrderLength: effectiveDeckOrder.length,
+      cachedDeckOrderLength: readRoomDeckOrder(roomId).length,
+    });
+    setMatchLoading(true, "Préparation sécurisée de la partie...");
+    scheduleLaunchRetry(roomData);
+    return;
+  }
+  if (!isDominoEngineReady()) {
+    debugMatch("launchLocalGame:waitEngine", {
+      status: roomData.status || "",
+      currentPlayer: window.GameSession.currentPlayer,
+      turnActual: window.GameSession.turnActual,
+    });
+    setMatchLoading(true, "Initialisation du jeu...");
+    scheduleLaunchRetry(roomData);
+    return;
+  }
+  if (gameLaunched) {
+    return;
+  }
+  gameLaunched = true;
+  clearLaunchRetryTimer();
+  setLeaveRoomButtonVisible(true);
+  updateOrientationGuard();
+
+  setStatus(
+    `Salle ${roomId} | Mise ${window.GameSession.entryCostDoes} Does | Gain ${window.GameSession.rewardAmountDoes} Does | Seat ${seatIndex + 1} | Humains ${window.GameSession.humans} | Bots ${window.GameSession.bots}`
+  );
+  debugMatch("launchLocalGame", {
+    status: roomData.status || "",
+    startRevealPending: roomData.startRevealPending === true,
+    hostSeat,
+    humanSeats,
+    currentPlayer: window.GameSession.currentPlayer,
+    turnActual: window.GameSession.turnActual,
+    lastActionSeq: window.GameSession.lastActionSeq,
+    startedAtMs,
+    deckOrderLength: window.GameSession.deckOrder.length,
+  });
+
+  setMatchLoading(true, "Synchronisation de la partie...");
+  watchActions(roomId);
+}
+
+function watchRoom(id) {
+  if (roomUnsub) roomUnsub();
+  const roomRef = doc(db, ROOMS, id);
+  startPresenceHeartbeat(id);
+
+  roomUnsub = onSnapshot(
+    roomRef,
+    (snap) => {
+      if (!snap.exists()) {
+        if (id === roomId) {
+          resetSessionState();
+          clearActionCache(id);
+          hideStartCinematic(true);
+          setMatchLoading(false);
+          if (window.UI && typeof window.UI.NotifierSalleSupprimee === "function") {
+            window.UI.NotifierSalleSupprimee();
+          }
+          if (window.UI) window.UI.MostrarEmpezar();
+          setStatus("Salle fermée et supprimée.");
+        }
+        return;
+      }
+      const data = snap.data();
+      lastRoomSnapshotData = data;
+      debugMatch("watchRoom:snapshot", {
+        status: data.status || "",
+        startRevealPending: data.startRevealPending === true,
+        currentPlayer: data.currentPlayer,
+        turnActual: data.turnActual,
+        lastActionSeq: data.lastActionSeq,
+        humanCount: data.humanCount,
+        botCount: data.botCount,
+        deckOrderLength: Array.isArray(data.deckOrder) ? data.deckOrder.length : 0,
+      });
+
+      if (data.status === "waiting") {
+        hideStartCinematic();
+        clearBotTurnWakeTimer();
+        clearTurnTimer();
+        setMatchLoading(true, "Connexion des joueurs en cours.");
+        scheduleWaitingCountdown(id, data);
+        return;
+      }
+
+      if (data.status === "ended") {
+        hideStartCinematic();
+        clearBotTurnWakeTimer();
+        markRoomActionsReady(id);
+        clearFinalizeGameTimer();
+        clearTurnTimer();
+        clearTimer();
+        setMatchLoading(false);
+        setStatus("Partie terminée. Clique sur Aller pour continuer.");
+        debugMatch("watchRoom:endedState", {
+          currentPlayer: data.currentPlayer,
+          turnActual: data.turnActual,
+          roomLastActionSeq: data.lastActionSeq,
+          localNextActionSeq: (window.Domino && window.Domino.Partida) ? window.Domino.Partida.SiguienteAccionSeq : -1,
+          localHasAnimation: (window.Domino && window.Domino.Partida && typeof window.Domino.Partida.HayAnimacionColocarActiva === "function")
+            ? window.Domino.Partida.HayAnimacionColocarActiva()
+            : false,
+        });
+        if (window.Domino && window.Domino.Partida && typeof window.Domino.Partida.MarcarManoTerminadaServidor === "function") {
+          window.Domino.Partida.MarcarManoTerminadaServidor(
+            typeof data.winnerSeat === "number" ? data.winnerSeat : -1,
+            data.endedReason || "out",
+            {
+              expectedLastActionSeq: typeof data.lastActionSeq === "number" ? data.lastActionSeq : -1,
+            }
+          );
+        } else if (window.UI && typeof window.UI.MostrarGanador === "function") {
+          window.UI.MostrarGanador(
+            typeof data.winnerSeat === "number" ? data.winnerSeat : -1,
+            data.endedReason || "out",
+            { serverConfirmed: true }
+          );
+        }
+        handleEndedRoom(data).catch((err) => {
+          console.error("[ROOM] ended handling error", err);
+        });
+        return;
+      }
+
+      if (data.status === "playing") {
+        const cinematicBlocking = syncStartCinematic(data);
+        clearTimer();
+        maybeSyncFriendRoomEntryCharge(data);
+        syncGameSessionFromRoom(data);
+        launchLocalGame(data);
+        maybeNudgeServerForBotTurn(id, data);
+        updateOrientationGuard();
+        if (areRoomActionsReady(id) && cinematicBlocking !== true) {
+          setMatchLoading(false);
+          scheduleTurnTimeout(id, data);
+        } else {
+          clearTurnTimer();
+          if (cinematicBlocking === true) {
+            setMatchLoading(false);
+          } else {
+            setMatchLoading(true, "Synchronisation de la partie...");
+          }
+        }
+        matchmakingBusy = false;
+        return;
+      }
+
+      if (data.status === "closing") {
+        hideStartCinematic();
+        clearBotTurnWakeTimer();
+        markRoomActionsReady(id);
+        clearFinalizeGameTimer();
+        clearTurnTimer();
+        clearTimer();
+        setMatchLoading(true, "Finalisation de la salle...");
+        setStatus("Salle en fermeture...");
+        return;
+      }
+
+      if (data.status === "closed") {
+        hideStartCinematic();
+        clearBotTurnWakeTimer();
+        markRoomActionsReady(id);
+        clearFinalizeGameTimer();
+        clearTurnTimer();
+        clearTimer();
+        setMatchLoading(false);
+        resetSessionState();
+        clearActionCache(id);
+        if (window.UI) window.UI.MostrarEmpezar();
+        if (String(data.endedReason || "") === "expired") {
+          setStatus("Salle privée expirée.");
+        } else {
+          setStatus("Salle fermée.");
+        }
+      }
+    },
+    (err) => {
+      logFirestoreError("watchRoom", err);
+    }
+  );
+}
+
+async function startMatchmaking() {
+  if (matchmakingBusy) return;
+  if (!ensureLandscapeReadyBeforeStart()) return;
+  matchmakingBusy = true;
+  setMatchLoading(true, "Recherche de joueurs...");
+  try {
+    const resumed = await resumeSession();
+    if (resumed) {
+      matchmakingBusy = false;
+      return;
+    }
+    if (resumeDeclined) {
+      resumeDeclined = false;
+      matchmakingBusy = false;
+      setMatchLoading(false);
+      return;
+    }
+
+    const user = requireUser();
+    await ensureXchangeState(user.uid);
+    const matchRes = await joinMatchmakingSecure({ stakeDoes: ENTRY_COST_DOES_RESOLVED });
+    if (!matchRes || matchRes.ok !== true || !matchRes.roomId) {
+      throw new Error("Impossible de rejoindre une partie.");
+    }
+    await ensureXchangeState(user.uid);
+    refreshDoesHud();
+    clearSubs();
+
+    roomId = String(matchRes.roomId || "");
+    seatIndex = Number(matchRes.seatIndex || 0);
+    if (Array.isArray(matchRes?.privateDeckOrder) && matchRes.privateDeckOrder.length === 28) {
+      writeRoomDeckOrder(roomId, matchRes.privateDeckOrder);
+    }
+    if (matchRes.charged === true) {
+      writeSettlement(roomId, user.uid, { entryPaid: true, rewardPaid: false });
+    }
+
+    if (matchRes.resumed === true) {
+      setStatus(`Reconnexion salle (${roomId}). Position ${seatIndex + 1}/4`);
+    } else if (matchRes.status === "waiting") {
+      setStatus(`Salle rejointe (${roomId}). Position ${seatIndex + 1}/4.`);
+    } else {
+      setStatus(`Salle prête (${roomId}). Position ${seatIndex + 1}/4`);
+    }
+    setLeaveRoomButtonVisible(true);
+
+    watchRoom(roomId);
+  } catch (err) {
+    matchmakingBusy = false;
+    setMatchLoading(false);
+    throw err;
+  }
+}
+
+async function startFriendRoomSession() {
+  if (matchmakingBusy) return;
+  if (!ensureLandscapeReadyBeforeStart()) return;
+  if (!FRIEND_ROOM_ID_QUERY) {
+    throw new Error("Salle privée introuvable.");
+  }
+  matchmakingBusy = true;
+  setMatchLoading(true, "Connexion des joueurs en cours.");
+  try {
+    const user = requireUser();
+    await ensureXchangeState(user.uid);
+    refreshDoesHud();
+    clearSubs();
+
+    roomId = FRIEND_ROOM_ID_QUERY;
+    seatIndex = FRIEND_ROOM_SEAT_QUERY >= 0 ? FRIEND_ROOM_SEAT_QUERY : 0;
+    setStatus(`Salle privée (${roomId}). Position ${seatIndex + 1}/4.`);
+    setLeaveRoomButtonVisible(true);
+    watchRoom(roomId);
+    matchmakingBusy = false;
+  } catch (err) {
+    matchmakingBusy = false;
+    setMatchLoading(false);
+    throw err;
+  }
+}
+
+async function maybeAutoStart() {
+  if (!SHOULD_AUTOSTART || autostartTried) return;
+  if (!auth.currentUser) return;
+  autostartTried = true;
+  try {
+    await startGameFlow();
+  } catch (err) {
+    autostartTried = false;
+    setStatus(err.message || "Erreur démarrage auto");
+  }
+}
+
+async function resumeSession() {
+  // Reprise migrée côté serveur: joinMatchmaking renvoie déjà la salle active si elle existe.
+  // On évite ici une lecture directe de collection `rooms` qui peut être refusée
+  // par les règles strictes avant que la session soit ré-attachée.
+  resumePromise = Promise.resolve(false).finally(() => {
+    resumePromise = null;
+  });
+  return resumePromise;
+}
+
+async function leaveRoomById(targetRoomId, user) {
+  const response = await leaveRoomSecure({ roomId: targetRoomId });
+  clearActionCache(targetRoomId);
+  return response && typeof response === "object" ? response : { ok: true };
+}
+
+async function leaveRoom(options = {}) {
+  const explicitRoomId = String(options?.roomId || "").trim();
+  const targetRoomId = explicitRoomId || String(roomId || "").trim();
+  const forceResetOnError = options?.forceResetOnError !== false;
+  const strict = options?.strict === true;
+  const silentStatusOnSuccess = options?.silentStatusOnSuccess === true;
+  const user = auth.currentUser;
+  if (!user || !targetRoomId) {
+    if (forceResetOnError) {
+      resetSessionState();
+      if (window.UI) window.UI.MostrarEmpezar();
+      setStatus("Aucune salle active.");
+    }
+    return {
+      ok: true,
+      left: true,
+      state: "no_room",
+    };
+  }
+
+  const leavingRoomId = targetRoomId;
+  let leaveResponse = null;
+  let leaveError = null;
+
+  try {
+    leaveResponse = await leaveRoomById(leavingRoomId, user);
+  } catch (err) {
+    leaveError = err;
+    logFirestoreError("leaveRoom", err);
+    if (strict) {
+      return {
+        ok: false,
+        left: false,
+        state: "error",
+        errorCode: err?.code || "unknown",
+        errorMessage: err?.message || String(err),
+      };
+    }
+  } finally {
+    if (!leaveError || forceResetOnError) {
+      clearActionCache(leavingRoomId);
+      resetSessionState();
+      setMatchLoading(false);
+      if (window.UI) window.UI.MostrarEmpezar();
+      if (!silentStatusOnSuccess) setStatus("Salle quittée.");
+    }
+  }
+
+  if (leaveError) {
+    return {
+      ok: false,
+      left: false,
+      state: "error",
+      errorCode: leaveError?.code || "unknown",
+      errorMessage: leaveError?.message || String(leaveError),
+    };
+  }
+
+  return {
+    ok: true,
+    left: true,
+    state: String(leaveResponse?.status || "left"),
+    deleted: leaveResponse?.deleted === true,
+  };
+}
+
+async function startGameFlow() {
+  if (!ensureLandscapeReadyBeforeStart()) return;
+  if (!auth.currentUser) {
+    if (FRIEND_ROOM_ID_QUERY) {
+      throw new Error("Tu dois être connecté pour rejoindre cette partie privée.");
+    }
+    await startMatchmaking();
+    return;
+  }
+  await ensureHowToPlayPromptAccepted();
+  if (FRIEND_ROOM_ID_QUERY) {
+    await startFriendRoomSession();
+    return;
+  }
+  await startMatchmaking();
+}
+
+function setLeaveRoomButtonVisible(visible) {
+  const btn = document.getElementById("LeaveRoomTopBtn");
+  if (!btn) return;
+  if (visible) {
+    btn.classList.remove("hidden");
+    btn.classList.add("inline-flex");
+  } else {
+    btn.classList.add("hidden");
+    btn.classList.remove("inline-flex");
+  }
+}
+
+function bindLeaveRoomTopButton() {
+  const btn = document.getElementById("LeaveRoomTopBtn");
+  if (!btn || btn.dataset.bound === "1") return;
+  btn.dataset.bound = "1";
+  btn.addEventListener("click", async () => {
+    btn.disabled = true;
+    try {
+      await leaveRoom();
+      showReplayReturnOverlay(`Tu as quitté la salle. Ta mise de ${ENTRY_COST_DOES_RESOLVED} Does est perdue.`);
+    } finally {
+      btn.disabled = false;
+    }
+  });
+}
+
+function bindStartButton() {
+  const btn = document.getElementById("BotonEmpezar");
+  if (!btn) return;
+
+  const handler = async function (ev) {
+    ev.preventDefault();
+    ev.stopImmediatePropagation();
+    try {
+      await startGameFlow();
+    } catch (err) {
+      setStatus(err.message || "Erreur matchmaking");
+    }
+  };
+
+  btn.onclick = handler;
+  btn.addEventListener("click", handler, true);
+}
+
+window.LogiqueJeu = {
+  startMatchmaking,
+  startFriendRoomSession,
+  resumeSession,
+  pushAction,
+  endGameClick,
+  onGameEnded,
+  leaveRoom,
+  hasActiveRoom: () => !!roomId,
+  getSession: () => window.GameSession || null,
+};
+
+bindStartButton();
+bindLeaveRoomTopButton();
+bindHudViewToggle();
+bindFullscreenToggle();
+startOnlineUsersTicker();
+window.addEventListener("resize", onOrientationMaybeChanged);
+window.addEventListener("orientationchange", onOrientationMaybeChanged);
+window.addEventListener("xchangeUpdated", refreshDoesHud);
+window.addEventListener("userBalanceUpdated", refreshDoesHud);
+window.addEventListener("storage", refreshDoesHud);
+window.addEventListener("beforeunload", () => {
+  if (onlineUsersTick) {
+    clearInterval(onlineUsersTick);
+    onlineUsersTick = null;
+  }
+  if (fullscreenHintTimer) {
+    clearTimeout(fullscreenHintTimer);
+    fullscreenHintTimer = null;
+  }
+});
+refreshDoesHud();
+updateOrientationGuard();
+
+onAuthStateChanged(auth, (user) => {
+  if (!user) {
+    resetSessionState();
+    resumeDeclined = false;
+    pendingStartAfterRotate = false;
+    refreshDoesHud();
+    updateOrientationGuard();
+    return;
+  }
+  refreshDoesHud();
+  updateOrientationGuard();
+  resumeSession().then(() => {
+    if (resumeDeclined) return;
+    maybeAutoStart();
+  }).catch((err) => {
+    logFirestoreError("onAuthStateChangedResume", err);
+  });
+});

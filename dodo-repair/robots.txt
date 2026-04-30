@@ -1,0 +1,8 @@
+User-agent: *
+Allow: /
+
+Disallow: /discussion-agent.html
+Disallow: /jeu.html
+Disallow: /inedex.html
+
+Sitemap: https://dominoeslakay.com/sitemap.xml
