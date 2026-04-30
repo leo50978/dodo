@@ -2132,7 +2132,7 @@ export function renderPage2(user, options = {}) {
             </button>
           </div>
           <p class="mt-3 text-[13px] leading-6 text-white/84 sm:text-sm">
-            La mise du jeu de dame est fixe. Tu lances la recherche du joueur immédiatement après validation.
+            Choisis la mise de ta partie de dame. Tu lances la recherche du joueur immédiatement après validation.
           </p>
           <div id="dameStakeOptionsGrid" class="mt-5 grid grid-cols-1 gap-3">
             <button
@@ -4564,10 +4564,8 @@ export function renderPage2(user, options = {}) {
     if (page2AccountFrozen) return;
     closeGameModeSelection();
     closeStakeSelection();
-    openUnavailable({
-      title: "Jeu en production",
-      message: "Ce jeu est en production et il n'est pas encore disponible.",
-    });
+    page2BoardGameSelection = PAGE2_BOARD_GAME_DAME;
+    openDameStakeSelection();
   };
 
   if (startGameBtn) {

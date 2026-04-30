@@ -59,6 +59,7 @@ let actionsUnsub = null;
 let ensureTimer = null;
 let presenceTimer = null;
 let turnSyncTimer = null;
+let syncRetryTimer = null;
 let balanceUnsub = null;
 let searchTimer = null;
 let currentWaitingDeadlineMs = 0;
@@ -139,10 +140,37 @@ function getOpponentName(roomData = {}) {
   return "";
 }
 
+function getStartingPlayerSeat(roomData = {}) {
+  const seat = Number(roomData?.startingPlayerSeat);
+  if (Number.isFinite(seat) && seat >= 0 && seat < 2) {
+    return Math.trunc(seat);
+  }
+  return 0;
+}
+
+function getSeatColor(roomData = {}, seatIndex = -1) {
+  const redSeatIndex = getStartingPlayerSeat(roomData);
+  if (!Number.isFinite(Number(seatIndex)) || seatIndex < 0 || seatIndex > 1) {
+    return -1;
+  }
+  return Math.trunc(seatIndex) === redSeatIndex ? 1 : 0;
+}
+
+function getMySeatColor(roomData = currentRoomData || {}) {
+  return getSeatColor(roomData, mySeatIndex);
+}
+
+function updateBoardOrientation(roomData = currentRoomData || {}) {
+  if (!boardEl) return;
+  const status = String(roomData?.status || "").trim().toLowerCase();
+  const shouldFlip = status === "playing" && mySeatIndex >= 0 && getMySeatColor(roomData) === 0;
+  boardEl.classList.toggle("dame-board-flipped", shouldFlip);
+}
+
 function updateOpponentUi(roomData = currentRoomData || {}) {
   const visible = getRoomHumanCount(roomData) >= 2;
   const opponentName = visible ? getOpponentName(roomData) : "";
-  const displayName = opponentName || "Adversaire dans la salle";
+  const displayName = opponentName || "Advèsè nan sal la";
 
   if (opponentBadgeEl) {
     opponentBadgeEl.classList.toggle("hidden", !visible);
@@ -163,15 +191,18 @@ function updateDameRoomUi(roomData = currentRoomData || {}) {
   const humanCount = getRoomHumanCount(roomData);
   const waitingDeadlineMs = Number(roomData?.waitingDeadlineMs || 0);
   const opponentName = getOpponentName(roomData);
-  const opponentText = opponentName || "Adversaire dans la salle";
+  const opponentText = opponentName || "Advèsè nan sal la";
+  const currentPlayer = Number.isFinite(Number(roomData?.currentPlayer))
+    ? Math.trunc(Number(roomData.currentPlayer))
+    : -1;
 
   updateOpponentUi(roomData);
 
   if (status === "playing") {
-    if (mySeatIndex >= 0 && Number.isFinite(Number(roomData?.currentPlayer)) && Number(roomData.currentPlayer) === mySeatIndex) {
-      updateStatus("Partie en cours. A toi de jouer.");
+    if (mySeatIndex >= 0 && currentPlayer >= 0 && getMySeatColor(roomData) === currentPlayer) {
+      updateStatus("Pati a an kou. Se ou ki pou jwe.");
     } else {
-      updateStatus("Partie en cours. En attente du coup adverse...");
+      updateStatus("Pati a an kou. N ap tann mouvman advèsè a...");
     }
     return;
   }
@@ -179,13 +210,13 @@ function updateDameRoomUi(roomData = currentRoomData || {}) {
   if (status === "waiting") {
     if (humanCount >= 2) {
       const waitingCopy = opponentName
-        ? `Ton adversaire ${opponentName} est dans la salle. La partie démarre sous peu.`
-        : "Ton adversaire est dans la salle. La partie démarre sous peu.";
+        ? `Advèsè w ${opponentName} deja nan sal la. Pati a pral kòmanse talè konsa.`
+        : "Advèsè a deja nan sal la. Pati a pral kòmanse talè konsa.";
       if (searchCopyEl) {
         searchCopyEl.textContent = waitingCopy;
       }
       if (searchCountdownEl) {
-        searchCountdownEl.textContent = "Adversaire trouvé. Préparation de la partie...";
+        searchCountdownEl.textContent = "Nou jwenn yon advèsè. N ap prepare pati a...";
       }
       updateStatus(waitingCopy);
       return;
@@ -195,26 +226,26 @@ function updateDameRoomUi(roomData = currentRoomData || {}) {
       ? Math.max(0, Math.ceil((waitingDeadlineMs - Date.now()) / 1000))
       : 0;
     const waitingCopy = remaining > 0
-      ? `En attente de l'autre joueur... (${remaining}s)`
-      : "Aucun joueur trouve. Retourne au menu et relance.";
+      ? `N ap tann lòt jwè a... (${remaining}s)`
+      : "Pa gen jwè jwenn ankò. Tounen nan meni an epi relanse.";
     if (searchCopyEl) {
-      searchCopyEl.textContent = "Nous préparons ta partie et cherchons ton adversaire.";
+      searchCopyEl.textContent = "N ap prepare pati a epi n ap chèche advèsè w la.";
     }
     updateStatus(waitingCopy);
     return;
   }
 
   if (status === "ended" || status === "closed") {
-    updateStatus("Partie terminee. Relance une nouvelle partie.");
+    updateStatus("Pati a fini. Kòmanse yon nouvo pati.");
     return;
   }
 
   if (humanCount >= 2) {
     updateStatus(opponentName
-      ? `Salle active (${humanCount}/2). ${opponentText}.`
-      : `Salle active (${humanCount}/2).`);
+      ? `Sal la aktif (${humanCount}/2). ${opponentText}.`
+      : `Sal la aktif (${humanCount}/2).`);
   } else {
-    updateStatus(`Salle active (${humanCount}/2).`);
+    updateStatus(`Sal la aktif (${humanCount}/2).`);
   }
 }
 
@@ -232,13 +263,13 @@ function syncBoardTurnFromRoom(roomData = currentRoomData || {}) {
 
 function syncBoardTurnFromAction(action = {}) {
   if (!boardEl) return;
-  const seatIndex = Number.isFinite(Number(action?.seatIndex))
-    ? Number(action.seatIndex)
-    : Number.isFinite(Number(action?.piecePlayer))
-      ? Number(action.piecePlayer)
+  const piecePlayer = Number.isFinite(Number(action?.piecePlayer))
+    ? Number(action.piecePlayer)
+    : Number.isFinite(Number(action?.seatIndex))
+      ? Number(action.seatIndex)
       : -1;
-  if (seatIndex < 0 || seatIndex > 1) return;
-  const moverBoardTurn = Math.max(0, Math.trunc(seatIndex) + 1);
+  if (piecePlayer < 0 || piecePlayer > 1) return;
+  const moverBoardTurn = Math.max(0, Math.trunc(piecePlayer) + 1);
   if (Number(boardEl.turn) !== moverBoardTurn) {
     boardEl.turn = moverBoardTurn;
   }
@@ -267,28 +298,32 @@ function replayDameActions(actions = []) {
   rebuildingBoardState = true;
   replayingRemoteAction = true;
   try {
-    resetDameBoardState();
-    syncBoardTurnFromRoom(currentRoomData || {});
+    const replayFromCurrentBoard = (startSeq) => {
+      let latestSeq = Number.isFinite(startSeq) ? Math.trunc(startSeq) : 0;
+      syncBoardTurnFromRoom(currentRoomData || {});
 
-    let latestSeq = 0;
-    let replayFailed = false;
-    for (const docSnap of docs) {
-      const data = docSnap?.data ? (docSnap.data() || {}) : (docSnap || {});
-      const seq = Number(data?.seq || 0);
-      if (!Number.isFinite(seq) || seq <= 0) continue;
-      latestSeq = Math.max(latestSeq, seq);
-      syncBoardTurnFromAction(data);
-      const ok = applyActionToBoard(data);
-      if (!ok) {
-        console.warn("[DAME] replay action failed", { seq, action: data });
-        replayFailed = true;
-        break;
+      for (const docSnap of docs) {
+        const data = docSnap?.data ? (docSnap.data() || {}) : (docSnap || {});
+        const seq = Number(data?.seq || 0);
+        if (!Number.isFinite(seq) || seq <= 0 || seq <= latestSeq) continue;
+        syncBoardTurnFromAction(data);
+        const ok = applyActionToBoard(data);
+        if (!ok) {
+          return { ok: false, latestSeq };
+        }
+        latestSeq = seq;
+        lastAppliedActionSeq = seq;
       }
+
+      return { ok: true, latestSeq };
+    };
+
+    let replayResult = replayFromCurrentBoard(lastAppliedActionSeq);
+    if (!replayResult.ok && resetDameBoardState()) {
+      lastAppliedActionSeq = 0;
+      replayResult = replayFromCurrentBoard(0);
     }
 
-    if (!replayFailed) {
-      lastAppliedActionSeq = latestSeq;
-    }
     const boardTurnValue = Number.isFinite(Number(boardEl?.turn))
       ? Math.trunc(Number(boardEl.turn))
       : NaN;
@@ -301,7 +336,7 @@ function replayDameActions(actions = []) {
       ...(currentRoomData || {}),
       currentPlayer: boardCurrentPlayer,
     });
-    setBoardInteractionEnabled(mySeatIndex >= 0 && boardCurrentPlayer === mySeatIndex);
+    setBoardInteractionEnabled(mySeatIndex >= 0 && getMySeatColor(currentRoomData) === boardCurrentPlayer);
   } finally {
     replayingRemoteAction = false;
     rebuildingBoardState = false;
@@ -326,6 +361,22 @@ function setBoardInteractionEnabled(enabled) {
   boardEl.style.opacity = on ? "1" : "0.72";
 }
 
+function clearSyncRetryTimer() {
+  if (syncRetryTimer) {
+    window.clearTimeout(syncRetryTimer);
+    syncRetryTimer = null;
+  }
+}
+
+function scheduleDameSyncRetry(delayMs = 1500) {
+  clearSyncRetryTimer();
+  syncRetryTimer = window.setTimeout(() => {
+    syncRetryTimer = null;
+    if (!currentRoomId || !currentUid) return;
+    startRoomSync();
+  }, Math.max(250, Math.trunc(delayMs) || 1500));
+}
+
 function stopSearchTimer() {
   if (searchTimer) {
     window.clearInterval(searchTimer);
@@ -343,11 +394,11 @@ function renderSearchCountdown() {
   if (!searchCountdownEl) return;
   const remaining = getSearchSecondsLeft();
   if (remaining > 0) {
-    searchCountdownEl.textContent = `${remaining} s restantes`;
+    searchCountdownEl.textContent = `${remaining} s ki rete`;
   } else if (currentWaitingDeadlineMs > 0) {
-    searchCountdownEl.textContent = "Temps écoulé. On passe à la modale d'aide.";
+    searchCountdownEl.textContent = "Tan an fini. N ap pase nan modèl èd la.";
   } else {
-    searchCountdownEl.textContent = "Préparation de la partie...";
+    searchCountdownEl.textContent = "N ap prepare pati a...";
   }
 }
 
@@ -420,8 +471,8 @@ async function loadDameWhatsappConfig() {
       dameWhatsappAgentDigits = String(contacts.championnat_mopyon || contacts.agent_deposit || contacts.support_default || "").replace(/\D/g, "");
       if (expiredAgentValue) {
         expiredAgentValue.textContent = dameWhatsappAgentDigits
-          ? `Numéro WhatsApp agent: ${formatWhatsappDisplay(dameWhatsappAgentDigits)}`
-          : "Numéro WhatsApp indisponible pour le moment.";
+          ? `Nimewo WhatsApp ajan an: ${formatWhatsappDisplay(dameWhatsappAgentDigits)}`
+          : "Nimewo WhatsApp la pa disponib pou kounye a.";
       }
       return result;
     })
@@ -429,7 +480,7 @@ async function loadDameWhatsappConfig() {
       console.warn("[DAME] whatsapp config load failed", error);
       dameWhatsappAgentDigits = "";
       if (expiredAgentValue) {
-        expiredAgentValue.textContent = "Numéro WhatsApp indisponible pour le moment.";
+        expiredAgentValue.textContent = "Nimewo WhatsApp la pa disponib pou kounye a.";
       }
       return null;
     })
@@ -441,7 +492,7 @@ async function loadDameWhatsappConfig() {
 
 async function saveDameWaitlistInfo({ phone = "", notify = false } = {}) {
   if (!currentUid) {
-    throw new Error("Connexion requise.");
+    throw new Error("Koneksyon obligatwa.");
   }
   const cleanPhone = String(phone || "").replace(/\D/g, "");
   const payload = {
@@ -477,7 +528,7 @@ async function restartDameSearch({ fresh = true } = {}) {
     return;
   }
   currentWaitingDeadlineMs = Date.now() + 15000;
-  openSearchModal("Nous recherchons un adversaire pour ta partie de dame.", currentWaitingDeadlineMs);
+  openSearchModal("N ap chèche yon advèsè pou pati dama ou a.", currentWaitingDeadlineMs);
 }
 
 async function leaveCurrentDameRoom({ redirect = true } = {}) {
@@ -492,14 +543,14 @@ async function leaveCurrentDameRoom({ redirect = true } = {}) {
   if (isLeavingRoom) return;
   isLeavingRoom = true;
   setBoardInteractionEnabled(false);
-  updateStatus("Quitte la partie...");
+  updateStatus("N ap kite pati a...");
 
   try {
     await leaveRoomDameSecure({ roomId, reason: "manual_quit" });
   } catch (error) {
     console.warn("[DAME] leave room failed", error);
     if (statusEl) {
-      statusEl.textContent = error?.message || "Impossible de quitter la salle pour le moment.";
+      statusEl.textContent = error?.message || "Pa posib kite sal la pou kounye a.";
     }
   } finally {
     stopRoomSync();
@@ -569,8 +620,10 @@ function stopRoomSync() {
     balanceUnsub();
     balanceUnsub = null;
   }
+  clearSyncRetryTimer();
   latestDameActionDocs = [];
   lastAppliedActionSeq = 0;
+  updateBoardOrientation({ status: "" });
 }
 
 function getFieldAt(line, column) {
@@ -597,6 +650,7 @@ function applyActionToBoard(action = {}) {
 
 function startActionsSync() {
   if (!currentRoomId || !currentUid) return;
+  if (String(currentRoomData?.status || "").trim().toLowerCase() !== "playing") return;
   if (actionsUnsub) {
     actionsUnsub();
     actionsUnsub = null;
@@ -607,12 +661,21 @@ function startActionsSync() {
     collection(db, "dameRooms", currentRoomId, "actions"),
     orderBy("seq", "asc")
   );
-  actionsUnsub = onSnapshot(actionsQuery, (snap) => {
-    latestDameActionDocs = snap.docs || [];
-    if (String(currentRoomData?.status || "").trim().toLowerCase() === "playing") {
-      replayDameActions(latestDameActionDocs);
+  actionsUnsub = onSnapshot(
+    actionsQuery,
+    (snap) => {
+      latestDameActionDocs = snap.docs || [];
+      if (String(currentRoomData?.status || "").trim().toLowerCase() === "playing") {
+        replayDameActions(latestDameActionDocs);
+      }
+    },
+    (error) => {
+      console.warn("[DAME] actions snapshot error", error);
+      if (String(error?.code || "") === "permission-denied") {
+        scheduleDameSyncRetry();
+      }
     }
-  });
+  );
 }
 
 async function syncRoomReady() {
@@ -623,8 +686,14 @@ async function syncRoomReady() {
     if (result?.status === "playing") {
       closeSearchModal();
       closeExpiredModal();
-      setBoardInteractionEnabled(true);
-      updateStatus("Partie en cours. A toi de jouer.");
+      const liveCurrentPlayer = Number.isFinite(Number(currentRoomData?.currentPlayer))
+        ? Math.trunc(Number(currentRoomData.currentPlayer))
+        : Number.isFinite(Number(result?.currentPlayer))
+          ? Math.trunc(Number(result.currentPlayer))
+          : -1;
+      const myTurn = mySeatIndex >= 0 && liveCurrentPlayer >= 0 && getMySeatColor(currentRoomData) === liveCurrentPlayer;
+      setBoardInteractionEnabled(myTurn);
+      updateStatus(myTurn ? "Pati a an kou. Se ou ki pou jwe." : "Pati a an kou. N ap tann mouvman advèsè a...");
     } else if (result?.status === "waiting") {
       const deadlineMs = Number(result?.waitingDeadlineMs || 0);
       if (deadlineMs > 0) {
@@ -655,7 +724,7 @@ function startRoomSync() {
   const roomRef = doc(db, "dameRooms", currentRoomId);
   roomUnsub = onSnapshot(roomRef, (snap) => {
     if (!snap.exists()) {
-      updateStatus("Salle introuvable. Relance une nouvelle partie.");
+      updateStatus("Sal la pa jwenn. Kòmanse yon nouvo pati.");
       setBoardInteractionEnabled(false);
       openExpiredModal();
       closeSearchModal();
@@ -679,10 +748,14 @@ function startRoomSync() {
     const previousStatus = String(previousRoomData?.status || "").trim().toLowerCase();
     const shouldReplayActions = status === "playing" && (previousStatus !== "playing" || nextLastActionSeq !== lastAppliedActionSeq);
 
+    updateBoardOrientation(currentRoomData);
     syncBoardTurnFromRoom(currentRoomData);
     updateDameRoomUi(currentRoomData);
 
     if (status === "playing") {
+      if (!actionsUnsub) {
+        startActionsSync();
+      }
       if (shouldReplayActions) {
         replayDameActions(latestDameActionDocs);
       }
@@ -694,9 +767,9 @@ function startRoomSync() {
       const roomTurnForUi = shouldReplayActions && Number.isFinite(Number(boardEl?.turn))
         ? (Math.trunc(Number(boardEl.turn)) % 2 ^ 1)
         : currentPlayer;
-      const myTurn = mySeatIndex >= 0 && roomTurnForUi === mySeatIndex;
+      const myTurn = mySeatIndex >= 0 && getMySeatColor(currentRoomData) === roomTurnForUi;
       setBoardInteractionEnabled(myTurn);
-      updateStatus(myTurn ? "Partie en cours. A toi de jouer." : "Partie en cours. En attente du coup adverse...");
+      updateStatus(myTurn ? "Pati a an kou. Se ou ki pou jwe." : "Pati a an kou. N ap tann mouvman advèsè a...");
       return;
     }
 
@@ -705,17 +778,17 @@ function startRoomSync() {
       const opponentName = getOpponentName(currentRoomData);
       openSearchModal(
         humanCount >= 2 && opponentName
-          ? `Ton adversaire ${opponentName} est dans la salle. La partie démarre sous peu.`
-          : "Nous recherchons un adversaire pour ta partie de dame.",
+          ? `Advèsè w ${opponentName} deja nan sal la. Pati a pral kòmanse talè konsa.`
+          : "N ap chèche yon advèsè pou pati dama ou a.",
         waitingDeadlineMs > 0 ? waitingDeadlineMs : Date.now() + 15000
       );
       if (waitingDeadlineMs > Date.now()) {
         const remaining = Math.max(0, Math.ceil((waitingDeadlineMs - Date.now()) / 1000));
         updateStatus(humanCount >= 2 && opponentName
-          ? `Ton adversaire ${opponentName} est dans la salle. La partie démarre sous peu.`
-          : `En attente de l'autre joueur... (${remaining}s)`);
+          ? `Advèsè w ${opponentName} deja nan sal la. Pati a pral kòmanse talè konsa.`
+          : `N ap tann lòt jwè a... (${remaining}s)`);
       } else {
-        updateStatus("Aucun joueur trouve. Retourne au menu et relance.");
+        updateStatus("Pa gen jwè jwenn ankò. Tounen nan meni an epi relanse.");
         openExpiredModal();
       }
       return;
@@ -724,14 +797,18 @@ function startRoomSync() {
     if (status === "ended" || status === "closed") {
       closeSearchModal();
       openExpiredModal();
-      updateStatus("Partie terminee. Relance une nouvelle partie.");
+      updateStatus("Pati a fini. Kòmanse yon nouvo pati.");
       return;
     }
 
     closeSearchModal();
-    updateStatus(`Salle active (${humanCount}/2).`);
+    updateStatus(`Sal la aktif (${humanCount}/2).`);
+  }, (error) => {
+    console.warn("[DAME] room snapshot error", error);
+    if (String(error?.code || "") === "permission-denied") {
+      scheduleDameSyncRetry();
+    }
   });
-  startActionsSync();
 
   ensureTimer = window.setInterval(() => {
     void syncRoomReady();
@@ -759,22 +836,24 @@ async function bootRoomFlow() {
     }
     currentRoomId = String(result?.roomId || "").trim();
     if (!currentRoomId) {
-      updateStatus("Impossible de rejoindre la salle dame.");
+      updateStatus("Pa posib antre nan sal dama a.");
       setBoardInteractionEnabled(false);
       return;
     }
     openSearchModal(
-      "Nous recherchons un adversaire pour ta partie de dame.",
+      "N ap chèche yon advèsè pou pati dama ou a.",
       Number(result?.waitingDeadlineMs || Date.now() + 15000)
     );
-    updateStatus("Recherche de joueur en cours...");
+    updateStatus("Rechèch jwè an kou...");
     setBoardInteractionEnabled(false);
     startRoomSync();
   } catch (error) {
     console.warn("[DAME] room flow error", error);
-    updateStatus("Erreur de connexion salle. Reessaie depuis l'accueil.");
+    updateStatus("Erè koneksyon sal la. Eseye ankò depi akèy la.");
     setBoardInteractionEnabled(false);
+    updateBoardOrientation({ status: "" });
     closeSearchModal();
+    clearSyncRetryTimer();
   }
 }
 
@@ -783,11 +862,12 @@ onAuthStateChanged(auth, (user) => {
   hasAuthUser = !!currentUid;
   void refreshBalance();
   if (currentUid) {
-    updateStatus("Connexion salle dame...");
+    updateStatus("N ap konekte nan sal dama a...");
     void bootRoomFlow();
   } else {
-    updateStatus("Connecte-toi pour jouer en ligne.");
+    updateStatus("Konekte pou jwe sou entènèt.");
     setBoardInteractionEnabled(false);
+    updateBoardOrientation({ status: "" });
     closeSearchModal();
   }
 });
@@ -810,7 +890,7 @@ expiredPhoneRevealBtn?.addEventListener("click", () => {
 expiredViewNumberBtn?.addEventListener("click", async () => {
   await loadDameWhatsappConfig();
   if (dameWhatsappAgentDigits && expiredAgentValue) {
-    expiredAgentValue.textContent = `Numéro WhatsApp agent: ${formatWhatsappDisplay(dameWhatsappAgentDigits)}`;
+    expiredAgentValue.textContent = `Nimewo WhatsApp ajan an: ${formatWhatsappDisplay(dameWhatsappAgentDigits)}`;
   }
 });
 
@@ -818,19 +898,19 @@ expiredPhoneSaveBtn?.addEventListener("click", async () => {
   const phone = String(expiredPhoneInput?.value || "").trim();
   if (!phone) {
     if (expiredAgentValue) {
-      expiredAgentValue.textContent = "Entre un numéro WhatsApp avant d'enregistrer.";
+      expiredAgentValue.textContent = "Mete yon nimewo WhatsApp anvan ou anrejistre l.";
     }
     return;
   }
   try {
     await saveDameWaitlistInfo({ phone, notify: false });
     if (expiredAgentValue) {
-      expiredAgentValue.textContent = "Numéro enregistré.";
+      expiredAgentValue.textContent = "Nimewo a anrejistre.";
     }
   } catch (error) {
     console.warn("[DAME] save phone failed", error);
     if (expiredAgentValue) {
-      expiredAgentValue.textContent = error?.message || "Impossible d'enregistrer le numéro pour le moment.";
+      expiredAgentValue.textContent = error?.message || "Pa posib anrejistre nimewo a pou kounye a.";
     }
   }
 });
@@ -840,12 +920,12 @@ expiredNotifyBtn?.addEventListener("click", async () => {
     const phone = String(expiredPhoneInput?.value || "").trim();
     await saveDameWaitlistInfo({ phone, notify: true });
     if (expiredAgentValue) {
-      expiredAgentValue.textContent = "Ta demande de notification a été enregistrée.";
+      expiredAgentValue.textContent = "Nou anrejistre demann notifikasyon ou a.";
     }
   } catch (error) {
     console.warn("[DAME] notify request failed", error);
     if (expiredAgentValue) {
-      expiredAgentValue.textContent = error?.message || "Impossible d'enregistrer la notification pour le moment.";
+      expiredAgentValue.textContent = error?.message || "Pa posib anrejistre notifikasyon an pou kounye a.";
     }
   }
 });
@@ -866,8 +946,8 @@ leaveRoomBtn?.addEventListener("click", () => {
   const opponentName = getOpponentName(currentRoomData || {});
   const confirmed = window.confirm(
     opponentName
-      ? `Veux-tu vraiment quitter la partie de dame contre ${opponentName} ?`
-      : "Veux-tu vraiment quitter la partie de dame ?"
+      ? `Èske ou vle vrèman kite pati dama a kont ${opponentName} ?`
+      : "Èske ou vle vrèman kite pati dama a ?"
   );
   if (!confirmed) return;
   void leaveCurrentDameRoom({ redirect: true });
@@ -888,7 +968,7 @@ boardEl?.addEventListener("piecemove", async (event) => {
 
   const piecePlayer = Number(event?.detail?.piece?.data?.player?.());
   if (!Number.isFinite(piecePlayer) || piecePlayer < 0 || piecePlayer > 1) return;
-  if (mySeatIndex >= 0 && piecePlayer !== mySeatIndex) return;
+  if (mySeatIndex >= 0 && getMySeatColor(currentRoomData) !== piecePlayer) return;
 
   const fromField = event?.detail?.fromField;
   const toField = event?.detail?.toField;
@@ -897,6 +977,12 @@ boardEl?.addEventListener("piecemove", async (event) => {
   const toLine = Number(toField?.data?.line);
   const toColumn = Number(toField?.data?.column);
   if (![fromLine, fromColumn, toLine, toColumn].every((n) => Number.isFinite(n))) return;
+  const boardTurnValue = Number.isFinite(Number(event?.detail?.turn))
+    ? Math.trunc(Number(event.detail.turn))
+    : Number.isFinite(Number(boardEl?.turn))
+      ? Math.trunc(Number(boardEl.turn))
+      : 0;
+  const clientActionId = `dame:${currentRoomId}:${mySeatIndex}:${piecePlayer}:${boardTurnValue}:${fromLine},${fromColumn}>${toLine},${toColumn}`;
 
   try {
     const result = await submitActionDameSecure({
@@ -906,6 +992,7 @@ boardEl?.addEventListener("piecemove", async (event) => {
       from: { line: fromLine, column: fromColumn },
       to: { line: toLine, column: toColumn },
       changeTurn: event?.detail?.changeTurn !== false,
+      clientActionId,
     });
     const seq = Number(result?.seq || 0);
     const nextPlayer = Number(result?.currentPlayer);
@@ -916,14 +1003,14 @@ boardEl?.addEventListener("piecemove", async (event) => {
       };
       syncBoardTurnFromRoom(currentRoomData);
       updateDameRoomUi(currentRoomData);
-      setBoardInteractionEnabled(mySeatIndex >= 0 && nextPlayer === mySeatIndex);
+      setBoardInteractionEnabled(mySeatIndex >= 0 && getMySeatColor(currentRoomData) === nextPlayer);
     }
     if (Number.isFinite(seq) && seq > 0) {
       lastAppliedActionSeq = Math.max(lastAppliedActionSeq, seq);
     }
   } catch (error) {
     console.warn("[DAME] submit action failed", error);
-    updateStatus("Sync coup echoue. Verifie la connexion puis rejoue.");
+    updateStatus("Kowòdinasyon mouvman an echwe. Verifye koneksyon an epi jwe ankò.");
   }
 });
 
@@ -936,7 +1023,7 @@ boardEl?.addEventListener("gameover", async (event) => {
   submittedResultKey = dedupeKey;
 
   if (!currentUid) {
-    updateStatus("Partie terminee. Connecte-toi pour enregistrer ce resultat.");
+    updateStatus("Pati a fini. Konekte pou anrejistre rezilta sa a.");
     return;
   }
 
@@ -953,10 +1040,10 @@ boardEl?.addEventListener("gameover", async (event) => {
       endedAtMs,
       endedReason: "gameover",
     });
-    updateStatus("Partie terminee. Resultat dame enregistre.");
+    updateStatus("Pati a fini. Rezilta dama a anrejistre.");
   } catch (error) {
     console.warn("[DAME] echec enregistrement resultat", error);
-    updateStatus("Partie terminee. Echec enregistrement resultat.");
+    updateStatus("Pati a fini. Anrejistreman rezilta a echwe.");
   }
 });
 

@@ -145,6 +145,10 @@ const DEFAULT_MORPION_STAKE_OPTIONS = Object.freeze([
   Object.freeze({ id: "morpion_1000", stakeDoes: 1000, rewardDoes: 1800, enabled: false, sortOrder: 20 }),
 ]);
 const MAX_FRIEND_MORPION_STAKE_DOES = 100_000_000;
+const HTG_TRANSFER_MIN_HTG = 25;
+const HTG_TRANSFER_FEE_HTG = 5;
+const HTG_TRANSFER_COLLECTION = "htgTransfers";
+const HTG_TRANSFER_TIME_ZONE = "America/New_York";
 
 function computeDepositBonusSnapshot(amountHtg = 0) {
   const safeAmountHtg = Math.max(0, Number(amountHtg) || 0);
@@ -286,7 +290,7 @@ const SURVEY_MAX_TEXT_ANSWER = 500;
 const PONG_ALLOWED_AI_PROFILES = new Set(["soft", "normal", "ultra"]);
 const PONG_RECENT_OUTCOMES_LIMIT = 10;
 const PONG_RECENT_MATCH_IDS_LIMIT = 20;
-const PONG_ALLOWED_STAKES = new Set([100, 500, 1000, 5000]);
+const PONG_ALLOWED_STAKES = new Set([100, 500]);
 const PONG_ODDS_NUMERATOR = 19;
 const PONG_ODDS_DENOMINATOR = 10;
 const DEFAULT_WHATSAPP_MODAL_CONTACTS = Object.freeze({
@@ -628,6 +632,7 @@ const APP_CHECK_BYPASS_CALLABLES = new Set([
   "searchAgentDepositClientsSecure",
   "getAgentDepositClientContextSecure",
   "creditAgentDepositSecure",
+  "adminCreateAutomaticWithdrawalSecure",
   "adminSetClientPasswordSecure",
   "getDashboardDeletionReviewSnapshotSecure",
   "setClientDeletionReviewStatusSecure",
@@ -696,8 +701,17 @@ function safeSignedInt(value, fallback = 0) {
 }
 
 function computeOrderAmount(order) {
+  if (typeof order?.approvedAmountHtg === "number" && Number.isFinite(order.approvedAmountHtg)) {
+    return safeInt(order.approvedAmountHtg);
+  }
+  if (typeof order?.amountHtg === "number" && Number.isFinite(order.amountHtg)) {
+    return safeInt(order.amountHtg);
+  }
   if (typeof order?.amount === "number" && Number.isFinite(order.amount)) {
     return safeInt(order.amount);
+  }
+  if (typeof order?.requestedAmount === "number" && Number.isFinite(order.requestedAmount)) {
+    return safeInt(order.requestedAmount);
   }
   if (!Array.isArray(order?.items)) return 0;
   return safeInt(order.items.reduce((sum, item) => {
@@ -949,6 +963,42 @@ function getOrderPendingProvisionalDoesTotal(order = {}) {
   return getOrderProvisionalCapitalDoesBalance(order) + safeInt(order?.provisionalGainDoes);
 }
 
+function buildResolvedDepositResidueCleanupPatch(order = {}, {
+  nowMs = Date.now(),
+  adminUid = "",
+  adminEmail = "",
+} = {}) {
+  if (!isFundingV2Order(order)) return null;
+  const status = getOrderResolutionStatus(order);
+  if (status === "pending" || status === "review") return null;
+  if (safeInt(order.fundingSettledAtMs) <= 0) return null;
+
+  const provisionalHtgRemaining = safeInt(order.provisionalHtgRemaining);
+  const provisionalDoesRemaining = safeInt(order.provisionalDoesRemaining);
+  const provisionalGainDoes = safeInt(order.provisionalGainDoes);
+  if (provisionalHtgRemaining <= 0 && provisionalDoesRemaining <= 0 && provisionalGainDoes <= 0) {
+    return null;
+  }
+
+  return {
+    provisionalHtgRemaining: 0,
+    provisionalDoesRemaining: 0,
+    provisionalGainDoes: 0,
+    resolvedResidueBeforeCleanup: {
+      provisionalHtgRemaining,
+      provisionalDoesRemaining,
+      provisionalGainDoes,
+      status,
+    },
+    resolvedResidueClearedAt: admin.firestore.FieldValue.serverTimestamp(),
+    resolvedResidueClearedAtMs: nowMs,
+    resolvedResidueClearedByUid: sanitizeText(adminUid || "", 160),
+    resolvedResidueClearedByEmail: sanitizeEmail(adminEmail || "", 160),
+    updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+    updatedAtMs: nowMs,
+  };
+}
+
 function buildApprovedExchangeLedger({
   orders = [],
   walletData = {},
@@ -1020,7 +1070,10 @@ function buildWalletFundingSnapshot({
     exchangeHistory,
   });
   const exchangedApprovedHtg = safeSignedInt(exchangeLedger.exchangedApprovedHtg);
-  const approvedHtgAvailable = Math.max(0, approvedBaseHtg - exchangedApprovedHtg);
+  const transferSentHtgTotal = safeInt(walletData.transferSentHtgTotal);
+  const transferReceivedHtgTotal = safeInt(walletData.transferReceivedHtgTotal);
+  const transferFeePaidHtgTotal = safeInt(walletData.transferFeePaidHtgTotal);
+  const approvedHtgAvailable = Math.max(0, approvedBaseHtg - exchangedApprovedHtg - transferSentHtgTotal + transferReceivedHtgTotal);
   const provisionalHtgAvailable = (Array.isArray(orders) ? orders : []).reduce(
     (sum, item) => sum + getOrderProvisionalHtgRemaining(item),
     0
@@ -1085,6 +1138,9 @@ function buildWalletFundingSnapshot({
     playableHtg: approvedHtgAvailable + provisionalHtgAvailable + welcomeBonusHtgAvailable,
     exchangedApprovedHtg,
     totalExchangedApprovedHtg,
+    transferSentHtgTotal,
+    transferReceivedHtgTotal,
+    transferFeePaidHtgTotal,
     remainingToExchangeHtg,
     // HTG becomes withdrawable as it comes back from approved Does reconversion.
     withdrawableHtg: Math.max(0, approvedHtgAvailable - remainingToExchangeHtg),
@@ -1116,6 +1172,9 @@ function buildFundingWalletPatch(snapshot = {}) {
     welcomeBonusHtgAvailable: safeInt(snapshot.welcomeBonusHtgAvailable),
     welcomeBonusHtgConverted: safeInt(snapshot.welcomeBonusHtgConverted),
     welcomeBonusHtgPlayed: safeInt(snapshot.welcomeBonusHtgPlayed),
+    transferSentHtgTotal: safeInt(snapshot.transferSentHtgTotal),
+    transferReceivedHtgTotal: safeInt(snapshot.transferReceivedHtgTotal),
+    transferFeePaidHtgTotal: safeInt(snapshot.transferFeePaidHtgTotal),
   };
 }
 
@@ -1354,8 +1413,8 @@ function getAgentDepositMethodMeta(methodId = "", methodDoc = {}) {
 function buildAgentDepositSearchRecord(clientId = "", raw = {}) {
   const approvedHtgAvailable = safeInt(raw.approvedHtgAvailable);
   const provisionalHtgAvailable = safeInt(raw.provisionalHtgAvailable);
-  const doesApprovedBalance = safeInt(raw.doesApprovedBalance);
-  const doesProvisionalBalance = safeInt(raw.doesProvisionalBalance);
+  const doesApprovedBalance = safeInt(raw.doesApprovedBalance || raw.approvedDoesBalance);
+  const doesProvisionalBalance = safeInt(raw.doesProvisionalBalance || raw.provisionalDoesBalance);
   return {
     id: String(clientId || raw.uid || "").trim(),
     uid: String(raw.uid || clientId || "").trim(),
@@ -1367,19 +1426,48 @@ function buildAgentDepositSearchRecord(clientId = "", raw = {}) {
     lastSeenAtMs: safeSignedInt(raw.lastSeenAtMs),
     approvedHtgAvailable,
     provisionalHtgAvailable,
+    withdrawableHtg: safeInt(raw.withdrawableHtg),
+    reservedWithdrawalsHtg: safeInt(raw.reservedWithdrawalsHtg),
+    remainingToExchangeHtg: safeInt(raw.remainingToExchangeHtg),
+    approvedDepositsHtg: safeInt(raw.approvedDepositsHtg),
     htgBalance: approvedHtgAvailable + provisionalHtgAvailable,
     doesBalance: safeInt(raw.doesBalance || (doesApprovedBalance + doesProvisionalBalance)),
+    approvedDoesBalance: doesApprovedBalance,
+    provisionalDoesBalance: doesProvisionalBalance,
+    doesApprovedBalance,
+    doesProvisionalBalance,
     accountFrozen: raw.accountFrozen === true,
     hasApprovedDeposit: raw.hasApprovedDeposit === true,
   };
 }
 
+function buildTransferRecipientRecord(clientId = "", raw = {}) {
+  return {
+    uid: String(raw.uid || clientId || "").trim(),
+    username: sanitizeUsername(raw.username || "", 24),
+    name: sanitizeText(raw.name || raw.displayName || raw.username || "", 120),
+    email: sanitizeEmail(raw.email || "", 160),
+    phone: sanitizePhone(raw.phone || "", 40),
+    photoURL: sanitizePublicAsset(raw.photoURL || "", 400),
+    approvedHtgAvailable: safeInt(raw.approvedHtgAvailable),
+    transferSentHtgTotal: safeInt(raw.transferSentHtgTotal),
+    transferReceivedHtgTotal: safeInt(raw.transferReceivedHtgTotal),
+    transferFeePaidHtgTotal: safeInt(raw.transferFeePaidHtgTotal),
+    accountFrozen: raw.accountFrozen === true,
+    withdrawalHold: raw.withdrawalHold === true,
+    updatedAtMs: safeSignedInt(raw.updatedAtMs),
+  };
+}
+
 function buildAgentDepositContextOrder(docSnap) {
   const data = docSnap.data() || {};
+  const resolutionStatus = getOrderResolutionStatus(data);
   return {
     id: docSnap.id,
     amountHtg: computeOrderAmount(data),
-    status: String(data.status || getOrderResolutionStatus(data) || "pending"),
+    status: resolutionStatus,
+    rawStatus: String(data.status || ""),
+    resolutionStatus,
     methodId: sanitizeText(data.methodId || "", 120),
     methodName: sanitizeText(data.methodName || data.methodId || "", 80),
     orderType: getOrderType(data),
@@ -1387,7 +1475,37 @@ function buildAgentDepositContextOrder(docSnap) {
     createdAtMs: safeSignedInt(data.createdAtMs),
     approvedAtMs: safeSignedInt(data.approvedAtMs || data.reviewResolvedAtMs || data.fundingSettledAtMs),
     bonusDoesAwarded: safeInt(data.bonusDoesAwarded),
+    provisionalHtgRemaining: safeInt(data.provisionalHtgRemaining),
+    provisionalDoesRemaining: safeInt(data.provisionalDoesRemaining),
+    provisionalGainDoes: safeInt(data.provisionalGainDoes),
+    fundingVersion: safeInt(data.fundingVersion),
+    fundingSettledAtMs: safeSignedInt(data.fundingSettledAtMs),
     agentAssisted: data.agentAssisted === true,
+  };
+}
+
+function buildAgentDepositContextWithdrawal(docSnap) {
+  const data = docSnap.data() || {};
+  const status = getWithdrawalStatus(data);
+  return {
+    id: docSnap.id,
+    withdrawalId: sanitizeText(data.withdrawalId || docSnap.id, 160),
+    amountHtg: computeReservedWithdrawalAmount(data),
+    requestedAmount: computeReservedWithdrawalAmount(data),
+    approvedAmountHtg: safeInt(data.approvedAmountHtg || data.amount || data.requestedAmount),
+    status,
+    rawStatus: sanitizeText(data.status || "", 80),
+    resolutionStatus: sanitizeText(data.resolutionStatus || status, 80),
+    methodId: sanitizeText(data.methodId || data.destinationType || "", 80),
+    methodName: sanitizeText(data.methodName || data.destinationType || data.methodId || "", 80),
+    destinationType: sanitizeText(data.destinationType || data.methodId || "", 80),
+    destinationValue: sanitizeText(data.destinationValue || "", 160),
+    createdAtMs: safeSignedInt(data.createdAtMs),
+    approvedAtMs: safeSignedInt(data.approvedAtMs || data.resolvedAtMs),
+    resolvedAtMs: safeSignedInt(data.resolvedAtMs || data.approvedAtMs),
+    adminAssisted: data.adminAssisted === true,
+    automaticWithdrawal: data.automaticWithdrawal === true,
+    processedByAdminEmail: sanitizeEmail(data.processedByAdminEmail || data.approvedByAdminEmail || "", 160),
   };
 }
 
@@ -3439,6 +3557,72 @@ function walletRef(uid) {
 
 function walletHistoryRef(uid) {
   return db.collection(CLIENTS_COLLECTION).doc(uid).collection("xchanges");
+}
+
+function transferLedgerRef() {
+  return db.collection(HTG_TRANSFER_COLLECTION);
+}
+
+function transferHistoryRef(uid) {
+  return db.collection(CLIENTS_COLLECTION).doc(uid).collection("transfers");
+}
+
+function getTransferDateKey(ms = Date.now(), timeZone = HTG_TRANSFER_TIME_ZONE) {
+  const safeMs = safeSignedInt(ms);
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).formatToParts(new Date(safeMs));
+  const lookup = Object.fromEntries(parts.map((part) => [part.type, part.value]));
+  return `${lookup.year || "1970"}-${lookup.month || "01"}-${lookup.day || "01"}`;
+}
+
+function buildTransferHistoryRecord({
+  transferId = "",
+  direction = "sent",
+  sender = {},
+  recipient = {},
+  grossAmountHtg = 0,
+  feeHtg = HTG_TRANSFER_FEE_HTG,
+  netAmountHtg = 0,
+  clientRequestId = "",
+  senderApprovedBefore = 0,
+  senderApprovedAfter = 0,
+  recipientApprovedBefore = 0,
+  recipientApprovedAfter = 0,
+  createdAtMs = Date.now(),
+}) {
+  const safeDirection = direction === "received" ? "received" : "sent";
+  const counterpart = safeDirection === "sent" ? recipient : sender;
+  return {
+    transferId: sanitizeText(transferId || "", 160),
+    sortKey: `${String(safeSignedInt(createdAtMs)).padStart(13, "0")}_${sanitizeText(transferId || "", 160)}`,
+    uid: sanitizeText(safeDirection === "sent" ? sender.uid : recipient.uid, 160),
+    direction: safeDirection,
+    senderUid: sanitizeText(sender.uid || "", 160),
+    senderUsername: sanitizeUsername(sender.username || "", 24),
+    senderName: sanitizeText(sender.name || "", 120),
+    recipientUid: sanitizeText(recipient.uid || "", 160),
+    recipientUsername: sanitizeUsername(recipient.username || "", 24),
+    recipientName: sanitizeText(recipient.name || "", 120),
+    counterpartUid: sanitizeText(counterpart.uid || "", 160),
+    counterpartUsername: sanitizeUsername(counterpart.username || "", 24),
+    counterpartName: sanitizeText(counterpart.name || "", 120),
+    grossAmountHtg: safeInt(grossAmountHtg),
+    feeHtg: safeInt(feeHtg),
+    netAmountHtg: safeInt(netAmountHtg),
+    clientRequestId: sanitizeText(clientRequestId || "", 120),
+    senderApprovedBefore: safeInt(senderApprovedBefore),
+    senderApprovedAfter: safeInt(senderApprovedAfter),
+    recipientApprovedBefore: safeInt(recipientApprovedBefore),
+    recipientApprovedAfter: safeInt(recipientApprovedAfter),
+    dateKey: getTransferDateKey(createdAtMs),
+    createdAtMs: safeSignedInt(createdAtMs),
+    createdAt: new Date(safeSignedInt(createdAtMs)).toISOString(),
+    type: "peer_transfer",
+  };
 }
 
 function shareSitePromoRef(uid) {
@@ -10923,6 +11107,387 @@ exports.walletMutate = publicOnCall("walletMutate", async (request) => {
   };
 });
 
+exports.searchTransferRecipientsSecure = publicOnCall("searchTransferRecipientsSecure", async (request) => {
+  const { uid } = assertAuth(request);
+  const payload = request.data && typeof request.data === "object" ? request.data : {};
+  const rawQuery = sanitizeText(payload.query || "", 80);
+  const normalizedQuery = sanitizeUsername(rawQuery || "", 24);
+  if (!normalizedQuery) {
+    return { ok: true, results: [] };
+  }
+
+  const results = new Map();
+  const addSnap = (snap) => {
+    (snap?.docs || []).forEach((docSnap) => {
+      if (!docSnap?.exists || docSnap.id === uid) return;
+      const data = docSnap.data() || {};
+      const record = buildTransferRecipientRecord(docSnap.id, data);
+      if (record.uid && record.username) {
+        results.set(record.uid, record);
+      }
+    });
+  };
+
+  const exactSnap = await db.collection(CLIENTS_COLLECTION)
+    .where("username", "==", normalizedQuery)
+    .limit(8)
+    .get();
+  addSnap(exactSnap);
+
+  if (results.size < 8) {
+    const prefixSnap = await db.collection(CLIENTS_COLLECTION)
+      .orderBy("username")
+      .startAt(normalizedQuery)
+      .endAt(`${normalizedQuery}\uf8ff`)
+      .limit(12)
+      .get();
+    addSnap(prefixSnap);
+  }
+
+  return {
+    ok: true,
+    results: Array.from(results.values()).slice(0, 8),
+  };
+});
+
+exports.createTransferSecure = publicOnCall("createTransferSecure", async (request) => {
+  const { uid, email } = assertAuth(request);
+  const payload = request.data && typeof request.data === "object" ? request.data : {};
+  const recipientUid = sanitizeText(payload.recipientUid || "", 160);
+  const grossAmountHtg = safeInt(payload.amountHtg);
+  const clientRequestId = sanitizeText(payload.requestId || payload.clientRequestId || "", 120);
+  const feeHtg = HTG_TRANSFER_FEE_HTG;
+
+  if (!recipientUid || recipientUid === uid) {
+    throw new HttpsError("invalid-argument", "Destinataire invalide.");
+  }
+  if (grossAmountHtg < HTG_TRANSFER_MIN_HTG) {
+    throw new HttpsError("invalid-argument", `Montant minimum: ${HTG_TRANSFER_MIN_HTG} HTG.`);
+  }
+  if (grossAmountHtg <= feeHtg) {
+    throw new HttpsError("invalid-argument", "Montant insuffisant pour couvrir les frais.");
+  }
+
+  const result = await db.runTransaction(async (tx) => {
+    const senderRef = walletRef(uid);
+    const recipientRef = walletRef(recipientUid);
+    const senderTransfersRef = transferHistoryRef(uid);
+    const recipientTransfersRef = transferHistoryRef(recipientUid);
+    const transferRef = transferLedgerRef().doc();
+
+    const [
+      senderSnap,
+      recipientSnap,
+      senderOrdersSnap,
+      senderWithdrawalsSnap,
+      senderXchangesSnap,
+      recipientOrdersSnap,
+      recipientWithdrawalsSnap,
+      recipientXchangesSnap,
+      senderTransferHistorySnap,
+      recipientTransferHistorySnap,
+    ] = await Promise.all([
+      tx.get(senderRef),
+      tx.get(recipientRef),
+      tx.get(senderRef.collection("orders")),
+      tx.get(senderRef.collection("withdrawals")),
+      tx.get(walletHistoryRef(uid)),
+      tx.get(recipientRef.collection("orders")),
+      tx.get(recipientRef.collection("withdrawals")),
+      tx.get(walletHistoryRef(recipientUid)),
+      tx.get(senderTransfersRef),
+      tx.get(recipientTransfersRef),
+    ]);
+
+    if (!senderSnap.exists) {
+      throw new HttpsError("not-found", "Compte source introuvable.");
+    }
+    if (!recipientSnap.exists) {
+      throw new HttpsError("not-found", "Compte destinataire introuvable.");
+    }
+
+    const senderData = senderSnap.data() || {};
+    const recipientData = recipientSnap.data() || {};
+    if (senderData.accountFrozen === true || senderData.withdrawalHold === true) {
+      throw buildFrozenAccountError(senderData);
+    }
+
+    if (clientRequestId) {
+      const duplicate = senderTransferHistorySnap.docs.find((item) => String(item.data()?.clientRequestId || "") === clientRequestId);
+      if (duplicate) {
+        const duplicateData = duplicate.data() || {};
+        return {
+          ok: true,
+          duplicate: true,
+          transferId: String(duplicateData.transferId || duplicate.id || ""),
+          grossAmountHtg: safeInt(duplicateData.grossAmountHtg),
+          feeHtg: safeInt(duplicateData.feeHtg),
+          netAmountHtg: safeInt(duplicateData.netAmountHtg),
+          createdAtMs: safeSignedInt(duplicateData.createdAtMs),
+          recipient: {
+            uid: String(duplicateData.recipientUid || recipientUid),
+            username: String(duplicateData.recipientUsername || ""),
+            name: String(duplicateData.recipientName || ""),
+          },
+        };
+      }
+    }
+
+    const senderSummary = buildWalletFundingSnapshot({
+      orders: senderOrdersSnap.docs.map((item) => item.data() || {}),
+      withdrawals: senderWithdrawalsSnap.docs.map((item) => item.data() || {}),
+      walletData: senderData,
+      exchangeHistory: senderXchangesSnap.docs.map((item) => item.data() || {}),
+    });
+    const recipientSummary = buildWalletFundingSnapshot({
+      orders: recipientOrdersSnap.docs.map((item) => item.data() || {}),
+      withdrawals: recipientWithdrawalsSnap.docs.map((item) => item.data() || {}),
+      walletData: recipientData,
+      exchangeHistory: recipientXchangesSnap.docs.map((item) => item.data() || {}),
+    });
+
+    if (senderSummary.approvedHtgAvailable < grossAmountHtg) {
+      throw new HttpsError("failed-precondition", "Solde HTG approuvé insuffisant.");
+    }
+
+    const netAmountHtg = grossAmountHtg - feeHtg;
+    const nowMs = Date.now();
+    const senderTransferSentHtgTotal = safeInt(senderData.transferSentHtgTotal) + grossAmountHtg;
+    const senderTransferFeePaidHtgTotal = safeInt(senderData.transferFeePaidHtgTotal) + feeHtg;
+    const recipientTransferReceivedHtgTotal = safeInt(recipientData.transferReceivedHtgTotal) + netAmountHtg;
+
+    const nextSenderData = {
+      ...senderData,
+      transferSentHtgTotal: senderTransferSentHtgTotal,
+      transferFeePaidHtgTotal: senderTransferFeePaidHtgTotal,
+    };
+    const nextRecipientData = {
+      ...recipientData,
+      transferReceivedHtgTotal: recipientTransferReceivedHtgTotal,
+    };
+
+    const nextSenderSummary = buildWalletFundingSnapshot({
+      orders: senderOrdersSnap.docs.map((item) => item.data() || {}),
+      withdrawals: senderWithdrawalsSnap.docs.map((item) => item.data() || {}),
+      walletData: nextSenderData,
+      exchangeHistory: senderXchangesSnap.docs.map((item) => item.data() || {}),
+    });
+    const nextRecipientSummary = buildWalletFundingSnapshot({
+      orders: recipientOrdersSnap.docs.map((item) => item.data() || {}),
+      withdrawals: recipientWithdrawalsSnap.docs.map((item) => item.data() || {}),
+      walletData: nextRecipientData,
+      exchangeHistory: recipientXchangesSnap.docs.map((item) => item.data() || {}),
+    });
+
+    const senderRecord = buildTransferHistoryRecord({
+      transferId: transferRef.id,
+      direction: "sent",
+      sender: {
+        uid,
+        email: email || String(senderData.email || ""),
+        username: senderData.username || "",
+        name: senderData.name || senderData.displayName || "",
+      },
+      recipient: {
+        uid: recipientUid,
+        email: String(recipientData.email || ""),
+        username: recipientData.username || "",
+        name: recipientData.name || recipientData.displayName || "",
+      },
+      grossAmountHtg,
+      feeHtg,
+      netAmountHtg,
+      clientRequestId,
+      senderApprovedBefore: senderSummary.approvedHtgAvailable,
+      senderApprovedAfter: nextSenderSummary.approvedHtgAvailable,
+      recipientApprovedBefore: recipientSummary.approvedHtgAvailable,
+      recipientApprovedAfter: nextRecipientSummary.approvedHtgAvailable,
+      createdAtMs: nowMs,
+    });
+    const recipientRecord = buildTransferHistoryRecord({
+      transferId: transferRef.id,
+      direction: "received",
+      sender: {
+        uid,
+        email: email || String(senderData.email || ""),
+        username: senderData.username || "",
+        name: senderData.name || senderData.displayName || "",
+      },
+      recipient: {
+        uid: recipientUid,
+        email: String(recipientData.email || ""),
+        username: recipientData.username || "",
+        name: recipientData.name || recipientData.displayName || "",
+      },
+      grossAmountHtg,
+      feeHtg,
+      netAmountHtg,
+      clientRequestId,
+      senderApprovedBefore: senderSummary.approvedHtgAvailable,
+      senderApprovedAfter: nextSenderSummary.approvedHtgAvailable,
+      recipientApprovedBefore: recipientSummary.approvedHtgAvailable,
+      recipientApprovedAfter: nextRecipientSummary.approvedHtgAvailable,
+      createdAtMs: nowMs,
+    });
+
+    tx.set(transferRef, {
+      ...senderRecord,
+      status: "completed",
+      type: "peer_transfer",
+      createdByUid: uid,
+      clientRequestId: clientRequestId || transferRef.id,
+      recipientUid,
+      recipientUsername: recipientRecord.recipientUsername,
+      recipientName: recipientRecord.recipientName,
+    }, { merge: true });
+    tx.set(senderTransfersRef.doc(transferRef.id), {
+      ...senderRecord,
+      status: "completed",
+      visibleTo: "sender",
+    }, { merge: true });
+    tx.set(recipientTransfersRef.doc(transferRef.id), {
+      ...recipientRecord,
+      status: "completed",
+      visibleTo: "recipient",
+    }, { merge: true });
+    tx.set(senderRef, {
+      uid,
+      email: email || String(senderData.email || ""),
+      ...buildFundingWalletPatch(nextSenderSummary),
+      updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+    }, { merge: true });
+    tx.set(recipientRef, {
+      uid: recipientUid,
+      email: String(recipientData.email || ""),
+      ...buildFundingWalletPatch(nextRecipientSummary),
+      updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+    }, { merge: true });
+
+    return {
+      ok: true,
+      transferId: transferRef.id,
+      grossAmountHtg,
+      feeHtg,
+      netAmountHtg,
+      senderApprovedHtgAvailable: nextSenderSummary.approvedHtgAvailable,
+      recipientApprovedHtgAvailable: nextRecipientSummary.approvedHtgAvailable,
+      createdAtMs: nowMs,
+      clientRequestId: clientRequestId || transferRef.id,
+      recipient: {
+        uid: recipientUid,
+        username: recipientRecord.recipientUsername,
+        name: recipientRecord.recipientName,
+      },
+    };
+  });
+
+  return result;
+});
+
+exports.listTransferHistorySecure = publicOnCall("listTransferHistorySecure", async (request) => {
+  const { uid } = assertAuth(request);
+  const payload = request.data && typeof request.data === "object" ? request.data : {};
+  const pageSize = Math.min(20, Math.max(1, safeInt(payload.pageSize) || 1));
+  const cursorKey = sanitizeText(payload.cursorKey || payload.cursor || "", 180);
+
+  let queryRef = transferHistoryRef(uid).orderBy("sortKey", "desc").limit(pageSize);
+  if (cursorKey) {
+    queryRef = queryRef.startAfter(cursorKey);
+  }
+
+  const snap = await queryRef.get();
+  const items = snap.docs.map((docSnap) => docSnap.data() || {});
+  const last = snap.docs[snap.docs.length - 1];
+  return {
+    ok: true,
+    items,
+    nextCursorKey: last ? String(last.data()?.sortKey || "") : "",
+    hasMore: snap.size === pageSize,
+  };
+});
+
+exports.getTransferAnalyticsSecure = publicOnCall("getTransferAnalyticsSecure", async (request) => {
+  assertFinanceAdmin(request);
+  const payload = request.data && typeof request.data === "object" ? request.data : {};
+  const startMsInput = safeSignedInt(payload.startMs);
+  const endMsInput = safeSignedInt(payload.endMs);
+  const todayStart = new Date();
+  todayStart.setHours(0, 0, 0, 0);
+  const defaultStartMs = todayStart.getTime();
+  const startMs = startMsInput > 0 ? startMsInput : defaultStartMs;
+  const endMs = endMsInput > 0 ? endMsInput : Date.now();
+  const rangeStart = Math.min(startMs, endMs);
+  const rangeEnd = Math.max(startMs, endMs);
+
+  const snap = await transferLedgerRef()
+    .where("createdAtMs", ">=", rangeStart)
+    .where("createdAtMs", "<=", rangeEnd)
+    .orderBy("createdAtMs", "asc")
+    .limit(5000)
+    .get();
+
+  const dailyMap = new Map();
+  const items = [];
+  let totalGrossHtg = 0;
+  let totalNetHtg = 0;
+  let totalFeeHtg = 0;
+
+  snap.docs.forEach((docSnap) => {
+    const data = docSnap.data() || {};
+    const record = {
+      transferId: String(data.transferId || docSnap.id || ""),
+      createdAtMs: safeSignedInt(data.createdAtMs),
+      grossAmountHtg: safeInt(data.grossAmountHtg),
+      netAmountHtg: safeInt(data.netAmountHtg),
+      feeHtg: safeInt(data.feeHtg),
+      senderUid: String(data.senderUid || ""),
+      senderUsername: String(data.senderUsername || ""),
+      senderName: String(data.senderName || ""),
+      recipientUid: String(data.recipientUid || ""),
+      recipientUsername: String(data.recipientUsername || ""),
+      recipientName: String(data.recipientName || ""),
+      direction: String(data.direction || "sent"),
+      dateKey: String(data.dateKey || getTransferDateKey(data.createdAtMs)),
+    };
+    items.push(record);
+    totalGrossHtg += record.grossAmountHtg;
+    totalNetHtg += record.netAmountHtg;
+    totalFeeHtg += record.feeHtg;
+    const bucket = dailyMap.get(record.dateKey) || {
+      dateKey: record.dateKey,
+      transferCount: 0,
+      grossAmountHtg: 0,
+      netAmountHtg: 0,
+      feeHtg: 0,
+    };
+    bucket.transferCount += 1;
+    bucket.grossAmountHtg += record.grossAmountHtg;
+    bucket.netAmountHtg += record.netAmountHtg;
+    bucket.feeHtg += record.feeHtg;
+    dailyMap.set(record.dateKey, bucket);
+  });
+
+  const daily = Array.from(dailyMap.values()).sort((left, right) => String(left.dateKey).localeCompare(String(right.dateKey)));
+
+  return {
+    ok: true,
+    range: {
+      startMs: rangeStart,
+      endMs: rangeEnd,
+      startDateKey: getTransferDateKey(rangeStart),
+      endDateKey: getTransferDateKey(rangeEnd),
+    },
+    totals: {
+      transferCount: items.length,
+      grossAmountHtg: totalGrossHtg,
+      netAmountHtg: totalNetHtg,
+      feeHtg: totalFeeHtg,
+    },
+    daily,
+    recentTransfers: items.slice(-24).reverse(),
+  };
+});
+
 exports.createFriendRoom = publicOnCall("createFriendRoom", async (request) => {
   const { uid, email } = assertAuth(request);
   const payload = request.data && typeof request.data === "object" ? request.data : {};
@@ -13191,7 +13756,10 @@ function buildStartedDameRoomTransaction(tx, roomRefDoc, room = {}, options = {}
   const seats = room.seats && typeof room.seats === "object" ? { ...room.seats } : {};
   const humanCount = playerUids.filter(Boolean).length;
   const startedAtMs = safeSignedInt(room.startedAtMs) > 0 ? safeSignedInt(room.startedAtMs) : nowMs;
-  const currentPlayer = safeSignedInt(room.currentPlayer, 1) === 0 ? 0 : 1;
+  const startingPlayerSeat = Number.isFinite(Number(room.startingPlayerSeat)) && Number(room.startingPlayerSeat) >= 0 && Number(room.startingPlayerSeat) < 2
+    ? Math.trunc(Number(room.startingPlayerSeat))
+    : crypto.randomInt(0, 2);
+  const currentPlayer = 1;
   const lastActionSeq = Math.max(0, safeInt(room.lastActionSeq));
   const nextActionSeq = Math.max(lastActionSeq, safeInt(room.nextActionSeq, lastActionSeq));
 
@@ -13209,6 +13777,7 @@ function buildStartedDameRoomTransaction(tx, roomRefDoc, room = {}, options = {}
     botCount: 0,
     allowBots: false,
     requiredHumans: 2,
+    startingPlayerSeat,
     currentPlayer,
     lastActionSeq,
     nextActionSeq,
@@ -17040,7 +17609,8 @@ exports.createFriendDameRoom = publicOnCall("createFriendDameRoom", async (reque
       waitingDeadlineMs,
       startedAtMs: 0,
       endedAtMs: 0,
-      currentPlayer: 1,
+      currentPlayer: -1,
+      startingPlayerSeat: crypto.randomInt(0, 2),
       lastActionSeq: 0,
       nextActionSeq: 0,
       stakeDoes,
@@ -17451,7 +18021,8 @@ exports.joinMatchmakingDame = publicOnCall("joinMatchmakingDame", async (request
       waitingDeadlineMs: nowMs + ROOM_WAIT_MS,
       startedAtMs: 0,
       endedAtMs: 0,
-      currentPlayer: 1,
+      currentPlayer: -1,
+      startingPlayerSeat: crypto.randomInt(0, 2),
       lastActionSeq: 0,
       nextActionSeq: 0,
       stakeDoes,
@@ -17633,6 +18204,7 @@ exports.submitActionDame = publicOnCall("submitActionDame", async (request) => {
   const piecePlayer = safeSignedInt(payload.piecePlayer, -1);
   const changeTurn = payload.changeTurn !== false;
   const seatIndexInput = safeSignedInt(payload.seatIndex, -1);
+  const clientActionId = sanitizeText(payload.clientActionId || "", 120);
 
   if (
     fromLine < 0 || fromLine > 7
@@ -17656,6 +18228,16 @@ exports.submitActionDame = publicOnCall("submitActionDame", async (request) => {
       throw new HttpsError("failed-precondition", "La partie dame n'est pas en cours.");
     }
 
+    if (clientActionId && String(room.lastClientActionId || "") === clientActionId) {
+      return {
+        ok: true,
+        duplicate: true,
+        roomId,
+        seq: safeInt(room.lastActionSeq),
+        currentPlayer: safeSignedInt(room.currentPlayer, 0),
+      };
+    }
+
     const seatIndex = getSeatForUser(room, uid);
     if (seatIndex < 0) {
       throw new HttpsError("permission-denied", "Tu ne fais pas partie de cette salle dame.");
@@ -17664,11 +18246,15 @@ exports.submitActionDame = publicOnCall("submitActionDame", async (request) => {
       throw new HttpsError("permission-denied", "Seat invalide pour ce joueur.");
     }
 
-    const currentPlayer = safeSignedInt(room.currentPlayer, 1) === 0 ? 0 : 1;
-    if (currentPlayer !== seatIndex) {
+    const currentPlayer = Number.isFinite(Number(room.currentPlayer))
+      ? Math.trunc(Number(room.currentPlayer))
+      : -1;
+    const redSeatIndex = Number.isFinite(Number(room.startingPlayerSeat)) ? Math.trunc(Number(room.startingPlayerSeat)) : 1;
+    const seatColor = seatIndex === redSeatIndex ? 1 : 0;
+    if (currentPlayer < 0 || currentPlayer > 1 || currentPlayer !== seatColor) {
       throw new HttpsError("failed-precondition", "Ce n'est pas ton tour.");
     }
-    if (piecePlayer >= 0 && piecePlayer !== seatIndex) {
+    if (piecePlayer >= 0 && piecePlayer !== currentPlayer) {
       throw new HttpsError("failed-precondition", "Piece invalide pour ce tour.");
     }
 
@@ -17683,7 +18269,7 @@ exports.submitActionDame = publicOnCall("submitActionDame", async (request) => {
       seatIndex,
       from: { line: fromLine, column: fromColumn },
       to: { line: toLine, column: toColumn },
-      piecePlayer: seatIndex,
+      piecePlayer: currentPlayer,
       changeTurn: changeTurn === true,
       createdAt: admin.firestore.FieldValue.serverTimestamp(),
       createdAtMs: nowMs,
@@ -17692,7 +18278,8 @@ exports.submitActionDame = publicOnCall("submitActionDame", async (request) => {
     tx.set(roomRefDoc, {
       lastActionSeq: nextActionSeq,
       nextActionSeq,
-      currentPlayer: changeTurn === true ? (seatIndex ^ 1) : seatIndex,
+      currentPlayer: changeTurn === true ? (currentPlayer ^ 1) : currentPlayer,
+      ...(clientActionId ? { lastClientActionId: clientActionId } : {}),
       updatedAt: admin.firestore.FieldValue.serverTimestamp(),
     }, { merge: true });
 
@@ -17700,7 +18287,7 @@ exports.submitActionDame = publicOnCall("submitActionDame", async (request) => {
       ok: true,
       roomId,
       seq: nextActionSeq,
-      currentPlayer: changeTurn === true ? (seatIndex ^ 1) : seatIndex,
+      currentPlayer: changeTurn === true ? (currentPlayer ^ 1) : currentPlayer,
     };
   });
 }, { invoker: "public" });
@@ -25755,29 +26342,1373 @@ exports.getAgentDepositClientContextSecure = publicOnCall(
     }
 
     let ordersSnap = null;
+    let withdrawalsSnap = null;
+    let xchangesSnap = null;
     try {
       ordersSnap = await clientRef.collection("orders")
         .orderBy("createdAtMs", "desc")
-        .limit(AGENT_DEPOSIT_CONTEXT_ORDER_LIMIT)
         .get();
     } catch (_) {
-      ordersSnap = await clientRef.collection("orders")
-        .limit(AGENT_DEPOSIT_CONTEXT_ORDER_LIMIT)
+      ordersSnap = await clientRef.collection("orders").get();
+    }
+    try {
+      withdrawalsSnap = await clientRef.collection("withdrawals")
+        .orderBy("createdAtMs", "desc")
         .get();
+    } catch (_) {
+      withdrawalsSnap = await clientRef.collection("withdrawals").get();
+    }
+    try {
+      xchangesSnap = await walletHistoryRef(clientId)
+        .orderBy("createdAtMs", "desc")
+        .get();
+    } catch (_) {
+      xchangesSnap = await walletHistoryRef(clientId).get();
     }
 
-    const client = buildAgentDepositSearchRecord(clientSnap.id, clientSnap.data() || {});
+    const clientData = clientSnap.data() || {};
+    const orders = (ordersSnap?.docs || [])
+      .map((docSnap) => docSnap.data() || {})
+      .sort((left, right) => safeSignedInt(right.createdAtMs) - safeSignedInt(left.createdAtMs));
+    const recentOrdersLimit = Math.min(20, Math.max(1, safeInt(payload.recentOrdersLimit) || 8));
+    const fundingSnapshot = buildWalletFundingSnapshot({
+      orders,
+      withdrawals: withdrawalsSnap?.docs?.map((docSnap) => docSnap.data() || {}) || [],
+      walletData: clientData,
+      exchangeHistory: xchangesSnap?.docs?.map((docSnap) => docSnap.data() || {}) || [],
+    });
+    const client = buildAgentDepositSearchRecord(clientSnap.id, {
+      ...clientData,
+      ...fundingSnapshot,
+    });
     const recentOrders = (ordersSnap?.docs || [])
+      .map((docSnap) => buildAgentDepositContextOrder(docSnap))
+      .sort((left, right) => safeSignedInt(right.createdAtMs) - safeSignedInt(left.createdAtMs))
+      .slice(0, recentOrdersLimit);
+    const recentWithdrawalsLimit = Math.min(20, Math.max(1, safeInt(payload.recentWithdrawalsLimit) || 8));
+    const recentWithdrawals = (withdrawalsSnap?.docs || [])
+      .map((docSnap) => buildAgentDepositContextWithdrawal(docSnap))
+      .sort((left, right) => safeSignedInt(right.createdAtMs) - safeSignedInt(left.createdAtMs))
+      .slice(0, recentWithdrawalsLimit);
+
+    return {
+      ok: true,
+      client,
+      fundingSnapshot,
+      recentOrders,
+      recentOrdersTotal: ordersSnap?.size || recentOrders.length,
+      recentOrdersHasMore: safeInt(ordersSnap?.size) > recentOrders.length,
+      recentWithdrawals,
+      recentWithdrawalsTotal: withdrawalsSnap?.size || recentWithdrawals.length,
+      recentWithdrawalsHasMore: safeInt(withdrawalsSnap?.size) > recentWithdrawals.length,
+    };
+  },
+  { invoker: "public" }
+);
+
+function normalizeDashboardGameFilter(value = "") {
+  const normalized = String(value || "").trim().toLowerCase();
+  if (normalized === "duel" || normalized === "morpion" || normalized === "dame" || normalized === "pong" || normalized === "domino") {
+    return normalized;
+  }
+  return "all";
+}
+
+function normalizeDashboardOpponentFilter(value = "") {
+  const normalized = String(value || "").trim().toLowerCase();
+  if (normalized === "bot" || normalized === "human") return normalized;
+  return "all";
+}
+
+function inferGameKeyFromHistoryDoc(sourceKey = "", data = {}) {
+  const source = String(sourceKey || "").trim().toLowerCase();
+  if (source === "duelroomresults") return "duel";
+  if (source === "morpionroomresults") return "morpion";
+  if (source === "dameroomresults") return "dame";
+  if (source === "pongmatchresults") return "pong";
+  if (source === "roomresults") {
+    const roomMode = String(data.roomMode || data.gameMode || data.mode || "").trim().toLowerCase();
+    if (roomMode.includes("duel")) return "duel";
+    if (roomMode.includes("morpion")) return "morpion";
+    if (roomMode.includes("dame")) return "dame";
+    if (roomMode.includes("pong")) return "pong";
+    return "domino";
+  }
+  return "domino";
+}
+
+function getGameLabelFromKey(gameKey = "") {
+  const normalized = String(gameKey || "").trim().toLowerCase();
+  if (normalized === "duel") return "Duel";
+  if (normalized === "morpion") return "Morpion";
+  if (normalized === "dame") return "Dame";
+  if (normalized === "pong") return "Pong";
+  if (normalized === "domino") return "Domino";
+  return "Jeu";
+}
+
+function recordMatchesClientHistory(data = {}, clientId = "") {
+  const uid = String(clientId || "").trim();
+  if (!uid) return false;
+  const playerUids = Array.isArray(data.playerUids)
+    ? data.playerUids.map((item) => String(item || "").trim()).filter(Boolean)
+    : [];
+  if (playerUids.includes(uid)) return true;
+  if (String(data.uid || "").trim() === uid) return true;
+  if (String(data.clientId || "").trim() === uid) return true;
+  if (String(data.playerUid || "").trim() === uid) return true;
+  if (String(data.winnerUid || "").trim() === uid) return true;
+  return false;
+}
+
+function inferClientHistoryOpponentType(gameKey = "", data = {}) {
+  const normalizedGameKey = String(gameKey || "").trim().toLowerCase();
+  if (normalizedGameKey === "pong") return "bot";
+
+  const botCount = safeInt(data.botCount);
+  if (botCount > 0) return "bot";
+
+  const roomMode = String(data.roomMode || data.gameMode || data.mode || "").trim().toLowerCase();
+  if (roomMode.includes("bot") || roomMode.includes("ai")) return "bot";
+
+  return "human";
+}
+
+function inferClientHistoryWonDoes(record = {}) {
+  const rewardAmountDoes = safeInt(record.rewardAmountDoes || record.rewardDoes || 0);
+  const stakeDoes = safeInt(record.stakeDoes || record.entryCostDoes || 0);
+  if (record.won === true) return Math.max(0, rewardAmountDoes || stakeDoes);
+  return 0;
+}
+
+function buildClientHistoryRecord(sourceKey = "", docSnap, clientId = "") {
+  const data = docSnap.data() || {};
+  if (!recordMatchesClientHistory(data, clientId)) return null;
+
+  const gameKey = inferGameKeyFromHistoryDoc(sourceKey, data);
+  const participantUid = String(data.uid || data.clientId || data.playerUid || "").trim();
+  const winnerUid = String(data.winnerUid || "").trim();
+  const winnerType = String(data.winnerType || "").trim().toLowerCase();
+  const clientUid = String(clientId || "").trim();
+  const playerUids = Array.isArray(data.playerUids)
+    ? data.playerUids.map((item) => String(item || "").trim()).filter(Boolean)
+    : (participantUid ? [participantUid] : []);
+  const endedAtMs = safeSignedInt(data.endedAtMs) || safeSignedInt(data.endedAt) || safeSignedInt(data.createdAtMs);
+  const startedAtMs = safeSignedInt(data.startedAtMs);
+  const won = winnerUid
+    ? winnerUid === clientUid
+    : (winnerType === "human" && (participantUid === clientUid || playerUids.includes(clientUid)));
+  const lost = !won && endedAtMs > 0;
+  const wageredDoes = safeInt(data.stakeDoes || data.entryCostDoes);
+  const opponentType = inferClientHistoryOpponentType(gameKey, data);
+  const opponentLabel = opponentType === "bot" ? "Bot" : "Humain";
+  const wonDoes = won ? Math.max(0, safeInt(data.rewardAmountDoes || data.rewardDoes || data.rewardExpectedDoes || wageredDoes)) : 0;
+  const netDoes = wonDoes - wageredDoes;
+
+  return {
+    id: String(docSnap.id || "").trim(),
+    sourceKey,
+    gameKey,
+    gameLabel: getGameLabelFromKey(gameKey),
+    roomId: String(data.roomId || data.matchId || docSnap.id || "").trim(),
+    matchId: String(data.matchId || docSnap.id || "").trim(),
+    sessionId: String(data.sessionId || "").trim(),
+    status: String(data.status || "ended").trim().toLowerCase(),
+    endedAtMs,
+    startedAtMs,
+    createdAtMs: safeSignedInt(data.createdAtMs),
+    winnerUid,
+    winnerType,
+    participantUid,
+    playerUids,
+    roomMode: String(data.roomMode || "").trim(),
+    leftScore: safeInt(data.leftScore),
+    rightScore: safeInt(data.rightScore),
+    scoreLabel: String(data.scoreLabel || ((data.leftScore != null && data.rightScore != null) ? `${safeInt(data.leftScore)}-${safeInt(data.rightScore)}` : "")).trim(),
+    stakeDoes: wageredDoes,
+    wageredDoes,
+    rewardAmountDoes: safeInt(data.rewardAmountDoes),
+    wonDoes,
+    netDoes,
+    winnerSeat: safeSignedInt(data.winnerSeat),
+    endedReason: String(data.endedReason || "").trim(),
+    opponentType,
+    opponentLabel,
+    vsBot: opponentType === "bot",
+    vsHuman: opponentType === "human",
+    resultLabel: won ? "Gagné" : lost ? "Perdu" : "Terminé",
+    won,
+    lost,
+  };
+}
+
+async function collectClientGameHistoryRows(clientId = "", {
+  startMs = 0,
+  endMs = 0,
+  game = "all",
+  opponent = "all",
+  result = "all",
+  minWonDoes = 0,
+  maxWonDoes = 0,
+} = {}) {
+  const normalizedClientId = sanitizeText(clientId || "", 160);
+  if (!normalizedClientId) return [];
+
+  const gameFilter = normalizeDashboardGameFilter(game || "all");
+  const opponentFilter = normalizeDashboardOpponentFilter(opponent || "all");
+  const resultFilter = String(result || "all").trim().toLowerCase();
+  const sourceDefs = [
+    { key: "roomResults", collection: db.collection(ROOM_RESULTS_COLLECTION), gameKey: "domino" },
+    { key: "duelRoomResults", collection: db.collection(DUEL_ROOM_RESULTS_COLLECTION), gameKey: "duel" },
+    { key: "morpionRoomResults", collection: db.collection(MORPION_ROOM_RESULTS_COLLECTION), gameKey: "morpion" },
+    { key: "dameRoomResults", collection: db.collection(DAME_ROOM_RESULTS_COLLECTION), gameKey: "dame" },
+    { key: "pongMatchResults", collection: db.collection(PONG_MATCH_RESULTS_COLLECTION), gameKey: "pong" },
+  ];
+
+  const activeSources = sourceDefs.filter((item) => gameFilter === "all" || item.gameKey === gameFilter);
+  const snapshots = await Promise.all(activeSources.map(async (source) => {
+    const buildQuery = () => {
+      if (source.key === "pongMatchResults") {
+        let q = source.collection.where("uid", "==", normalizedClientId).orderBy("endedAtMs", "desc");
+        if (startMs > 0) q = q.where("endedAtMs", ">=", startMs);
+        if (endMs > 0) q = q.where("endedAtMs", "<=", endMs);
+        return q;
+      }
+      let q = source.collection.where("playerUids", "array-contains", normalizedClientId).orderBy("endedAtMs", "desc");
+      if (startMs > 0) q = q.where("endedAtMs", ">=", startMs);
+      if (endMs > 0) q = q.where("endedAtMs", "<=", endMs);
+      return q;
+    };
+
+    try {
+      return await buildQuery().get();
+    } catch (error) {
+      console.warn("[CLIENT_FRAUD_ANALYSIS] query fallback", {
+        source: source.key,
+        message: String(error?.message || error),
+      });
+      const fallback = source.key === "pongMatchResults"
+        ? source.collection.where("uid", "==", normalizedClientId)
+        : source.collection.where("playerUids", "array-contains", normalizedClientId);
+      return fallback.get();
+    }
+  }));
+
+  const rows = [];
+  snapshots.forEach((snap, index) => {
+    const source = activeSources[index];
+    (snap?.docs || []).forEach((docSnap) => {
+      const record = buildClientHistoryRecord(source.key, docSnap, normalizedClientId);
+      if (!record) return;
+      if (gameFilter !== "all" && record.gameKey !== gameFilter) return;
+      if (opponentFilter !== "all" && record.opponentType !== opponentFilter) return;
+      if (resultFilter === "win" && record.won !== true) return;
+      if (resultFilter === "loss" && record.lost !== true) return;
+      if (minWonDoes > 0 && record.wonDoes < minWonDoes) return;
+      if (maxWonDoes > 0 && record.wonDoes > maxWonDoes) return;
+      rows.push(record);
+    });
+  });
+
+  rows.sort((left, right) =>
+    safeSignedInt(right.endedAtMs) - safeSignedInt(left.endedAtMs)
+    || safeSignedInt(right.createdAtMs) - safeSignedInt(left.createdAtMs)
+    || String(right.id || "").localeCompare(String(left.id || ""), "fr")
+  );
+  return rows;
+}
+
+exports.getMyGameHistorySecure = publicOnCall(
+  "getMyGameHistorySecure",
+  async (request) => {
+    const payload = request.data && typeof request.data === "object" ? request.data : {};
+    const authUid = sanitizeText(request.auth?.uid || "", 160);
+    const clientId = sanitizeText(payload.clientId || payload.uid || authUid, 160);
+    if (!authUid) {
+      throw new HttpsError("unauthenticated", "Connexion requise.");
+    }
+    if (!clientId || clientId !== authUid) {
+      throw new HttpsError("permission-denied", "Accès refusé.");
+    }
+
+    const rows = await collectClientGameHistoryRows(clientId, {
+      startMs: safeSignedInt(payload.startMs),
+      endMs: safeSignedInt(payload.endMs),
+      game: payload.game || "all",
+      opponent: payload.opponent || "all",
+      result: payload.result || "all",
+    });
+    const pageSize = Math.min(3, Math.max(1, safeInt(payload.pageSize) || 3));
+    const offset = Math.max(0, safeInt(payload.offset));
+    const slice = rows.slice(offset, offset + pageSize);
+
+    return {
+      ok: true,
+      clientId,
+      total: rows.length,
+      offset,
+      pageSize,
+      hasMore: offset + pageSize < rows.length,
+      rows: slice,
+    };
+  },
+  { invoker: "authenticated" }
+);
+
+function summarizeClientFraudGameRows(rows = []) {
+  const summary = {
+    totalMatches: 0,
+    totalWageredDoes: 0,
+    totalWonDoes: 0,
+    totalNetDoes: 0,
+    wins: 0,
+    losses: 0,
+    vsBotMatches: 0,
+    vsHumanMatches: 0,
+  };
+
+  const byGame = new Map();
+
+  (Array.isArray(rows) ? rows : []).forEach((row) => {
+    summary.totalMatches += 1;
+    summary.totalWageredDoes += safeInt(row.wageredDoes);
+    summary.totalWonDoes += safeInt(row.wonDoes);
+    summary.totalNetDoes += safeSignedInt(row.netDoes);
+    if (row.won) summary.wins += 1;
+    if (row.lost) summary.losses += 1;
+    if (row.vsBot) summary.vsBotMatches += 1;
+    if (row.vsHuman) summary.vsHumanMatches += 1;
+
+    const key = String(row.gameKey || "other").trim().toLowerCase() || "other";
+    const current = byGame.get(key) || {
+      gameKey: key,
+      gameLabel: row.gameLabel || getGameLabelFromKey(key),
+      matches: 0,
+      wins: 0,
+      losses: 0,
+      wageredDoes: 0,
+      wonDoes: 0,
+      netDoes: 0,
+      vsBotMatches: 0,
+      vsHumanMatches: 0,
+      firstAtMs: 0,
+      lastAtMs: 0,
+    };
+    current.matches += 1;
+    current.wins += row.won ? 1 : 0;
+    current.losses += row.lost ? 1 : 0;
+    current.wageredDoes += safeInt(row.wageredDoes);
+    current.wonDoes += safeInt(row.wonDoes);
+    current.netDoes += safeSignedInt(row.netDoes);
+    current.vsBotMatches += row.vsBot ? 1 : 0;
+    current.vsHumanMatches += row.vsHuman ? 1 : 0;
+    const endedAtMs = safeSignedInt(row.endedAtMs);
+    if (!current.firstAtMs || (endedAtMs > 0 && endedAtMs < current.firstAtMs)) current.firstAtMs = endedAtMs;
+    if (endedAtMs > current.lastAtMs) current.lastAtMs = endedAtMs;
+    byGame.set(key, current);
+  });
+
+  return {
+    summary,
+    byGame: Array.from(byGame.values()).sort((left, right) =>
+      safeSignedInt(right.matches) - safeSignedInt(left.matches)
+      || String(left.gameLabel || left.gameKey || "").localeCompare(String(right.gameLabel || right.gameKey || ""), "fr")
+    ),
+  };
+}
+
+function makeFraudFinding({
+  key,
+  severity = "medium",
+  title = "",
+  detail = "",
+  occurredAtMs = 0,
+  evidence = {},
+  recommendedAction = "review",
+}) {
+  const severityScore = {
+    low: 8,
+    medium: 18,
+    high: 32,
+    critical: 48,
+  }[severity] || 12;
+
+  return {
+    key,
+    severity,
+    severityScore,
+    title,
+    detail,
+    occurredAtMs: safeSignedInt(occurredAtMs),
+    evidence,
+    recommendedAction,
+  };
+}
+
+function getLedgerGameContext(row = {}) {
+  const gameKey = normalizeDashboardGameFilter(
+    row.gameKey
+      || row.game
+      || row.gameType
+      || row.roomGame
+      || row.roomMode
+      || ""
+  );
+  return {
+    gameKey: gameKey === "all" ? "" : gameKey,
+    gameLabel: gameKey === "all" ? "" : getGameLabelFromKey(gameKey),
+    roomId: sanitizeText(row.roomId || row.matchId || row.sessionId || "", 160),
+    source: sanitizeText(row.source || row.sourceKey || row.type || "", 80),
+  };
+}
+
+function buildLedgerEvidence(row = {}, extra = {}) {
+  const type = String(row.type || "").trim().toLowerCase();
+  const beforeDoes = safeInt(row.beforeDoes);
+  const afterDoes = safeInt(row.afterDoes);
+  const amountDoes = safeInt(row.amountDoes);
+  const amountGourdes = safeInt(row.amountGourdes);
+  const movementDoes = type === "game_entry" || type === "xchange_sell"
+    ? -amountDoes
+    : type === "game_reward"
+      ? amountDoes
+      : safeSignedInt(extra.movementDoes);
+  const expectedAfterDoes = extra.expectedAfterDoes !== undefined
+    ? safeSignedInt(extra.expectedAfterDoes)
+    : beforeDoes + movementDoes;
+  const actualAfterDoes = extra.actualAfterDoes !== undefined
+    ? safeSignedInt(extra.actualAfterDoes)
+    : afterDoes;
+  const deltaDoes = extra.deltaDoes !== undefined
+    ? safeSignedInt(extra.deltaDoes)
+    : actualAfterDoes - expectedAfterDoes;
+
+  return {
+    rowId: row.id || "",
+    type,
+    typeLabel: type.replaceAll("_", " ") || "mouvement",
+    ...getLedgerGameContext(row),
+    ...extra,
+    beforeDoes,
+    movementDoes,
+    amountDoes,
+    amountGourdes,
+    expectedAfterDoes,
+    actualAfterDoes,
+    deltaDoes,
+    previousId: extra.previousId || "",
+    previousAfterDoes: extra.previousAfterDoes,
+    currentBeforeDoes: extra.currentBeforeDoes,
+    currentId: extra.currentId || "",
+    chainDeltaDoes: extra.chainDeltaDoes,
+  };
+}
+
+function compareFraudValue(findings, {
+  key,
+  severity = "medium",
+  title,
+  expected,
+  actual,
+  occurredAtMs = 0,
+  evidence = {},
+  recommendedAction = "review",
+}) {
+  const expectedNum = safeSignedInt(expected);
+  const actualNum = safeSignedInt(actual);
+  if (expectedNum === actualNum) return;
+  findings.push(makeFraudFinding({
+    key,
+    severity,
+    title,
+    detail: `Attendu ${expectedNum}, trouvé ${actualNum}.`,
+    occurredAtMs,
+    evidence: {
+      expected: expectedNum,
+      actual: actualNum,
+      delta: actualNum - expectedNum,
+      ...evidence,
+    },
+    recommendedAction,
+  }));
+}
+
+exports.getClientPendingDepositOrdersSecure = publicOnCall(
+  "getClientPendingDepositOrdersSecure",
+  async (request) => {
+    assertFinanceAdmin(request);
+    const payload = request.data && typeof request.data === "object" ? request.data : {};
+    const clientId = sanitizeText(payload.clientId || payload.uid || "", 160);
+    if (!clientId) {
+      throw new HttpsError("invalid-argument", "Client introuvable.");
+    }
+
+    const ordersSnap = await walletRef(clientId).collection("orders").get();
+    const orders = (ordersSnap.docs || [])
+      .filter((docSnap) => {
+        const data = docSnap.data() || {};
+        const status = getOrderResolutionStatus(data);
+        return status === "pending" || status === "review";
+      })
       .map((docSnap) => buildAgentDepositContextOrder(docSnap))
       .sort((left, right) => safeSignedInt(right.createdAtMs) - safeSignedInt(left.createdAtMs));
 
     return {
       ok: true,
-      client,
-      recentOrders,
+      clientId,
+      count: orders.length,
+      orders,
     };
   },
   { invoker: "public" }
+);
+
+exports.getClientOrdersSecure = publicOnCall(
+  "getClientOrdersSecure",
+  async (request) => {
+    assertFinanceAdmin(request);
+    const payload = request.data && typeof request.data === "object" ? request.data : {};
+    const clientId = sanitizeText(payload.clientId || payload.uid || "", 160);
+    if (!clientId) {
+      throw new HttpsError("invalid-argument", "Client introuvable.");
+    }
+
+    const pageSize = Math.min(30, Math.max(1, safeInt(payload.pageSize) || 8));
+    const offset = Math.max(0, safeInt(payload.offset));
+    let ordersSnap = null;
+    try {
+      ordersSnap = await walletRef(clientId).collection("orders")
+        .orderBy("createdAtMs", "desc")
+        .get();
+    } catch (_) {
+      ordersSnap = await walletRef(clientId).collection("orders").get();
+    }
+
+    const orders = (ordersSnap.docs || [])
+      .map((docSnap) => buildAgentDepositContextOrder(docSnap))
+      .sort((left, right) => safeSignedInt(right.createdAtMs) - safeSignedInt(left.createdAtMs));
+    const slice = orders.slice(offset, offset + pageSize);
+    const nextOffset = offset + slice.length;
+
+    return {
+      ok: true,
+      clientId,
+      total: orders.length,
+      offset,
+      nextOffset,
+      pageSize,
+      hasMore: nextOffset < orders.length,
+      orders: slice,
+    };
+  },
+  { invoker: "public" }
+);
+
+exports.getClientGameHistorySecure = publicOnCall(
+  "getClientGameHistorySecure",
+  async (request) => {
+    assertFinanceAdmin(request);
+    const payload = request.data && typeof request.data === "object" ? request.data : {};
+    const clientId = sanitizeText(payload.clientId || payload.uid || "", 160);
+    if (!clientId) {
+      throw new HttpsError("invalid-argument", "Client introuvable.");
+    }
+
+    const gameFilter = normalizeDashboardGameFilter(payload.game || payload.gameKey || payload.gameType || "all");
+    const opponentFilter = normalizeDashboardOpponentFilter(payload.opponent || payload.opponentType || "all");
+    const resultFilter = String(payload.result || "all").trim().toLowerCase();
+    const pageSize = Math.min(50, Math.max(1, safeInt(payload.pageSize) || 12));
+    const offset = Math.max(0, safeInt(payload.offset));
+    const startMs = safeSignedInt(payload.startMs);
+    const endMs = safeSignedInt(payload.endMs);
+    const minWonDoes = safeSignedInt(payload.minWonDoes);
+    const maxWonDoes = safeSignedInt(payload.maxWonDoes);
+
+    const sourceDefs = [
+      { key: "roomResults", collection: db.collection(ROOM_RESULTS_COLLECTION), gameKey: "domino" },
+      { key: "duelRoomResults", collection: db.collection(DUEL_ROOM_RESULTS_COLLECTION), gameKey: "duel" },
+      { key: "morpionRoomResults", collection: db.collection(MORPION_ROOM_RESULTS_COLLECTION), gameKey: "morpion" },
+      { key: "dameRoomResults", collection: db.collection(DAME_ROOM_RESULTS_COLLECTION), gameKey: "dame" },
+      { key: "pongMatchResults", collection: db.collection(PONG_MATCH_RESULTS_COLLECTION), gameKey: "pong" },
+    ];
+
+    const activeSources = sourceDefs.filter((item) => gameFilter === "all" || item.gameKey === gameFilter);
+    const snapshots = await Promise.all(activeSources.map(async (source) => {
+      const buildQuery = () => {
+        if (source.key === "pongMatchResults") {
+          let q = source.collection.where("uid", "==", clientId).orderBy("endedAtMs", "desc");
+          if (startMs > 0) q = q.where("endedAtMs", ">=", startMs);
+          if (endMs > 0) q = q.where("endedAtMs", "<=", endMs);
+          return q;
+        }
+        let q = source.collection.where("playerUids", "array-contains", clientId).orderBy("endedAtMs", "desc");
+        if (startMs > 0) q = q.where("endedAtMs", ">=", startMs);
+        if (endMs > 0) q = q.where("endedAtMs", "<=", endMs);
+        return q;
+      };
+
+      try {
+        return await buildQuery().get();
+      } catch (error) {
+        console.warn("[CLIENT_GAME_HISTORY] query fallback", {
+          source: source.key,
+          message: String(error?.message || error),
+        });
+        const fallback = source.key === "pongMatchResults"
+          ? source.collection.where("uid", "==", clientId)
+          : source.collection.where("playerUids", "array-contains", clientId);
+        return fallback.get();
+      }
+    }));
+
+    const rows = [];
+    snapshots.forEach((snap, index) => {
+      const source = activeSources[index];
+      (snap?.docs || []).forEach((docSnap) => {
+        const record = buildClientHistoryRecord(source.key, docSnap, clientId);
+        if (!record) return;
+        if (gameFilter !== "all" && record.gameKey !== gameFilter) return;
+        if (opponentFilter !== "all" && record.opponentType !== opponentFilter) return;
+        if (resultFilter !== "all") {
+          if (resultFilter === "win" && record.won !== true) return;
+          if (resultFilter === "loss" && record.lost !== true) return;
+        }
+        if (startMs > 0 && record.endedAtMs > 0 && record.endedAtMs < startMs) return;
+        if (endMs > 0 && record.endedAtMs > 0 && record.endedAtMs > endMs) return;
+        if (minWonDoes > 0 && record.wonDoes < minWonDoes) return;
+        if (maxWonDoes > 0 && record.wonDoes > maxWonDoes) return;
+        if (record.endedAtMs <= 0) return;
+        rows.push(record);
+      });
+    });
+
+    rows.sort((left, right) =>
+      safeSignedInt(right.endedAtMs) - safeSignedInt(left.endedAtMs)
+      || safeSignedInt(right.startedAtMs) - safeSignedInt(left.startedAtMs)
+      || String(left.gameLabel || "").localeCompare(String(right.gameLabel || ""), "fr")
+    );
+
+    const slice = rows.slice(offset, offset + pageSize);
+    const nextOffset = offset + slice.length;
+    const summary = rows.reduce((acc, record) => {
+      acc.totalMatches += 1;
+      acc.totalWageredDoes += safeInt(record.wageredDoes);
+      acc.totalWonDoes += safeInt(record.wonDoes);
+      acc.totalNetDoes += safeSignedInt(record.netDoes);
+      if (record.opponentType === "bot") acc.botMatches += 1;
+      if (record.opponentType === "human") acc.humanMatches += 1;
+      if (record.won === true) acc.wins += 1;
+      if (record.lost === true) acc.losses += 1;
+      const gameBucket = acc.byGameMap.get(record.gameKey) || {
+        gameKey: record.gameKey,
+        gameLabel: record.gameLabel,
+        matches: 0,
+        wins: 0,
+        losses: 0,
+        vsBotMatches: 0,
+        vsHumanMatches: 0,
+        wageredDoes: 0,
+        wonDoes: 0,
+        netDoes: 0,
+        lastPlayedAtMs: 0,
+      };
+      gameBucket.matches += 1;
+      if (record.won === true) gameBucket.wins += 1;
+      if (record.lost === true) gameBucket.losses += 1;
+      if (record.opponentType === "bot") gameBucket.vsBotMatches += 1;
+      if (record.opponentType === "human") gameBucket.vsHumanMatches += 1;
+      gameBucket.wageredDoes += safeInt(record.wageredDoes);
+      gameBucket.wonDoes += safeInt(record.wonDoes);
+      gameBucket.netDoes += safeSignedInt(record.netDoes);
+      gameBucket.lastPlayedAtMs = Math.max(gameBucket.lastPlayedAtMs, safeSignedInt(record.endedAtMs));
+      acc.byGameMap.set(record.gameKey, gameBucket);
+      return acc;
+    }, {
+      totalMatches: 0,
+      wins: 0,
+      losses: 0,
+      botMatches: 0,
+      humanMatches: 0,
+      totalWageredDoes: 0,
+      totalWonDoes: 0,
+      totalNetDoes: 0,
+      byGameMap: new Map(),
+    });
+    const byGame = Array.from(summary.byGameMap.values())
+      .sort((left, right) => safeSignedInt(right.lastPlayedAtMs) - safeSignedInt(left.lastPlayedAtMs) || String(left.gameLabel || "").localeCompare(String(right.gameLabel || ""), "fr"));
+
+    return {
+      ok: true,
+      clientId,
+      game: gameFilter,
+      opponent: opponentFilter,
+      result: resultFilter,
+      minWonDoes,
+      maxWonDoes,
+      pageSize,
+      offset,
+      nextOffset,
+      hasMore: nextOffset < rows.length,
+      totalMatches: rows.length,
+      summary: {
+        totalMatches: summary.totalMatches,
+        wins: summary.wins,
+        losses: summary.losses,
+        botMatches: summary.botMatches,
+        humanMatches: summary.humanMatches,
+        totalWageredDoes: summary.totalWageredDoes,
+        totalWonDoes: summary.totalWonDoes,
+        totalNetDoes: summary.totalNetDoes,
+      },
+      byGame,
+      rows: slice,
+    };
+  },
+  { invoker: "public" }
+);
+
+exports.getClientFraudAnalysisSecure = publicOnCall(
+  "getClientFraudAnalysisSecure",
+  async (request) => {
+    assertFinanceAdmin(request);
+    const payload = request.data && typeof request.data === "object" ? request.data : {};
+    const clientId = sanitizeText(payload.clientId || payload.uid || "", 160);
+    if (!clientId) {
+      throw new HttpsError("invalid-argument", "Client introuvable.");
+    }
+
+    const gameFilter = normalizeDashboardGameFilter(payload.game || payload.gameKey || payload.gameType || "all");
+    const opponentFilter = normalizeDashboardOpponentFilter(payload.opponent || payload.opponentType || "all");
+    const resultFilter = String(payload.result || "all").trim().toLowerCase();
+    const startMs = safeSignedInt(payload.startMs);
+    const endMs = safeSignedInt(payload.endMs);
+    const minWonDoes = safeSignedInt(payload.minWonDoes);
+    const maxWonDoes = safeSignedInt(payload.maxWonDoes);
+    const findingsLimit = Math.min(50, Math.max(5, safeInt(payload.findingsLimit) || 12));
+    const timelineLimit = Math.min(60, Math.max(10, safeInt(payload.timelineLimit) || 20));
+
+    const [clientSnap, ordersSnap, withdrawalsSnap, xchangesSnap] = await Promise.all([
+      walletRef(clientId).get(),
+      walletRef(clientId).collection("orders").get(),
+      walletRef(clientId).collection("withdrawals").get(),
+      walletHistoryRef(clientId).get(),
+    ]);
+
+    if (!clientSnap.exists) {
+      throw new HttpsError("not-found", "Compte client introuvable.");
+    }
+
+    const clientData = clientSnap.data() || {};
+    const rawOrders = (ordersSnap.docs || []).map((docSnap) => docSnap.data() || {});
+    const rawWithdrawals = (withdrawalsSnap.docs || []).map((docSnap) => docSnap.data() || {});
+    const rawXchanges = (xchangesSnap.docs || []).map((docSnap) => {
+      const data = docSnap.data() || {};
+      const createdAtMs = safeSignedInt(data.createdAtMs) || toMillis(data.createdAt);
+      const updatedAtMs = safeSignedInt(data.updatedAtMs) || toMillis(data.updatedAt);
+      return {
+        id: docSnap.id,
+        ...data,
+        createdAtMs,
+        updatedAtMs,
+      };
+    });
+    const getXchangeTimeMs = (row = {}) => safeSignedInt(row.createdAtMs || row.updatedAtMs);
+    rawXchanges.sort((left, right) =>
+      getXchangeTimeMs(left) - getXchangeTimeMs(right)
+      || String(left.id || "").localeCompare(String(right.id || ""), "fr")
+    );
+    const analysisXchanges = rawXchanges.filter((row) => {
+      const rowTime = getXchangeTimeMs(row);
+      if (startMs > 0 && rowTime > 0 && rowTime < startMs) return false;
+      if (endMs > 0 && rowTime > 0 && rowTime > endMs) return false;
+      return true;
+    });
+
+    const gameRows = await collectClientGameHistoryRows(clientId, {
+      startMs,
+      endMs,
+      game: gameFilter,
+      opponent: opponentFilter,
+      result: resultFilter,
+      minWonDoes,
+      maxWonDoes,
+    });
+    const gameAnalysis = summarizeClientFraudGameRows(gameRows);
+    const fundingSnapshot = buildWalletFundingSnapshot({
+      orders: rawOrders,
+      withdrawals: rawWithdrawals,
+      walletData: clientData,
+      exchangeHistory: rawXchanges,
+    });
+    const expectedWallet = buildFundingWalletPatch(fundingSnapshot);
+    const currentWallet = {
+      approvedHtgAvailable: safeInt(clientData.approvedHtgAvailable ?? clientData.htgApprovedAvailable ?? clientData.approvedHtg),
+      provisionalHtgAvailable: safeInt(clientData.provisionalHtgAvailable ?? clientData.htgProvisionalAvailable),
+      approvedDoesBalance: safeInt(clientData.doesApprovedBalance ?? clientData.approvedDoesBalance),
+      provisionalDoesBalance: safeInt(clientData.doesProvisionalBalance ?? clientData.provisionalDoesBalance),
+      doesBalance: safeInt(clientData.doesBalance),
+      exchangeableDoesAvailable: safeInt(clientData.exchangeableDoesAvailable),
+      welcomeBonusHtgAvailable: safeInt(clientData.welcomeBonusHtgAvailable),
+      welcomeBonusHtgConverted: safeInt(clientData.welcomeBonusHtgConverted),
+      welcomeBonusHtgPlayed: safeInt(clientData.welcomeBonusHtgPlayed),
+    };
+
+    const findings = [];
+    const addFinding = (finding) => {
+      if (!finding) return;
+      findings.push(finding);
+    };
+    const severityForDelta = (delta) => {
+      const absDelta = Math.abs(safeSignedInt(delta));
+      if (absDelta >= 5000) return "critical";
+      if (absDelta >= 1000) return "high";
+      if (absDelta >= 100) return "medium";
+      return "low";
+    };
+    const recommendedActionForSeverity = (severity) => {
+      if (severity === "critical") return "freeze_review";
+      if (severity === "high") return "manual_review";
+      return "monitor";
+    };
+    const pushComparisonFinding = ({ key, title, expected, actual, occurredAtMs = 0, evidence = {}, baseSeverity = "medium" }) => {
+      const expectedNum = safeSignedInt(expected);
+      const actualNum = safeSignedInt(actual);
+      if (expectedNum === actualNum) return;
+      const delta = actualNum - expectedNum;
+      const severity = severityForDelta(delta) === "low" ? baseSeverity : severityForDelta(delta);
+      addFinding(makeFraudFinding({
+        key,
+        severity,
+        title,
+        detail: `Ecart de ${delta}. La valeur attendue est ${expectedNum}, mais le compte affiche ${actualNum}.`,
+        occurredAtMs,
+        evidence: {
+          expected: expectedNum,
+          actual: actualNum,
+          delta,
+          ...evidence,
+        },
+        recommendedAction: recommendedActionForSeverity(severity),
+      }));
+    };
+
+    const contextTimeMs = safeSignedInt(clientData.updatedAtMs || clientData.createdAtMs || Date.now());
+    pushComparisonFinding({
+      key: "wallet_approved_htg_available",
+      title: "HTG approuvés incohérents",
+      expected: expectedWallet.approvedHtgAvailable,
+      actual: currentWallet.approvedHtgAvailable,
+      occurredAtMs: contextTimeMs,
+      evidence: { field: "approvedHtgAvailable" },
+      baseSeverity: "high",
+    });
+    pushComparisonFinding({
+      key: "wallet_provisional_htg_available",
+      title: "HTG en attente incohérents",
+      expected: expectedWallet.provisionalHtgAvailable,
+      actual: currentWallet.provisionalHtgAvailable,
+      occurredAtMs: contextTimeMs,
+      evidence: { field: "provisionalHtgAvailable" },
+      baseSeverity: "high",
+    });
+    pushComparisonFinding({
+      key: "wallet_approved_does_balance",
+      title: "Does approuvés incohérents",
+      expected: expectedWallet.approvedDoesBalance,
+      actual: currentWallet.approvedDoesBalance,
+      occurredAtMs: contextTimeMs,
+      evidence: { field: "doesApprovedBalance" },
+      baseSeverity: "high",
+    });
+    pushComparisonFinding({
+      key: "wallet_provisional_does_balance",
+      title: "Does en attente incohérents",
+      expected: expectedWallet.provisionalDoesBalance,
+      actual: currentWallet.provisionalDoesBalance,
+      occurredAtMs: contextTimeMs,
+      evidence: { field: "doesProvisionalBalance" },
+      baseSeverity: "high",
+    });
+    pushComparisonFinding({
+      key: "wallet_total_does_balance",
+      title: "Solde Does total incohérent",
+      expected: expectedWallet.doesBalance,
+      actual: currentWallet.doesBalance,
+      occurredAtMs: contextTimeMs,
+      evidence: { field: "doesBalance" },
+      baseSeverity: "high",
+    });
+    pushComparisonFinding({
+      key: "wallet_exchangeable_does_available",
+      title: "Does échangeables incohérents",
+      expected: expectedWallet.exchangeableDoesAvailable,
+      actual: currentWallet.exchangeableDoesAvailable,
+      occurredAtMs: contextTimeMs,
+      evidence: { field: "exchangeableDoesAvailable" },
+      baseSeverity: "medium",
+    });
+    pushComparisonFinding({
+      key: "wallet_welcome_bonus_htg_available",
+      title: "Bonus bienvenue HTG incohérent",
+      expected: expectedWallet.welcomeBonusHtgAvailable,
+      actual: currentWallet.welcomeBonusHtgAvailable,
+      occurredAtMs: contextTimeMs,
+      evidence: { field: "welcomeBonusHtgAvailable" },
+      baseSeverity: "medium",
+    });
+    pushComparisonFinding({
+      key: "wallet_welcome_bonus_htg_converted",
+      title: "Bonus bienvenue converti incohérent",
+      expected: expectedWallet.welcomeBonusHtgConverted,
+      actual: currentWallet.welcomeBonusHtgConverted,
+      occurredAtMs: contextTimeMs,
+      evidence: { field: "welcomeBonusHtgConverted" },
+      baseSeverity: "medium",
+    });
+    pushComparisonFinding({
+      key: "wallet_welcome_bonus_htg_played",
+      title: "Bonus bienvenue joué incohérent",
+      expected: expectedWallet.welcomeBonusHtgPlayed,
+      actual: currentWallet.welcomeBonusHtgPlayed,
+      occurredAtMs: contextTimeMs,
+      evidence: { field: "welcomeBonusHtgPlayed" },
+      baseSeverity: "medium",
+    });
+
+    let previousXchange = null;
+    let totalGameEntryDoes = 0;
+    let totalGameRewardDoes = 0;
+    let totalXchangeBuyHtg = 0;
+    let totalXchangeSellHtg = 0;
+    const ledgerTimeline = [];
+
+    analysisXchanges.forEach((row) => {
+      const type = String(row.type || "").trim().toLowerCase();
+      const createdAtMs = safeSignedInt(row.createdAtMs || row.updatedAtMs);
+      const beforeDoes = safeInt(row.beforeDoes);
+      const afterDoes = safeInt(row.afterDoes);
+      const beforeApprovedDoes = safeInt(row.beforeApprovedDoesBalance);
+      const afterApprovedDoes = safeInt(row.afterApprovedDoesBalance);
+      const beforeProvisionalDoes = safeInt(row.beforeProvisionalDoesBalance);
+      const afterProvisionalDoes = safeInt(row.afterProvisionalDoesBalance);
+      const beforeExchanged = safeSignedInt(row.beforeExchangedGourdes);
+      const afterExchanged = safeSignedInt(row.afterExchangedGourdes);
+      const deltaExchanged = safeSignedInt(row.deltaExchangedGourdes);
+      const amountDoes = safeInt(row.amountDoes);
+      const amountGourdes = safeInt(row.amountGourdes);
+      const ledgerContext = buildLedgerEvidence(row);
+      const hasDoesBalanceFields = Object.prototype.hasOwnProperty.call(row, "beforeDoes")
+        || Object.prototype.hasOwnProperty.call(row, "afterDoes")
+        || Object.prototype.hasOwnProperty.call(row, "beforeApprovedDoesBalance")
+        || Object.prototype.hasOwnProperty.call(row, "afterApprovedDoesBalance")
+        || Object.prototype.hasOwnProperty.call(row, "beforeProvisionalDoesBalance")
+        || Object.prototype.hasOwnProperty.call(row, "afterProvisionalDoesBalance");
+
+      if (previousXchange && safeSignedInt(previousXchange.afterDoes) !== beforeDoes) {
+        addFinding(makeFraudFinding({
+          key: `ledger_chain_break_${row.id || createdAtMs}`,
+          severity: "high",
+          title: "Chaînage du ledger cassé",
+          detail: "Le solde d'entrée ne correspond pas au solde de sortie de l'événement précédent.",
+          occurredAtMs: createdAtMs,
+          evidence: buildLedgerEvidence(row, {
+            previousId: previousXchange.id || "",
+            previousAfterDoes: safeInt(previousXchange.afterDoes),
+            currentBeforeDoes: beforeDoes,
+            currentId: row.id || "",
+            chainDeltaDoes: beforeDoes - safeInt(previousXchange.afterDoes),
+          }),
+          recommendedAction: "manual_review",
+        }));
+      }
+
+      if (hasDoesBalanceFields) {
+        const expectedAfterDoes = afterApprovedDoes + afterProvisionalDoes;
+        const expectedBeforeDoes = beforeApprovedDoes + beforeProvisionalDoes;
+        if (expectedAfterDoes !== afterDoes) {
+          addFinding(makeFraudFinding({
+            key: `ledger_after_does_${row.id || createdAtMs}`,
+            severity: "critical",
+            title: "Solde Does après mouvement incohérent",
+            detail: "Le total approuvé + provisoire ne correspond pas au solde final.",
+            occurredAtMs: createdAtMs,
+            evidence: {
+              ...ledgerContext,
+              expectedAfterDoes,
+              actualAfterDoes: afterDoes,
+              deltaDoes: afterDoes - expectedAfterDoes,
+              beforeApprovedDoes,
+              beforeProvisionalDoes,
+              afterApprovedDoes,
+              afterProvisionalDoes,
+            },
+            recommendedAction: "freeze_review",
+          }));
+        }
+        if (expectedBeforeDoes !== beforeDoes) {
+          addFinding(makeFraudFinding({
+            key: `ledger_before_does_${row.id || createdAtMs}`,
+            severity: "high",
+            title: "Solde Does d'entrée incohérent",
+            detail: "Le total approuvé + provisoire ne correspond pas au solde d'entrée.",
+            occurredAtMs: createdAtMs,
+            evidence: {
+              ...ledgerContext,
+              expectedBeforeDoes,
+              actualBeforeDoes: beforeDoes,
+              deltaDoes: beforeDoes - expectedBeforeDoes,
+              beforeApprovedDoes,
+              beforeProvisionalDoes,
+            },
+            recommendedAction: "manual_review",
+          }));
+        }
+      }
+
+      if (Object.prototype.hasOwnProperty.call(row, "beforeExchangedGourdes")
+        || Object.prototype.hasOwnProperty.call(row, "afterExchangedGourdes")
+        || Object.prototype.hasOwnProperty.call(row, "deltaExchangedGourdes")) {
+        const expectedAfterExchanged = beforeExchanged + deltaExchanged;
+        if (expectedAfterExchanged !== afterExchanged) {
+          addFinding(makeFraudFinding({
+            key: `ledger_exchange_htg_${row.id || createdAtMs}`,
+            severity: "high",
+            title: "Ledger HTG incohérent",
+            detail: "La variation HTG ne correspond pas aux montants enregistrés.",
+            occurredAtMs: createdAtMs,
+            evidence: {
+              ...ledgerContext,
+              beforeExchanged,
+              afterExchanged,
+              deltaExchanged,
+              expectedAfterExchanged,
+              deltaHtg: afterExchanged - expectedAfterExchanged,
+            },
+            recommendedAction: "manual_review",
+          }));
+        }
+      }
+
+      if (type === "game_entry") {
+        totalGameEntryDoes += amountDoes;
+        if (amountDoes > beforeDoes) {
+          addFinding(makeFraudFinding({
+            key: `game_entry_overdraft_${row.id || createdAtMs}`,
+            severity: "critical",
+            title: "Entrée de jeu supérieure au solde",
+            detail: "Le montant parié dépasse le solde disponible au moment de la partie.",
+            occurredAtMs: createdAtMs,
+            evidence: {
+              ...buildLedgerEvidence(row, {
+                expectedAfterDoes: beforeDoes - amountDoes,
+                actualAfterDoes: afterDoes,
+                deltaDoes: afterDoes - (beforeDoes - amountDoes),
+              }),
+              gameEntryFunding: row.gameEntryFunding || {},
+            },
+            recommendedAction: "freeze_review",
+          }));
+        }
+        if (afterDoes !== Math.max(0, beforeDoes - amountDoes)) {
+          addFinding(makeFraudFinding({
+            key: `game_entry_transition_${row.id || createdAtMs}`,
+            severity: "high",
+            title: "Transition de mise incohérente",
+            detail: "Le solde final ne correspond pas à la mise jouée.",
+            occurredAtMs: createdAtMs,
+            evidence: {
+              ...buildLedgerEvidence(row, {
+                expectedAfterDoes: Math.max(0, beforeDoes - amountDoes),
+                actualAfterDoes: afterDoes,
+                deltaDoes: afterDoes - Math.max(0, beforeDoes - amountDoes),
+              }),
+            },
+            recommendedAction: "manual_review",
+          }));
+        }
+      }
+
+      if (type === "game_reward") {
+        totalGameRewardDoes += amountDoes;
+        if (afterDoes !== beforeDoes + amountDoes) {
+          addFinding(makeFraudFinding({
+            key: `game_reward_transition_${row.id || createdAtMs}`,
+            severity: "high",
+            title: "Gain de partie incohérent",
+            detail: "Le solde final ne correspond pas au gain enregistré.",
+            occurredAtMs: createdAtMs,
+            evidence: {
+              ...buildLedgerEvidence(row, {
+                expectedAfterDoes: beforeDoes + amountDoes,
+                actualAfterDoes: afterDoes,
+                deltaDoes: afterDoes - (beforeDoes + amountDoes),
+              }),
+            },
+            recommendedAction: "manual_review",
+          }));
+        }
+      }
+
+      if (type === "xchange_sell") {
+        totalXchangeSellHtg += amountGourdes;
+        if (amountDoes > beforeApprovedDoes) {
+          addFinding(makeFraudFinding({
+            key: `xchange_sell_overdraft_${row.id || createdAtMs}`,
+            severity: "critical",
+            title: "Conversion HTG à partir de Does non approuvés",
+            detail: "La vente dépasse le solde Does approuvé disponible.",
+            occurredAtMs: createdAtMs,
+            evidence: {
+              ...buildLedgerEvidence(row, {
+                expectedAfterDoes: Math.max(0, beforeDoes - amountDoes),
+                actualAfterDoes: afterDoes,
+                deltaDoes: afterDoes - Math.max(0, beforeDoes - amountDoes),
+              }),
+              beforeApprovedDoes,
+              afterApprovedDoes,
+            },
+            recommendedAction: "freeze_review",
+          }));
+        }
+        if (afterApprovedDoes !== Math.max(0, beforeApprovedDoes - amountDoes)) {
+          addFinding(makeFraudFinding({
+            key: `xchange_sell_transition_${row.id || createdAtMs}`,
+            severity: "high",
+            title: "Conversion HTG incohérente",
+            detail: "Le solde Does approuvé final ne correspond pas à la conversion.",
+            occurredAtMs: createdAtMs,
+            evidence: {
+              ...buildLedgerEvidence(row, {
+                expectedAfterDoes: Math.max(0, beforeDoes - amountDoes),
+                actualAfterDoes: afterDoes,
+                deltaDoes: afterDoes - Math.max(0, beforeDoes - amountDoes),
+              }),
+              beforeApprovedDoes,
+              afterApprovedDoes,
+            },
+            recommendedAction: "manual_review",
+          }));
+        }
+      }
+
+      if (type === "xchange_buy") {
+        totalXchangeBuyHtg += amountGourdes;
+      }
+
+      const label = type.replaceAll("_", " ") || "mouvement";
+      ledgerTimeline.push({
+        id: row.id || `${type}-${createdAtMs}`,
+        kind: "ledger",
+        atMs: createdAtMs,
+        title: `${label.toUpperCase()} · ${amountDoes > 0 ? `${amountDoes} Does` : `${amountGourdes} HTG`}`,
+        detail: `Avant: ${beforeDoes} Does · Après: ${afterDoes} Does`,
+        severity: type === "game_reward" ? "good" : type === "game_entry" ? "warn" : "neutral",
+        evidence: {
+          rowId: row.id || "",
+          type,
+          beforeDoes,
+          afterDoes,
+          amountDoes,
+          amountGourdes,
+        },
+      });
+
+      previousXchange = row;
+    });
+
+    if (gameFilter === "all") {
+      pushComparisonFinding({
+        key: "game_history_total_wagered",
+        title: "Total parié incohérent avec le ledger",
+        expected: totalGameEntryDoes,
+        actual: gameAnalysis.summary.totalWageredDoes,
+        occurredAtMs: gameRows[0]?.endedAtMs || contextTimeMs,
+        evidence: { metric: "totalWageredDoes" },
+        baseSeverity: "high",
+      });
+      pushComparisonFinding({
+        key: "game_history_total_won",
+        title: "Total gagné incohérent avec le ledger",
+        expected: totalGameRewardDoes,
+        actual: gameAnalysis.summary.totalWonDoes,
+        occurredAtMs: gameRows[0]?.endedAtMs || contextTimeMs,
+        evidence: { metric: "totalWonDoes" },
+        baseSeverity: "high",
+      });
+    }
+
+    rawOrders.forEach((order, index) => {
+      const status = getOrderResolutionStatus(order);
+      const amountHtg = computeOrderAmount(order);
+      const createdAtMs = safeSignedInt(order.createdAtMs || order.reviewCreatedAtMs || order.updatedAtMs || 0);
+      const orderId = String(order.id || order.orderId || index + 1).trim();
+      const approvedAmountHtg = safeInt(order.approvedAmountHtg);
+      const provisionalRemaining = safeInt(order.provisionalHtgRemaining);
+      const provisionalDoesRemaining = safeInt(order.provisionalDoesRemaining);
+      if (status === "approved" && amountHtg <= 0) {
+        addFinding(makeFraudFinding({
+          key: `order_zero_amount_${orderId}`,
+          severity: "medium",
+          title: "Commande approuvée sans montant",
+          detail: "Une commande approuvée affiche un montant nul ou invalide.",
+          occurredAtMs: createdAtMs,
+          evidence: {
+            orderId,
+            status,
+            amountHtg,
+            approvedAmountHtg,
+          },
+          recommendedAction: "manual_review",
+        }));
+      }
+      if ((status === "pending" || status === "review") && approvedAmountHtg > 0) {
+        addFinding(makeFraudFinding({
+          key: `order_pending_has_approved_${orderId}`,
+          severity: "high",
+          title: "Commande en examen déjà approuvée partiellement",
+          detail: "Une commande encore en examen contient un montant approuvé.",
+          occurredAtMs: createdAtMs,
+          evidence: {
+            orderId,
+            status,
+            amountHtg,
+            approvedAmountHtg,
+            provisionalRemaining,
+            provisionalDoesRemaining,
+          },
+          recommendedAction: "manual_review",
+        }));
+      }
+      if ((status === "rejected" || status === "cancelled" || status === "canceled") && approvedAmountHtg > 0) {
+        addFinding(makeFraudFinding({
+          key: `order_rejected_has_approved_${orderId}`,
+          severity: "high",
+          title: "Commande refusée avec montant approuvé",
+          detail: "Une commande rejetée conserve encore un montant approuvé.",
+          occurredAtMs: createdAtMs,
+          evidence: {
+            orderId,
+            status,
+            amountHtg,
+            approvedAmountHtg,
+          },
+          recommendedAction: "manual_review",
+        }));
+      }
+      if (status === "approved" && (provisionalRemaining > 0 || provisionalDoesRemaining > 0)) {
+        addFinding(makeFraudFinding({
+          key: `order_approved_still_pending_${orderId}`,
+          severity: "medium",
+          title: "Commande approuvée encore partiellement en attente",
+          detail: "Une commande approuvée garde un reliquat provisoire.",
+          occurredAtMs: createdAtMs,
+          evidence: {
+            orderId,
+            status,
+            amountHtg,
+            provisionalRemaining,
+            provisionalDoesRemaining,
+          },
+          recommendedAction: "review",
+        }));
+      }
+    });
+
+    const timeline = [];
+    findings.forEach((finding) => {
+      timeline.push({
+        id: `finding-${finding.key}`,
+        kind: "finding",
+        atMs: safeSignedInt(finding.occurredAtMs),
+        title: finding.title,
+        detail: finding.detail,
+        severity: finding.severity,
+        evidence: finding.evidence,
+      });
+    });
+    gameRows.slice(0, 15).forEach((row) => {
+      timeline.push({
+        id: `game-${row.id}`,
+        kind: "game",
+        atMs: safeSignedInt(row.endedAtMs),
+        title: `${row.gameLabel || "Jeu"} · ${row.resultLabel || "Terminé"}`,
+        detail: `Mise ${row.wageredDoes} Does · Gain ${row.wonDoes} Does · Net ${row.netDoes}`,
+        severity: row.won ? "good" : row.lost ? "bad" : "warn",
+        evidence: {
+          rowId: row.id,
+          gameKey: row.gameKey,
+          opponentType: row.opponentType,
+          matchId: row.matchId,
+          roomId: row.roomId,
+        },
+      });
+    });
+    ledgerTimeline.slice(-15).forEach((item) => timeline.push(item));
+    timeline.sort((left, right) =>
+      safeSignedInt(right.atMs) - safeSignedInt(left.atMs)
+      || String(right.id || "").localeCompare(String(left.id || ""), "fr")
+    );
+
+    findings.sort((left, right) =>
+      safeSignedInt(right.severityScore) - safeSignedInt(left.severityScore)
+      || safeSignedInt(right.occurredAtMs) - safeSignedInt(left.occurredAtMs)
+      || String(left.key || "").localeCompare(String(right.key || ""), "fr")
+    );
+
+    const riskScore = Math.min(100, findings.reduce((sum, item) => sum + safeInt(item.severityScore), 0));
+    const riskLevel = riskScore >= 80 ? "critical" : riskScore >= 55 ? "high" : riskScore >= 25 ? "medium" : "low";
+    const isSuspicious = riskLevel === "high" || riskLevel === "critical";
+    const recommendedAction = riskLevel === "critical"
+      ? "freeze_review"
+      : riskLevel === "high"
+        ? "manual_review"
+        : "monitor";
+    const anomalyTimes = findings
+      .map((item) => safeSignedInt(item.occurredAtMs))
+      .filter((value) => value > 0)
+      .sort((left, right) => left - right);
+    const firstAnomalyAtMs = anomalyTimes.length ? anomalyTimes[0] : 0;
+    const lastAnomalyAtMs = anomalyTimes.length ? anomalyTimes[anomalyTimes.length - 1] : 0;
+
+    return {
+      ok: true,
+      clientId,
+      admin: {
+        uid: sanitizeText(request.auth?.uid || "", 160),
+        email: sanitizeEmail(request.auth?.token?.email || request.auth?.email || "", 160),
+      },
+      riskScore,
+      riskLevel,
+      isSuspicious,
+      recommendedAction,
+      firstAnomalyAtMs,
+      lastAnomalyAtMs,
+      gameScope: {
+        game: gameFilter,
+        opponent: opponentFilter,
+        result: resultFilter,
+        startMs,
+        endMs,
+        minWonDoes,
+        maxWonDoes,
+      },
+      currentWallet,
+      expectedWallet,
+      fundingSnapshot,
+      gameSummary: gameAnalysis.summary,
+      gameByGame: gameAnalysis.byGame,
+      gameRowsCount: gameRows.length,
+      ordersCount: rawOrders.length,
+      withdrawalsCount: rawWithdrawals.length,
+      xchangesCount: rawXchanges.length,
+      analyzedXchangesCount: analysisXchanges.length,
+      findingsTotal: findings.length,
+      timelineTotal: timeline.length,
+      findings: findings.slice(0, findingsLimit),
+      timeline: timeline.slice(0, timelineLimit),
+    };
+  },
+  { invoker: "public", memory: "512MiB" }
 );
 
 exports.adminSetClientPasswordSecure = publicOnCall(
@@ -26027,6 +27958,189 @@ exports.creditAgentDepositSecure = publicOnCall(
         bonusEligible: depositBonusSnapshot.eligible,
         bonusDoesAwarded,
         ...fundingSnapshot,
+      };
+    });
+
+    return result;
+  },
+  { invoker: "public" }
+);
+
+exports.adminCreateAutomaticWithdrawalSecure = publicOnCall(
+  "adminCreateAutomaticWithdrawalSecure",
+  async (request) => {
+    const { uid: adminUid, email: adminEmail } = assertFinanceAdmin(request);
+    const payload = request.data && typeof request.data === "object" ? request.data : {};
+    const clientId = sanitizeText(payload.clientId || payload.uid || "", 160);
+    const amountHtg = safeInt(payload.amountHtg ?? payload.amount);
+    const methodId = sanitizeText(payload.methodId || payload.destinationType || "admin_auto", 80).toLowerCase();
+    const destinationValue = sanitizeText(payload.destinationValue || payload.phone || "", 160);
+    const note = sanitizeText(payload.note || payload.reason || "", 300);
+
+    if (!clientId) {
+      throw new HttpsError("invalid-argument", "Client introuvable.");
+    }
+    if (amountHtg < MIN_WITHDRAWAL_HTG || amountHtg > MAX_WITHDRAWAL_HTG) {
+      throw new HttpsError("invalid-argument", `Montant retrait invalide. Minimum ${MIN_WITHDRAWAL_HTG} HTG.`);
+    }
+    if (note.length < 4) {
+      throw new HttpsError("invalid-argument", "Ajoute une note interne pour auditer ce retrait.");
+    }
+
+    const clientRef = walletRef(clientId);
+    const withdrawalsCollectionRef = clientRef.collection("withdrawals");
+    const withdrawalRef = withdrawalsCollectionRef.doc();
+    const auditRef = db.collection("adminAuditLogs").doc();
+
+    const result = await db.runTransaction(async (tx) => {
+      const [clientSnap, ordersSnap, withdrawalsSnap, xchangesSnap] = await Promise.all([
+        tx.get(clientRef),
+        tx.get(clientRef.collection("orders")),
+        tx.get(withdrawalsCollectionRef),
+        tx.get(walletHistoryRef(clientId)),
+      ]);
+
+      if (!clientSnap.exists) {
+        throw new HttpsError("not-found", "Compte client introuvable.");
+      }
+
+      const clientData = clientSnap.data() || {};
+      assertWithdrawalAllowed(clientData);
+
+      const existingOrders = ordersSnap.docs.map((item) => item.data() || {});
+      const existingWithdrawals = withdrawalsSnap.docs.map((item) => item.data() || {});
+      const existingXchanges = xchangesSnap.docs.map((item) => item.data() || {});
+      const beforeFundingSnapshot = buildWalletFundingSnapshot({
+        orders: existingOrders,
+        withdrawals: existingWithdrawals,
+        walletData: clientData,
+        exchangeHistory: existingXchanges,
+      });
+      const beforeWithdrawableHtg = safeInt(beforeFundingSnapshot.withdrawableHtg);
+      const beforeApprovedHtgAvailable = safeInt(beforeFundingSnapshot.approvedHtgAvailable);
+      const beforeReservedWithdrawalsHtg = safeInt(beforeFundingSnapshot.reservedWithdrawalsHtg);
+
+      console.info("[ADMIN_AUTO_WITHDRAWAL] validate", {
+        clientId,
+        amountHtg,
+        methodId,
+        beforeWithdrawableHtg,
+        beforeApprovedHtgAvailable,
+        beforeReservedWithdrawalsHtg,
+        adminUid,
+      });
+
+      if (amountHtg > beforeWithdrawableHtg) {
+        throw new HttpsError("failed-precondition", "Montant supérieur au HTG retirable du joueur.", {
+          code: "insufficient-withdrawable-htg",
+          amountHtg,
+          withdrawableHtg: beforeWithdrawableHtg,
+          approvedHtgAvailable: beforeApprovedHtgAvailable,
+        });
+      }
+
+      const nowMs = Date.now();
+      const nowIso = new Date(nowMs).toISOString();
+      const withdrawalPayload = {
+        id: withdrawalRef.id,
+        withdrawalId: withdrawalRef.id,
+        uid: clientId,
+        clientId,
+        clientUid: clientId,
+        status: "approved",
+        resolutionStatus: "approved",
+        requestedAmount: amountHtg,
+        amount: amountHtg,
+        approvedAmountHtg: amountHtg,
+        methodId,
+        methodName: methodId,
+        destinationType: methodId,
+        destinationValue,
+        customerName: sanitizeText(clientData.name || clientData.displayName || clientData.username || "", 120),
+        customerEmail: sanitizeEmail(clientData.email || "", 160),
+        customerPhone: sanitizePhone(clientData.phone || "", 40),
+        createdAt: nowIso,
+        createdAtMs: nowMs,
+        updatedAt: nowIso,
+        updatedAtMs: nowMs,
+        resolvedAt: nowIso,
+        resolvedAtMs: nowMs,
+        approvedAt: nowIso,
+        approvedAtMs: nowMs,
+        adminAssisted: true,
+        automaticWithdrawal: true,
+        source: "admin_auto_withdrawal",
+        processedByAdminUid: sanitizeText(adminUid || "", 160),
+        processedByAdminEmail: sanitizeEmail(adminEmail || "", 160),
+        approvedByAdminUid: sanitizeText(adminUid || "", 160),
+        approvedByAdminEmail: sanitizeEmail(adminEmail || "", 160),
+        adminNote: note,
+        note,
+      };
+
+      const nextFundingSnapshot = buildWalletFundingSnapshot({
+        orders: existingOrders,
+        withdrawals: [
+          ...existingWithdrawals,
+          withdrawalPayload,
+        ],
+        walletData: clientData,
+        exchangeHistory: existingXchanges,
+      });
+
+      console.info("[ADMIN_AUTO_WITHDRAWAL] commit", {
+        clientId,
+        withdrawalId: withdrawalRef.id,
+        amountHtg,
+        beforeWithdrawableHtg,
+        afterWithdrawableHtg: safeInt(nextFundingSnapshot.withdrawableHtg),
+        beforeApprovedHtgAvailable,
+        afterApprovedHtgAvailable: safeInt(nextFundingSnapshot.approvedHtgAvailable),
+      });
+
+      tx.set(withdrawalRef, withdrawalPayload, { merge: true });
+      tx.set(clientRef, {
+        uid: clientId,
+        email: sanitizeEmail(clientData.email || "", 160),
+        ...buildFundingWalletPatch(nextFundingSnapshot),
+        lastAutomaticWithdrawalAtMs: nowMs,
+        lastAutomaticWithdrawalAmountHtg: amountHtg,
+        lastAutomaticWithdrawalByAdminUid: sanitizeText(adminUid || "", 160),
+        lastAutomaticWithdrawalByAdminEmail: sanitizeEmail(adminEmail || "", 160),
+        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+        updatedAtMs: nowMs,
+      }, { merge: true });
+      tx.set(auditRef, {
+        type: "admin_auto_withdrawal",
+        clientId,
+        withdrawalId: withdrawalRef.id,
+        amountHtg,
+        methodId,
+        destinationValue,
+        note,
+        adminUid: sanitizeText(adminUid || "", 160),
+        adminEmail: sanitizeEmail(adminEmail || "", 160),
+        beforeWithdrawableHtg,
+        afterWithdrawableHtg: safeInt(nextFundingSnapshot.withdrawableHtg),
+        beforeApprovedHtgAvailable,
+        afterApprovedHtgAvailable: safeInt(nextFundingSnapshot.approvedHtgAvailable),
+        createdAtMs: nowMs,
+        createdAt: nowIso,
+      }, { merge: true });
+
+      return {
+        ok: true,
+        clientId,
+        withdrawalId: withdrawalRef.id,
+        amountHtg,
+        methodId,
+        beforeWithdrawableHtg,
+        afterWithdrawableHtg: safeInt(nextFundingSnapshot.withdrawableHtg),
+        beforeApprovedHtgAvailable,
+        afterApprovedHtgAvailable: safeInt(nextFundingSnapshot.approvedHtgAvailable),
+        beforeReservedWithdrawalsHtg,
+        afterReservedWithdrawalsHtg: safeInt(nextFundingSnapshot.reservedWithdrawalsHtg),
+        fundingSnapshot: nextFundingSnapshot,
       };
     });
 
@@ -26733,7 +28847,7 @@ exports.closeAgentPayrollMonthSecure = publicOnCall(
 );
 
 exports.resolveDepositReviewSecure = publicOnCall("resolveDepositReviewSecure", async (request) => {
-  assertFinanceAdmin(request);
+  const { uid: adminUid, email: adminEmail } = assertFinanceAdmin(request);
   const payload = request.data && typeof request.data === "object" ? request.data : {};
   const orderId = sanitizeText(payload.orderId || "", 160);
   const clientId = sanitizeText(payload.clientId || payload.uid || "", 160);
@@ -26790,8 +28904,16 @@ exports.resolveDepositReviewSecure = publicOnCall("resolveDepositReviewSecure", 
     const nowIso = new Date().toISOString();
     const nowMs = Date.now();
     const orderAmountHtg = computeOrderAmount(orderData);
+    const cleanupPatch = buildResolvedDepositResidueCleanupPatch(orderData, {
+      nowMs,
+      adminUid,
+      adminEmail,
+    });
 
     if (resolutionStatus === decision && !fundingNeedsSettlement) {
+      if (cleanupPatch) {
+        tx.set(orderSnap.ref, cleanupPatch, { merge: true });
+      }
       const fundingSnapshot = buildWalletFundingSnapshot({
         orders: ordersSnap.docs.map((item) => item.data() || {}),
         withdrawals: withdrawalsSnap.docs.map((item) => item.data() || {}),
@@ -26900,8 +29022,13 @@ exports.resolveDepositReviewSecure = publicOnCall("resolveDepositReviewSecure", 
         resolutionStatus: "approved",
         approvedAmountHtg: orderAmountHtg,
         rejectedReason: "",
-        provisionalDoesRemaining: promoteCapitalDoes,
-        provisionalGainDoes: promoteGainDoes,
+        provisionalHtgRemaining: 0,
+        provisionalDoesRemaining: 0,
+        provisionalGainDoes: 0,
+        settledProvisionalHtgConverted: safeInt(orderData.provisionalHtgConverted),
+        settledProvisionalCapitalDoes: promoteCapitalDoes,
+        settledProvisionalGainDoes: promoteGainDoes,
+        settledProvisionalDoes: promoteDoes,
         fundingSettledAtMs: nowMs,
         bonusEligible: depositBonusSnapshot.eligible,
         bonusThresholdHtg: safeInt(depositBonusSnapshot.thresholdHtg),
@@ -26936,8 +29063,13 @@ exports.resolveDepositReviewSecure = publicOnCall("resolveDepositReviewSecure", 
         resolutionStatus: "rejected",
         approvedAmountHtg: 0,
         rejectedReason: reason || "Dépôt refusé",
-        provisionalDoesRemaining: settledCapitalDoes,
-        provisionalGainDoes: settledGainDoes,
+        provisionalHtgRemaining: 0,
+        provisionalDoesRemaining: 0,
+        provisionalGainDoes: 0,
+        settledProvisionalHtgConverted: safeInt(orderData.provisionalHtgConverted),
+        settledProvisionalCapitalDoes: settledCapitalDoes,
+        settledProvisionalGainDoes: settledGainDoes,
+        settledProvisionalDoes: removeDoes,
         fundingSettledAtMs: nowMs,
         bonusEligible: depositBonusSnapshot.eligible,
         bonusThresholdHtg: safeInt(depositBonusSnapshot.thresholdHtg),
@@ -27043,6 +29175,245 @@ exports.resolveDepositReviewSecure = publicOnCall("resolveDepositReviewSecure", 
 
   return result;
 });
+
+exports.approveClientPendingBalancesSecure = publicOnCall(
+  "approveClientPendingBalancesSecure",
+  async (request) => {
+    const { uid: adminUid, email: adminEmail } = assertFinanceAdmin(request);
+    const payload = request.data && typeof request.data === "object" ? request.data : {};
+    const clientId = sanitizeText(payload.clientId || payload.uid || "", 160);
+
+    if (!clientId) {
+      throw new HttpsError("invalid-argument", "Client introuvable.");
+    }
+
+    const clientRef = walletRef(clientId);
+    const result = await db.runTransaction(async (tx) => {
+      const [clientSnap, ordersSnap, withdrawalsSnap, xchangesSnap] = await Promise.all([
+        tx.get(clientRef),
+        tx.get(clientRef.collection("orders")),
+        tx.get(clientRef.collection("withdrawals")),
+        tx.get(walletHistoryRef(clientId)),
+      ]);
+
+      if (!clientSnap.exists) {
+        throw new HttpsError("not-found", "Compte client introuvable.");
+      }
+
+      const walletData = clientSnap.data() || {};
+      const nowMs = Date.now();
+      const nowIso = new Date(nowMs).toISOString();
+      const beforeProvisionalDoes = safeInt(walletData.doesProvisionalBalance);
+      const beforeApprovedDoes = safeInt(
+        typeof walletData.doesApprovedBalance === "number"
+          ? walletData.doesApprovedBalance
+          : Math.max(0, safeInt(walletData.doesBalance) - beforeProvisionalDoes)
+      );
+      const beforePendingFromXchange = safeInt(walletData.pendingPlayFromXchangeDoes);
+      const beforePendingFromReferral = safeInt(walletData.pendingPlayFromReferralDoes);
+      const beforePendingFromWelcome = safeInt(walletData.pendingPlayFromWelcomeDoes);
+      const pendingOrders = ordersSnap.docs
+        .map((orderSnap) => ({ id: orderSnap.id, ref: orderSnap.ref, data: orderSnap.data() || {} }))
+        .filter((item) => {
+          const status = getOrderResolutionStatus(item.data);
+          return status === "pending" || status === "review";
+        });
+      const pendingCapitalDoes = pendingOrders.reduce(
+        (sum, item) => sum + getOrderProvisionalCapitalDoesBalance(item.data),
+        0
+      );
+      const pendingGainDoes = pendingOrders.reduce(
+        (sum, item) => sum + safeInt(item.data.provisionalGainDoes),
+        0
+      );
+      const provisionalDoesToApprove = beforeProvisionalDoes;
+      const orphanProvisionalDoes = Math.max(0, provisionalDoesToApprove - pendingCapitalDoes - pendingGainDoes);
+      const lockAsPlayRequiredDoes = Math.min(
+        provisionalDoesToApprove,
+        pendingCapitalDoes + orphanProvisionalDoes
+      );
+
+      const nextOrders = ordersSnap.docs.map((orderSnap) => {
+        const data = orderSnap.data() || {};
+        const status = getOrderResolutionStatus(data);
+        if (status !== "pending" && status !== "review") return data;
+        const amountHtg = computeOrderAmount(data);
+        const pendingCapital = getOrderProvisionalCapitalDoesBalance(data);
+        const pendingGain = safeInt(data.provisionalGainDoes);
+        return {
+          ...data,
+          status: "approved",
+          resolutionStatus: "approved",
+          approvedAmountHtg: amountHtg,
+          rejectedReason: "",
+          provisionalHtgRemaining: 0,
+          provisionalDoesRemaining: 0,
+          provisionalGainDoes: 0,
+          settledProvisionalHtgConverted: safeInt(data.provisionalHtgConverted),
+          settledProvisionalCapitalDoes: pendingCapital,
+          settledProvisionalGainDoes: pendingGain,
+          settledProvisionalDoes: pendingCapital + pendingGain,
+          fundingSettledAtMs: safeInt(data.fundingSettledAtMs) || nowMs,
+          resolvedAtMs: safeInt(data.resolvedAtMs) || nowMs,
+          reviewResolvedAtMs: safeInt(data.reviewResolvedAtMs) || nowMs,
+          approvedAtMs: safeInt(data.approvedAtMs) || nowMs,
+          approvedAt: String(data.approvedAt || nowIso),
+          approvedByUid: sanitizeText(adminUid || "", 160),
+          approvedByEmail: sanitizeEmail(adminEmail || "", 160),
+          updatedAt: nowIso,
+          updatedAtMs: nowMs,
+        };
+      });
+
+      pendingOrders.forEach((item) => {
+        const nextData = nextOrders.find((candidate) => String(candidate.id || "") === String(item.data.id || ""));
+        const fallback = {
+          ...item.data,
+          status: "approved",
+          resolutionStatus: "approved",
+          approvedAmountHtg: computeOrderAmount(item.data),
+          rejectedReason: "",
+          provisionalHtgRemaining: 0,
+          provisionalDoesRemaining: 0,
+          provisionalGainDoes: 0,
+          fundingSettledAtMs: safeInt(item.data.fundingSettledAtMs) || nowMs,
+          resolvedAtMs: safeInt(item.data.resolvedAtMs) || nowMs,
+          reviewResolvedAtMs: safeInt(item.data.reviewResolvedAtMs) || nowMs,
+          approvedAtMs: safeInt(item.data.approvedAtMs) || nowMs,
+          approvedAt: String(item.data.approvedAt || nowIso),
+          approvedByUid: sanitizeText(adminUid || "", 160),
+          approvedByEmail: sanitizeEmail(adminEmail || "", 160),
+          updatedAt: nowIso,
+          updatedAtMs: nowMs,
+        };
+        tx.set(item.ref, nextData || fallback, { merge: true });
+      });
+
+      const nextApprovedDoes = beforeApprovedDoes + provisionalDoesToApprove;
+      const nextProvisionalDoes = 0;
+      const nextWallet = {
+        ...walletData,
+        doesApprovedBalance: nextApprovedDoes,
+        doesProvisionalBalance: nextProvisionalDoes,
+        doesBalance: nextApprovedDoes,
+        pendingPlayFromXchangeDoes: beforePendingFromXchange + lockAsPlayRequiredDoes,
+        pendingPlayFromReferralDoes: beforePendingFromReferral,
+        pendingPlayFromWelcomeDoes: beforePendingFromWelcome,
+      };
+      const fundingSnapshot = buildWalletFundingSnapshot({
+        orders: nextOrders,
+        withdrawals: withdrawalsSnap.docs.map((item) => item.data() || {}),
+        walletData: nextWallet,
+        exchangeHistory: xchangesSnap.docs.map((item) => item.data() || {}),
+      });
+      const pendingPlayTotalDoes = safeInt(nextWallet.pendingPlayFromXchangeDoes)
+        + safeInt(nextWallet.pendingPlayFromReferralDoes)
+        + safeInt(nextWallet.pendingPlayFromWelcomeDoes);
+      const nextExchangeableDoes = pendingPlayTotalDoes <= 0
+        ? nextApprovedDoes
+        : Math.min(nextApprovedDoes, safeInt(walletData.exchangeableDoesAvailable));
+
+      tx.set(clientRef, {
+        ...buildFundingWalletPatch(fundingSnapshot),
+        doesApprovedBalance: nextApprovedDoes,
+        doesProvisionalBalance: nextProvisionalDoes,
+        doesBalance: nextApprovedDoes,
+        pendingPlayFromXchangeDoes: safeInt(nextWallet.pendingPlayFromXchangeDoes),
+        pendingPlayFromReferralDoes: safeInt(nextWallet.pendingPlayFromReferralDoes),
+        pendingPlayFromWelcomeDoes: safeInt(nextWallet.pendingPlayFromWelcomeDoes),
+        exchangeableDoesAvailable: nextExchangeableDoes,
+        lastPendingBalanceApprovedAt: admin.firestore.FieldValue.serverTimestamp(),
+        lastPendingBalanceApprovedAtMs: nowMs,
+        lastPendingBalanceApprovedByUid: sanitizeText(adminUid || "", 160),
+        lastPendingBalanceApprovedByEmail: sanitizeEmail(adminEmail || "", 160),
+        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      }, { merge: true });
+
+      return {
+        ok: true,
+        clientId,
+        approvedOrdersCount: pendingOrders.length,
+        approvedDoesMoved: provisionalDoesToApprove,
+        lockedForPlayDoes: lockAsPlayRequiredDoes,
+        orphanProvisionalDoes,
+        before: {
+          doesApprovedBalance: beforeApprovedDoes,
+          doesProvisionalBalance: beforeProvisionalDoes,
+        },
+        after: {
+          doesApprovedBalance: nextApprovedDoes,
+          doesProvisionalBalance: nextProvisionalDoes,
+          doesBalance: nextApprovedDoes,
+          exchangeableDoesAvailable: nextExchangeableDoes,
+        },
+      };
+    });
+
+    return result;
+  },
+  { invoker: "public", memory: "256MiB" }
+);
+
+exports.repairResolvedDepositResiduesSecure = publicOnCall(
+  "repairResolvedDepositResiduesSecure",
+  async (request) => {
+    const { uid: adminUid, email: adminEmail } = assertFinanceAdmin(request);
+    const payload = request.data && typeof request.data === "object" ? request.data : {};
+    const clientId = sanitizeText(payload.clientId || payload.uid || "", 160);
+    const limit = Math.min(200, Math.max(1, safeInt(payload.limit) || 100));
+
+    if (!clientId) {
+      throw new HttpsError("invalid-argument", "Client introuvable.");
+    }
+
+    const clientRef = walletRef(clientId);
+    const clientSnap = await clientRef.get();
+    if (!clientSnap.exists) {
+      throw new HttpsError("not-found", "Compte client introuvable.");
+    }
+
+    const ordersSnap = await clientRef.collection("orders").limit(limit).get();
+    const nowMs = Date.now();
+    const batch = db.batch();
+    const repaired = [];
+
+    ordersSnap.docs.forEach((orderSnap) => {
+      const orderData = orderSnap.data() || {};
+      const patch = buildResolvedDepositResidueCleanupPatch(orderData, {
+        nowMs,
+        adminUid,
+        adminEmail,
+      });
+      if (!patch) return;
+      batch.set(orderSnap.ref, patch, { merge: true });
+      repaired.push({
+        orderId: orderSnap.id,
+        status: getOrderResolutionStatus(orderData),
+        before: patch.resolvedResidueBeforeCleanup,
+      });
+    });
+
+    if (repaired.length) {
+      batch.set(clientRef, {
+        lastResolvedDepositResidueRepairAt: admin.firestore.FieldValue.serverTimestamp(),
+        lastResolvedDepositResidueRepairAtMs: nowMs,
+        lastResolvedDepositResidueRepairByUid: sanitizeText(adminUid || "", 160),
+        lastResolvedDepositResidueRepairByEmail: sanitizeEmail(adminEmail || "", 160),
+        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      }, { merge: true });
+      await batch.commit();
+    }
+
+    return {
+      ok: true,
+      clientId,
+      scanned: ordersSnap.size,
+      repairedCount: repaired.length,
+      repaired,
+    };
+  },
+  { invoker: "public", memory: "256MiB" }
+);
 
 exports.unfreezeClientAccountSecure = publicOnCall("unfreezeClientAccountSecure", async (request) => {
   assertFinanceAdmin(request);

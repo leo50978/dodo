@@ -1,5 +1,6 @@
 import { auth, formatAuthError, logoutCurrentUser, watchAuthState } from "./auth.js";
 import { mountXchangeModal, getXchangeState } from "./xchange.js";
+import { mountTransferModal } from "./transfer.js";
 import { mountRetraitModal, getWithdrawalRuleStatus } from "./retrait.js";
 import {
   bindPendingOperationsActions,
@@ -901,6 +902,7 @@ function ensureProfileModal() {
             <p id="profileBalance" class="mt-2 text-sm text-white">-</p>
           </div>
           <div class="rounded-2xl border border-white/20 bg-white/10 p-4 shadow-[8px_8px_18px_rgba(19,25,40,0.34),-6px_-6px_14px_rgba(111,126,164,0.2)]">
+            <p class="text-[11px] uppercase tracking-[0.14em] text-white/65">Gère ton compte</p>
             <button id="profileDepositBtn" type="button" class="inline-flex w-full min-w-0 items-center justify-between gap-2 rounded-xl border border-white/20 bg-white/10 px-3 py-2 text-sm font-semibold text-white shadow-[8px_8px_18px_rgba(19,25,40,0.34),-6px_-6px_14px_rgba(111,126,164,0.2)]">
               <span class="inline-flex min-w-0 flex-1 items-center gap-2">
                 <i class="fa-solid fa-plus text-[11px]"></i>
@@ -1911,8 +1913,13 @@ export function mountProfileModal(options = {}) {
     scheduleProfileFundingRefresh(auth.currentUser, 80);
     updateProfileData(auth.currentUser);
   });
+  window.addEventListener("transferUpdated", () => {
+    scheduleProfileFundingRefresh(auth.currentUser, 80);
+    updateProfileData(auth.currentUser);
+  });
 
   mountXchangeModal({ triggerSelector: "#profileXchangeBtn" });
+  mountTransferModal({ triggerSelector: "#profileTransferBtn" });
   mountRetraitModal({ triggerSelector: "#profileWithdrawBtn" });
 
   ensureProfileRealtimeWatchers(auth.currentUser);
@@ -2125,6 +2132,7 @@ export function mountProfilePage(options = {}) {
 
   mountSoldeModal({ triggerSelector: "#profileDepositBtn" });
   mountXchangeModal({ triggerSelector: "#profileXchangeBtn" });
+  mountTransferModal({ triggerSelector: "#profileTransferBtn" });
   mountRetraitModal({ triggerSelector: "#profileWithdrawBtn" });
 
   if (!profileEntryActionHandled) {
@@ -2133,6 +2141,7 @@ export function mountProfilePage(options = {}) {
     const actionMap = {
       deposit: "#profileDepositBtn",
       xchange: "#profileXchangeBtn",
+      transfer: "#profileTransferBtn",
       withdraw: "#profileWithdrawBtn",
       help: "#profileHelpBtn",
       password: "#profilePasswordBtn",

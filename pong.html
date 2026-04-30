@@ -1,18 +1,33 @@
 <!doctype html>
-<html lang="fr">
+<html lang="ht">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
     <title>Dominoes Lakay · Pong</title>
     <style>
+      :root {
+        --bg-0: #f4fbf6;
+        --bg-1: #e5f6ea;
+        --panel: rgba(255, 255, 255, 0.92);
+        --line: rgba(31, 143, 76, 0.18);
+        --text: #10311f;
+        --muted: rgba(16, 49, 31, 0.72);
+        --accent: #1f8f4c;
+        --accent-dark: #166c39;
+      }
+
       html,
       body {
         margin: 0;
         width: 100%;
         height: 100%;
-        background: #050b16;
+        background:
+          radial-gradient(circle at 18% 12%, rgba(31, 143, 76, 0.13), transparent 24%),
+          radial-gradient(circle at 84% 18%, rgba(31, 143, 76, 0.08), transparent 26%),
+          linear-gradient(160deg, var(--bg-0), var(--bg-1));
         overflow: hidden;
         font-family: "Poppins", system-ui, sans-serif;
+        color: var(--text);
       }
 
       .shell {
@@ -30,15 +45,17 @@
         justify-content: space-between;
         gap: 12px;
         padding-inline: max(12px, env(safe-area-inset-left)) max(12px, env(safe-area-inset-right));
-        background: linear-gradient(180deg, rgba(8, 17, 34, 0.95), rgba(8, 17, 34, 0.72));
-        border-bottom: 1px solid rgba(173, 198, 255, 0.16);
-        color: #f3f7ff;
+        background: linear-gradient(180deg, rgba(255, 255, 255, 0.95), rgba(247, 252, 248, 0.9));
+        border-bottom: 1px solid rgba(31, 143, 76, 0.12);
+        color: var(--text);
+        box-shadow: 0 8px 24px rgba(22, 108, 57, 0.06);
       }
 
       .title {
         font-size: 0.96rem;
         font-weight: 700;
         letter-spacing: 0.02em;
+        color: var(--text);
       }
 
       .back-link {
@@ -48,10 +65,10 @@
         min-height: 36px;
         padding: 0 14px;
         border-radius: 10px;
-        border: 1px solid rgba(173, 198, 255, 0.24);
-        color: #f3f7ff;
+        border: 1px solid rgba(31, 143, 76, 0.18);
+        color: var(--text);
         text-decoration: none;
-        background: rgba(255, 255, 255, 0.06);
+        background: rgba(31, 143, 76, 0.08);
         font-size: 0.86rem;
         font-weight: 600;
       }
@@ -63,9 +80,9 @@
         min-height: 36px;
         padding: 0 12px;
         border-radius: 10px;
-        border: 1px solid rgba(255, 198, 110, 0.38);
-        background: rgba(245, 124, 0, 0.18);
-        color: #ffe8cf;
+        border: 1px solid rgba(31, 143, 76, 0.22);
+        background: rgba(31, 143, 76, 0.12);
+        color: var(--accent-dark);
         font-size: 0.82rem;
         font-weight: 700;
         white-space: nowrap;
@@ -80,7 +97,7 @@
         width: 100%;
         height: 100%;
         border: 0;
-        background: #000;
+        background: rgba(255, 255, 255, 0.82);
         display: block;
       }
 
@@ -91,7 +108,7 @@
         display: none;
         align-items: center;
         justify-content: center;
-        background: rgba(0, 0, 0, 0.56);
+        background: rgba(16, 49, 31, 0.26);
         backdrop-filter: blur(6px);
         padding: 16px;
       }
@@ -103,10 +120,10 @@
       .panel {
         width: min(420px, 100%);
         border-radius: 24px;
-        border: 1px solid rgba(255, 255, 255, 0.16);
-        background: linear-gradient(180deg, rgba(58, 68, 98, 0.96), rgba(35, 44, 68, 0.96));
-        color: #f8fbff;
-        box-shadow: 0 18px 40px rgba(8, 12, 24, 0.45);
+        border: 1px solid rgba(31, 143, 76, 0.16);
+        background: linear-gradient(180deg, rgba(255, 255, 255, 0.98), rgba(241, 251, 245, 0.96));
+        color: var(--text);
+        box-shadow: 0 18px 40px rgba(22, 108, 57, 0.14);
         padding: 18px;
       }
 
@@ -118,7 +135,7 @@
       .panel p {
         margin: 8px 0 0;
         font-size: 0.9rem;
-        color: rgba(239, 244, 255, 0.86);
+        color: var(--muted);
       }
 
       .stake-grid {
@@ -130,11 +147,12 @@
       .stake-btn {
         min-height: 56px;
         border-radius: 14px;
-        border: 1px solid rgba(255, 198, 110, 0.44);
-        background: linear-gradient(180deg, rgba(245, 124, 0, 0.96), rgba(200, 89, 0, 0.96));
+        border: 1px solid rgba(31, 143, 76, 0.24);
+        background: linear-gradient(180deg, #1f8f4c, #16733c);
         color: #fff;
         font-weight: 700;
         cursor: pointer;
+        box-shadow: 0 12px 24px rgba(31, 143, 76, 0.18);
       }
 
       .stake-btn:disabled {
@@ -143,16 +161,17 @@
       }
 
       .stake-btn-alt {
-        border: 1px solid rgba(141, 231, 255, 0.4);
-        background: linear-gradient(180deg, rgba(33, 145, 212, 0.92), rgba(12, 80, 138, 0.96));
+        border: 1px solid rgba(31, 143, 76, 0.18);
+        background: rgba(31, 143, 76, 0.08);
+        color: var(--text);
       }
 
       .friend-code {
         margin-top: 8px;
         padding: 10px 12px;
         border-radius: 12px;
-        background: rgba(8, 17, 34, 0.68);
-        border: 1px solid rgba(141, 231, 255, 0.28);
+        background: rgba(31, 143, 76, 0.08);
+        border: 1px solid rgba(31, 143, 76, 0.18);
         letter-spacing: 0.18em;
         font-weight: 700;
         text-align: center;
@@ -163,9 +182,9 @@
         min-height: 48px;
         margin-top: 8px;
         border-radius: 12px;
-        border: 1px solid rgba(173, 198, 255, 0.24);
-        background: rgba(8, 17, 34, 0.76);
-        color: #f3f7ff;
+        border: 1px solid rgba(31, 143, 76, 0.2);
+        background: rgba(255, 255, 255, 0.92);
+        color: var(--text);
         font: inherit;
         font-weight: 700;
         letter-spacing: 0.22em;
@@ -177,15 +196,15 @@
         min-height: 18px;
         margin-top: 10px;
         font-size: 0.8rem;
-        color: rgba(255, 216, 179, 0.95);
+        color: var(--muted);
       }
     </style>
   </head>
   <body>
     <main class="shell">
       <header class="topbar">
-        <a id="backLink" class="back-link" href="./index.html">Retour</a>
-        <div class="title">Pong · Jeu détaché</div>
+        <a id="backLink" class="back-link" href="./index.html">Retounen</a>
+        <div class="title">Pong · jwèt separe</div>
         <div id="doesBadge" class="does-badge">Does: --</div>
       </header>
       <section class="frame-wrap">
@@ -202,14 +221,12 @@
 
     <div id="stakeOverlay" class="overlay active" role="dialog" aria-modal="true">
       <div class="panel">
-        <h3>Choisis ta mise Pong</h3>
-        <p>Le gagnant prend 1.9x. La mise est engagée dès le lancement.</p>
+        <h3>Chwazi mise Pong ou</h3>
+        <p>Gayan an pran 1.9x. Mise a antre sou kont ou depi pati a kòmanse.</p>
         <div class="stake-grid">
-          <button type="button" class="stake-btn" data-stake="100">100 Does · Gain 190</button>
-          <button type="button" class="stake-btn" data-stake="500">500 Does · Gain 950</button>
-          <button type="button" class="stake-btn" data-stake="1000">1000 Does · Gain 1900</button>
-          <button type="button" class="stake-btn" data-stake="5000">5000 Does · Gain 9500</button>
-          <button type="button" id="friendInviteBtn" class="stake-btn stake-btn-alt">Inviter un ami</button>
+          <button type="button" class="stake-btn" data-stake="100">100 Does · Gwo genyen 190</button>
+          <button type="button" class="stake-btn" data-stake="500">500 Does · Gwo genyen 950</button>
+          <button type="button" id="friendInviteBtn" class="stake-btn stake-btn-alt">Envite yon zanmi</button>
         </div>
         <div id="stakeNote" class="panel-note"></div>
       </div>
@@ -217,38 +234,36 @@
 
     <div id="friendOverlay" class="overlay" role="dialog" aria-modal="true">
       <div class="panel">
-        <h3 id="friendTitle">Pong entre amis</h3>
-        <p id="friendCopy">Crée un code ou rejoins un code d'ami. Cette étape est séparée de la partie solo.</p>
+        <h3 id="friendTitle">Pong ak zanmi</h3>
+        <p id="friendCopy">Kreye yon kòd oswa antre ak kòd zanmi ou. Etap sa a separe ak pati solo a.</p>
 
         <div id="friendModeActions" class="stake-grid">
-          <button type="button" id="friendJoinOpenBtn" class="stake-btn stake-btn-alt">J'ai ete invite</button>
-          <button type="button" id="friendCreateOpenBtn" class="stake-btn">Creer une salle</button>
-          <button type="button" id="friendCloseBtn" class="stake-btn">Fermer</button>
+          <button type="button" id="friendJoinOpenBtn" class="stake-btn stake-btn-alt">Yo envite m</button>
+          <button type="button" id="friendCreateOpenBtn" class="stake-btn">Kreye yon chanm</button>
+          <button type="button" id="friendCloseBtn" class="stake-btn">Fèmen</button>
         </div>
 
         <div id="friendCreateBlock" class="stake-grid" style="display:none;">
-          <button type="button" class="stake-btn" data-friend-create-stake="100">Creer · 100 Does</button>
-          <button type="button" class="stake-btn" data-friend-create-stake="500">Creer · 500 Does</button>
-          <button type="button" class="stake-btn" data-friend-create-stake="1000">Creer · 1000 Does</button>
-          <button type="button" class="stake-btn" data-friend-create-stake="5000">Creer · 5000 Does</button>
-          <button type="button" id="friendCreateBackBtn" class="stake-btn stake-btn-alt">Retour</button>
+          <button type="button" class="stake-btn" data-friend-create-stake="100">Kreye · 100 Does</button>
+          <button type="button" class="stake-btn" data-friend-create-stake="500">Kreye · 500 Does</button>
+          <button type="button" id="friendCreateBackBtn" class="stake-btn stake-btn-alt">Retounen</button>
         </div>
 
         <div id="friendJoinBlock" class="stake-grid" style="display:none;">
           <input id="friendJoinCodeInput" class="friend-input" type="text" maxlength="12" placeholder="ABC123" />
-          <button type="button" id="friendJoinSubmitBtn" class="stake-btn stake-btn-alt">Rejoindre</button>
-          <button type="button" id="friendJoinBackBtn" class="stake-btn">Retour</button>
+          <button type="button" id="friendJoinSubmitBtn" class="stake-btn stake-btn-alt">Antre</button>
+          <button type="button" id="friendJoinBackBtn" class="stake-btn">Retounen</button>
         </div>
 
         <div id="friendCodeBlock" class="stake-grid" style="display:none;">
-          <p id="friendCodeIntro">Code à partager</p>
+          <p id="friendCodeIntro">Kòd pou pataje</p>
           <div id="friendCodeValue" class="friend-code">------</div>
-          <p id="friendRoomStatusLine">En attente de l'autre joueur...</p>
+          <p id="friendRoomStatusLine">M ap tann lòt jwè a...</p>
           <p id="friendRoomStatusMeta" class="panel-note"></p>
-          <button type="button" id="friendStartBtn" class="stake-btn" disabled>Commencer la partie</button>
-          <button type="button" id="friendCodeCopyBtn" class="stake-btn stake-btn-alt">Copier le code</button>
-          <button type="button" id="friendCodeRecreateBtn" class="stake-btn stake-btn-alt">Nouvelle salle</button>
-          <button type="button" id="friendCodeCloseBtn" class="stake-btn">Fermer</button>
+          <button type="button" id="friendStartBtn" class="stake-btn" disabled>Kòmanse pati a</button>
+          <button type="button" id="friendCodeCopyBtn" class="stake-btn stake-btn-alt">Kopye kòd la</button>
+          <button type="button" id="friendCodeRecreateBtn" class="stake-btn stake-btn-alt">Nouvo chanm</button>
+          <button type="button" id="friendCodeCloseBtn" class="stake-btn">Fèmen</button>
         </div>
 
         <div id="friendNote" class="panel-note"></div>
@@ -257,8 +272,8 @@
 
     <div id="searchOverlay" class="overlay" role="status" aria-live="polite">
       <div class="panel">
-        <h3>Recherche d'un joueur...</h3>
-        <p>Connexion en cours. Prépare-toi.</p>
+        <h3>M ap chèche yon jwè...</h3>
+        <p>Koneksyon an ap fèt. Pare ou.</p>
       </div>
     </div>
 
@@ -306,9 +321,14 @@
       const friendCloseBtn = document.getElementById("friendCloseBtn");
       const friendNote = document.getElementById("friendNote");
       const VALID_AI = new Set(["ultra"]);
+      const urlParams = new URLSearchParams(window.location.search);
       const PONG_LOCAL_STATS_KEY = "pong_stats_shadow_v1";
       const PONG_FORFEIT_QUEUE_KEY = "pong_forfeit_queue_v1";
       const PONG_ACTIVE_WAGER_KEY = "pong_active_wager_v1";
+      const pendingAutoStake = (() => {
+        const parsed = Number.parseInt(String(urlParams.get("stake") || "0"), 10);
+        return Number.isFinite(parsed) && parsed > 0 ? parsed : 0;
+      })();
 
       let currentUid = "";
       let resolvedProfile = "ultra";
@@ -317,6 +337,7 @@
       let replaySearchTimer = null;
       let friendRoomDraft = null;
       let friendRoomPollTimer = null;
+      let autoStakeAttempted = false;
       const recordedMatchIds = new Set();
 
       function safeNumber(value, fallback = 0) {
@@ -463,14 +484,14 @@
           url.searchParams.set("pongSessionId", String(wagerSessionId || ""));
         }
         frame.src = url.toString();
-        if (title) title.textContent = "Pong · Jeu détaché";
+        if (title) title.textContent = "Pong · jwèt separe";
       }
 
       function getFriendOpponentName(roomData = {}) {
         const seatIndex = safeNumber(friendRoomDraft?.seatIndex, 0) === 1 ? 1 : 0;
         const opponentSeat = seatIndex === 0 ? 1 : 0;
         const names = Array.isArray(roomData?.playerNames) ? roomData.playerNames : [];
-        const fallbackName = opponentSeat === 0 ? "Joueur X" : "Joueur O";
+        const fallbackName = opponentSeat === 0 ? "Jwè X" : "Jwè O";
         const name = String(names[opponentSeat] || "").trim();
         return name || fallbackName;
       }
@@ -485,7 +506,7 @@
         }
         frame.src = url.toString();
         currentGameMode = "friend";
-        if (title) title.textContent = "Pong · Salle entre amis";
+        if (title) title.textContent = "Pong · chanm zanmi";
       }
 
       async function resolveProfileForCurrentUser(user) {
@@ -601,13 +622,13 @@
         const requiredHumans = Math.max(2, safeNumber(room?.requiredHumans, 2));
         if (friendRoomStatusLine) {
           if (humanCount >= requiredHumans || status === "ready") {
-            friendRoomStatusLine.textContent = "Les deux joueurs sont connectes. La partie peut commencer.";
+            friendRoomStatusLine.textContent = "Tou de jwè yo konekte. Pati a ka kòmanse.";
           } else {
-            friendRoomStatusLine.textContent = "En attente de l'autre joueur...";
+            friendRoomStatusLine.textContent = "M ap tann lòt jwè a...";
           }
         }
         if (friendRoomStatusMeta) {
-          friendRoomStatusMeta.textContent = `Joueurs connectes: ${Math.min(humanCount, requiredHumans)}/${requiredHumans}`;
+          friendRoomStatusMeta.textContent = `Jwè konekte: ${Math.min(humanCount, requiredHumans)}/${requiredHumans}`;
         }
         if (friendStartBtn) {
           friendStartBtn.disabled = !(humanCount >= requiredHumans || status === "ready");
@@ -620,8 +641,8 @@
         if (friendCreateBlock) friendCreateBlock.style.display = "none";
         if (friendJoinBlock) friendJoinBlock.style.display = "none";
         if (friendCodeBlock) friendCodeBlock.style.display = "none";
-        if (friendTitle) friendTitle.textContent = "Pong entre amis";
-        if (friendCopy) friendCopy.textContent = "Choisis comment tu veux entrer dans la salle privee.";
+        if (friendTitle) friendTitle.textContent = "Pong ak zanmi";
+        if (friendCopy) friendCopy.textContent = "Chwazi kijan ou vle antre nan chanm prive a.";
         setFriendNote("");
       }
 
@@ -631,8 +652,8 @@
         if (friendCreateBlock) friendCreateBlock.style.display = "grid";
         if (friendJoinBlock) friendJoinBlock.style.display = "none";
         if (friendCodeBlock) friendCodeBlock.style.display = "none";
-        if (friendTitle) friendTitle.textContent = "Creer une salle Pong";
-        if (friendCopy) friendCopy.textContent = "Choisis la mise et genere un code pour ton ami.";
+        if (friendTitle) friendTitle.textContent = "Kreye yon chanm Pong";
+        if (friendCopy) friendCopy.textContent = "Chwazi mise a epi jenere yon kòd pou zanmi ou.";
         setFriendNote("");
       }
 
@@ -642,8 +663,8 @@
         if (friendCreateBlock) friendCreateBlock.style.display = "none";
         if (friendJoinBlock) friendJoinBlock.style.display = "grid";
         if (friendCodeBlock) friendCodeBlock.style.display = "none";
-        if (friendTitle) friendTitle.textContent = "Rejoindre une salle Pong";
-        if (friendCopy) friendCopy.textContent = "Entre le code envoyé par ton ami.";
+        if (friendTitle) friendTitle.textContent = "Antre nan yon chanm Pong";
+        if (friendCopy) friendCopy.textContent = "Antre kòd zanmi ou voye a.";
         if (friendJoinCodeInput) {
           friendJoinCodeInput.value = "";
           friendJoinCodeInput.focus();
@@ -656,9 +677,9 @@
         if (friendCreateBlock) friendCreateBlock.style.display = "none";
         if (friendJoinBlock) friendJoinBlock.style.display = "none";
         if (friendCodeBlock) friendCodeBlock.style.display = "grid";
-        if (friendTitle) friendTitle.textContent = "Salle Pong créée";
-        if (friendCopy) friendCopy.textContent = "Partage ce code avec ton ami pour qu'il te rejoigne.";
-        if (friendCodeIntro) friendCodeIntro.textContent = "Code de la salle";
+        if (friendTitle) friendTitle.textContent = "Chanm Pong la kreye";
+        if (friendCopy) friendCopy.textContent = "Pataje kòd sa a ak zanmi ou pou li ka vin jwenn ou.";
+        if (friendCodeIntro) friendCodeIntro.textContent = "Kòd chanm nan";
         if (friendCodeValue) friendCodeValue.textContent = String(code || "------");
         updateFriendWaitingUi(room || {});
         setFriendNote("");
@@ -682,7 +703,7 @@
           };
           showFriendCodeView(friendRoomDraft.inviteCode, friendRoomDraft);
         } catch (error) {
-          setFriendNote(error?.message || "Impossible de verifier la salle pour le moment.");
+          setFriendNote(error?.message || "M pa ka verifye chanm nan pou kounye a.");
         }
       }
 
@@ -717,7 +738,7 @@
           const requiredHumans = Math.max(2, safeNumber(result?.requiredHumans, 2));
           if (status !== "ready" && humanCount < requiredHumans) {
             updateFriendWaitingUi({ status, humanCount, requiredHumans });
-            setFriendNote("La partie demarre quand les deux joueurs sont presents.");
+            setFriendNote("Pati a kòmanse lè tou de jwè yo prezan.");
             return;
           }
           stakeOverlay.classList.remove("active");
@@ -728,18 +749,18 @@
             playerNames: Array.isArray(result?.playerNames) ? result.playerNames : friendRoomDraft?.playerNames,
           });
         } catch (error) {
-          setFriendNote(error?.message || "Impossible de demarrer la salle.");
+          setFriendNote(error?.message || "M pa ka kòmanse chanm nan.");
         }
       }
 
       async function createFriendRoom(stakeDoes) {
         const uid = String(currentUid || auth.currentUser?.uid || "").trim();
         if (!uid) {
-          setFriendNote("Connexion requise pour inviter un ami.");
+          setFriendNote("Ou dwe konekte pou envite yon zanmi.");
           return;
         }
         setFriendUiBusy(true);
-        setFriendNote("Creation de la salle...");
+        setFriendNote("M ap kreye chanm nan...");
         try {
           const result = await createFriendPongRoomSecure({ stakeDoes: safeNumber(stakeDoes) });
           friendRoomDraft = {
@@ -769,7 +790,7 @@
             showFriendCodeView(friendRoomDraft.inviteCode, friendRoomDraft);
             startFriendRoomPolling();
           } else {
-            setFriendNote("Impossible de creer la salle Pong privee pour le moment.");
+            setFriendNote("M pa ka kreye chanm Pong prive a pou kounye a.");
           }
         } finally {
           setFriendUiBusy(false);
@@ -779,18 +800,18 @@
       async function joinFriendRoomByCode() {
         const uid = String(currentUid || auth.currentUser?.uid || "").trim();
         if (!uid) {
-          setFriendNote("Connexion requise pour rejoindre une salle.");
+          setFriendNote("Ou dwe konekte pou antre nan yon chanm.");
           return;
         }
         const inviteCode = normalizeInviteCode(friendJoinCodeInput?.value || "");
         if (!inviteCode) {
-          setFriendNote("Entre un code valide.");
+          setFriendNote("Antre yon kòd ki valab.");
           friendJoinCodeInput?.focus();
           return;
         }
 
         setFriendUiBusy(true);
-        setFriendNote("Connexion a la salle...");
+        setFriendNote("M ap konekte ak chanm nan...");
         try {
           const result = await joinFriendPongRoomByCodeSecure({ inviteCode });
           friendRoomDraft = {
@@ -805,9 +826,9 @@
           };
           showFriendCodeView(friendRoomDraft.inviteCode, friendRoomDraft);
           startFriendRoomPolling();
-          setFriendNote("Salle rejointe. En attente de l'autre joueur.");
+          setFriendNote("Ou antre nan chanm nan. M ap tann lòt jwè a.");
         } catch (error) {
-          setFriendNote(error?.message || "Impossible de rejoindre cette salle Pong.");
+          setFriendNote(error?.message || "M pa ka antre nan chanm Pong sa a.");
         } finally {
           setFriendUiBusy(false);
         }
@@ -832,11 +853,11 @@
       async function startWagerAndLaunch(stakeDoes) {
         const uid = String(currentUid || auth.currentUser?.uid || "").trim();
         if (!uid) {
-          setStakeControlsEnabled(false, "Connecte-toi pour choisir une mise Pong.");
+          setStakeControlsEnabled(false, "Konekte pou w ka chwazi mise Pong la.");
           return;
         }
 
-        setStakeUiBusy(true, "Verification du solde...");
+        setStakeUiBusy(true, "M ap verifye balans lan...");
         const selectedStake = safeNumber(stakeDoes);
         try {
           const result = await startPongWagerSecure({ stakeDoes: selectedStake });
@@ -864,11 +885,11 @@
         } catch (error) {
           const message = String(error?.message || "");
           if (message.toLowerCase().includes("insuffisant")) {
-            setStakeUiBusy(false, "Solde Does insuffisant.");
+            setStakeUiBusy(false, "Pa gen ase Does nan kont lan.");
           } else if (message.toLowerCase().includes("deja en cours")) {
-            setStakeUiBusy(false, "Une session est deja active. Reviens au menu.");
+            setStakeUiBusy(false, "Gen yon sesyon ki deja ouvè. Retounen nan meni an.");
           } else {
-            setStakeUiBusy(false, "Impossible de demarrer la partie pour le moment.");
+            setStakeUiBusy(false, "M pa ka kòmanse pati a pou kounye a.");
           }
         }
       }
@@ -964,7 +985,7 @@
         window.location.href = targetHref;
       }
 
-      setStakeControlsEnabled(false, "Connexion en cours...");
+      setStakeControlsEnabled(false, "Koneksyon an ap fèt...");
 
       stakeButtons.forEach((btn) => {
         btn.addEventListener("click", () => {
@@ -1023,9 +1044,9 @@
         if (!code) return;
         try {
           await navigator.clipboard.writeText(code);
-          setFriendNote("Code copie.");
+          setFriendNote("Kòd la kopye.");
         } catch (_) {
-          setFriendNote("Copie impossible sur cet appareil.");
+          setFriendNote("M pa ka kopye sou aparèy sa a.");
         }
       });
 
@@ -1097,12 +1118,13 @@
         const uid = String(user?.uid || "").trim();
         currentUid = uid;
         if (!uid) {
+          autoStakeAttempted = false;
           renderDoesBalance(null);
-          setStakeControlsEnabled(false, "Connecte-toi pour choisir une mise Pong.");
+          setStakeControlsEnabled(false, "Konekte pou w ka chwazi mise Pong la.");
           return;
         }
 
-        setStakeControlsEnabled(false, "Chargement du profil Pong...");
+        setStakeControlsEnabled(false, "M ap chaje pwofil Pong la...");
 
         const stale = readStoredActiveWager();
         if (stale && String(stale.uid || "").trim() === uid && String(stale.sessionId || "").trim()) {
@@ -1119,6 +1141,12 @@
         void resolveProfileForCurrentUser(user).then(() => {
           setStakeControlsEnabled(true, "");
           void flushForfeitQueue(uid).then(() => refreshDoesBalance(uid));
+          if (pendingAutoStake > 0 && !autoStakeAttempted) {
+            autoStakeAttempted = true;
+            window.setTimeout(() => {
+              void startWagerAndLaunch(pendingAutoStake);
+            }, 50);
+          }
         });
       });
     </script>

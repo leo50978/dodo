@@ -72,6 +72,13 @@ service cloud.firestore {
         && request.auth.uid in dameRoomDoc(roomId).data.playerUids;
     }
 
+    function isPublicWaitingDameRoom(roomId) {
+      return signedIn()
+        && dameRoomDoc(roomId).data != null
+        && dameRoomDoc(roomId).data.status == "waiting"
+        && dameRoomDoc(roomId).data.isPrivate == false;
+    }
+
     function isSafeClientPresenceCreate(uid) {
       return isOwner(uid)
         && request.resource.data.keys().hasOnly([
@@ -157,6 +164,11 @@ service cloud.firestore {
       allow write: if isFinanceAdmin();
     }
 
+    match /clients/{uid}/transfers/{transferId} {
+      allow read: if isOwner(uid) || isFinanceAdmin();
+      allow write: if isFinanceAdmin();
+    }
+
     match /clients/{uid}/referrals/{referralId} {
       allow read: if isOwner(uid) || isFinanceAdmin();
       allow write: if isFinanceAdmin();
@@ -238,11 +250,12 @@ service cloud.firestore {
       allow read: if isFinanceAdmin()
         || (signedIn()
           && resource.data.playerUids is list
-          && request.auth.uid in resource.data.playerUids);
+          && request.auth.uid in resource.data.playerUids)
+        || isPublicWaitingDameRoom(roomId);
       allow write: if false;
 
       match /actions/{actionId} {
-        allow read: if isFinanceAdmin() || isDameRoomParticipant(roomId);
+        allow read: if isFinanceAdmin() || isDameRoomParticipant(roomId) || isPublicWaitingDameRoom(roomId);
         allow write: if false;
       }
 
@@ -253,7 +266,7 @@ service cloud.firestore {
     }
 
     match /dameGameStates/{roomId} {
-      allow read: if isFinanceAdmin() || isDameRoomParticipant(roomId);
+      allow read: if isFinanceAdmin() || isDameRoomParticipant(roomId) || isPublicWaitingDameRoom(roomId);
       allow write: if false;
     }
 

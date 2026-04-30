@@ -1,11 +1,11 @@
 <!doctype html>
-<html lang="fr">
+<html lang="ht">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
     <meta
       name="description"
-      content="Morpion 5 multijoueur par Dominoes Lakay. Plateau 15x15, alignement de 5, timer par tour et duel en temps reel."
+      content="Mopyon 5 pa Dominoes Lakay. Planch 15x15, aliman 5, tan pou chak won ak duel an dirèk."
     />
     <link rel="icon" type="image/png" href="/favicon-96x96.png" sizes="96x96" />
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
@@ -13,7 +13,7 @@
     <link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png" />
     <link rel="manifest" href="/site.webmanifest" />
     <meta name="theme-color" content="#09111e" />
-    <title>Morpion 5 | Dominoes Lakay</title>
+    <title>Mopyon | Dominoes Lakay</title>
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link
@@ -22,19 +22,19 @@
     />
     <style>
       :root {
-        --bg-0: #06101e;
-        --bg-1: #0c1628;
-        --bg-2: #15233a;
-        --panel: rgba(9, 17, 31, 0.84);
-        --panel-soft: rgba(255, 255, 255, 0.05);
-        --line: rgba(148, 163, 184, 0.16);
-        --text: #f3f8ff;
-        --muted: #93a5c7;
-        --accent-x: #ff8d42;
-        --accent-o: #58ddff;
-        --accent-win: #f6d36e;
-        --danger: #fb7185;
-        --shadow: 0 28px 54px rgba(2, 8, 23, 0.42);
+        --bg-0: #f4fbf6;
+        --bg-1: #e7f7ec;
+        --bg-2: #dff3e7;
+        --panel: rgba(255, 255, 255, 0.92);
+        --panel-soft: rgba(31, 143, 76, 0.06);
+        --line: rgba(31, 143, 76, 0.16);
+        --text: #10311f;
+        --muted: #5a7666;
+        --accent-x: #1f8f4c;
+        --accent-o: #0f5f34;
+        --accent-win: #c5f2d3;
+        --danger: #e35d72;
+        --shadow: 0 22px 46px rgba(22, 108, 57, 0.14);
       }
 
       * {
@@ -46,8 +46,8 @@
         margin: 0;
         min-height: 100%;
         background:
-          radial-gradient(circle at top left, rgba(88, 221, 255, 0.11), transparent 30%),
-          radial-gradient(circle at bottom right, rgba(255, 141, 66, 0.13), transparent 28%),
+          radial-gradient(circle at top left, rgba(31, 143, 76, 0.12), transparent 30%),
+          radial-gradient(circle at bottom right, rgba(31, 143, 76, 0.08), transparent 28%),
           linear-gradient(180deg, var(--bg-0) 0%, var(--bg-1) 48%, var(--bg-2) 100%);
         color: var(--text);
         font-family: "Manrope", system-ui, sans-serif;
@@ -99,7 +99,7 @@
         min-width: 0;
         border: 1px solid var(--line);
         border-radius: 18px;
-        background: rgba(9, 17, 31, 0.88);
+        background: rgba(255, 255, 255, 0.88);
         padding: 8px;
         display: grid;
         gap: 6px;
@@ -107,8 +107,8 @@
       }
 
       .player-card.is-active {
-        border-color: rgba(246, 211, 110, 0.4);
-        box-shadow: 0 0 0 1px rgba(246, 211, 110, 0.14) inset;
+        border-color: rgba(31, 143, 76, 0.28);
+        box-shadow: 0 0 0 1px rgba(31, 143, 76, 0.12) inset;
       }
 
       .player-card.is-danger {
@@ -226,9 +226,9 @@
         min-height: 44px;
         min-width: 88px;
         padding: 0 12px;
-        border: 1px solid rgba(255, 255, 255, 0.18);
+        border: 1px solid rgba(31, 143, 76, 0.18);
         border-radius: 16px;
-        background: rgba(255, 255, 255, 0.06);
+        background: rgba(31, 143, 76, 0.08);
         color: var(--text);
         font-weight: 800;
         font-size: 0.76rem;
@@ -239,16 +239,16 @@
 
       .quit-btn:hover {
         transform: translateY(-1px);
-        border-color: rgba(255, 255, 255, 0.28);
-        background: rgba(255, 255, 255, 0.08);
+        border-color: rgba(31, 143, 76, 0.28);
+        background: rgba(31, 143, 76, 0.12);
       }
 
       .wallet-pill {
         min-width: 88px;
         padding: 7px 10px;
         border-radius: 14px;
-        border: 1px solid rgba(255, 255, 255, 0.12);
-        background: rgba(255, 255, 255, 0.05);
+        border: 1px solid rgba(31, 143, 76, 0.14);
+        background: rgba(31, 143, 76, 0.06);
         display: grid;
         gap: 2px;
         text-align: center;
@@ -327,9 +327,9 @@
       }
 
       .cell.is-win {
-        border-color: rgba(246, 211, 110, 0.84);
-        background: rgba(246, 211, 110, 0.18);
-        box-shadow: 0 0 0 1px rgba(246, 211, 110, 0.22) inset, 0 0 26px rgba(246, 211, 110, 0.12);
+        border-color: rgba(31, 143, 76, 0.72);
+        background: rgba(31, 143, 76, 0.12);
+        box-shadow: 0 0 0 1px rgba(31, 143, 76, 0.2) inset, 0 0 26px rgba(31, 143, 76, 0.08);
       }
 
       .board-win-line {
@@ -338,8 +338,8 @@
         top: 0;
         height: 8px;
         border-radius: 999px;
-        background: linear-gradient(90deg, rgba(246, 211, 110, 0.85), rgba(255, 255, 255, 0.96), rgba(246, 211, 110, 0.85));
-        box-shadow: 0 0 20px rgba(246, 211, 110, 0.34);
+        background: linear-gradient(90deg, rgba(31, 143, 76, 0.85), rgba(255, 255, 255, 0.96), rgba(31, 143, 76, 0.85));
+        box-shadow: 0 0 20px rgba(31, 143, 76, 0.24);
         transform-origin: left center;
         pointer-events: none;
         z-index: 4;
@@ -358,15 +358,15 @@
         min-width: 96px;
         margin: 0 12px 12px auto;
         padding: 0 16px;
-        border: 1px solid rgba(246, 211, 110, 0.42);
+        border: 1px solid rgba(31, 143, 76, 0.24);
         border-radius: 14px;
-        background: rgba(9, 17, 31, 0.9);
+        background: rgba(255, 255, 255, 0.95);
         color: var(--text);
         font-size: 0.78rem;
         font-weight: 800;
         letter-spacing: 0.04em;
         cursor: pointer;
-        box-shadow: 0 18px 30px rgba(2, 8, 23, 0.34);
+        box-shadow: 0 18px 30px rgba(22, 108, 57, 0.12);
       }
 
       .reveal-result-btn.hidden {
@@ -375,9 +375,9 @@
 
       .cell.is-last-move {
         z-index: 2;
-        border-color: rgba(107, 226, 255, 0.92);
-        background: rgba(107, 226, 255, 0.14);
-        box-shadow: 0 0 0 1px rgba(107, 226, 255, 0.34) inset, 0 0 28px rgba(107, 226, 255, 0.16);
+        border-color: rgba(31, 143, 76, 0.92);
+        background: rgba(31, 143, 76, 0.14);
+        box-shadow: 0 0 0 1px rgba(31, 143, 76, 0.34) inset, 0 0 28px rgba(31, 143, 76, 0.16);
       }
 
       .cell.is-last-move::after {
@@ -385,7 +385,7 @@
         position: absolute;
         inset: 4px;
         border-radius: 8px;
-        border: 1px solid rgba(107, 226, 255, 0.62);
+        border: 1px solid rgba(31, 143, 76, 0.62);
         pointer-events: none;
       }
 
@@ -414,7 +414,7 @@
         height: 76%;
         border-radius: 999px;
         background: var(--accent-x);
-        box-shadow: 0 0 18px rgba(255, 141, 66, 0.24);
+        box-shadow: 0 0 18px rgba(31, 143, 76, 0.18);
       }
 
       .cell__symbol--x::before {
@@ -431,7 +431,7 @@
         inset: 14%;
         border-radius: 50%;
         border: max(4px, 0.18vw) solid var(--accent-o);
-        box-shadow: 0 0 18px rgba(88, 221, 255, 0.24);
+        box-shadow: 0 0 18px rgba(15, 95, 52, 0.18);
       }
 
       .modal {
@@ -459,16 +459,16 @@
       .modal__backdrop {
         position: absolute;
         inset: 0;
-        background: rgba(6, 10, 20, 0.72);
+        background: rgba(16, 49, 31, 0.26);
         backdrop-filter: blur(8px);
       }
 
       .modal__card {
         position: relative;
         width: min(100%, 420px);
-        border: 1px solid rgba(148, 163, 184, 0.18);
+        border: 1px solid rgba(31, 143, 76, 0.16);
         border-radius: 28px;
-        background: rgba(10, 16, 30, 0.94);
+        background: rgba(255, 255, 255, 0.96);
         padding: 22px 18px max(18px, calc(env(safe-area-inset-bottom) + 12px));
         box-shadow: var(--shadow);
         display: grid;
@@ -513,7 +513,7 @@
 
       .modal__timer-value {
         font-size: clamp(1.6rem, 7vw, 2.1rem);
-        color: #ffe0c8;
+        color: #1f8f4c;
       }
 
       .modal__timer-label {
@@ -547,14 +547,14 @@
       }
 
       .btn--ghost {
-        border-color: rgba(255, 255, 255, 0.18);
-        background: rgba(255, 255, 255, 0.05);
+        border-color: rgba(31, 143, 76, 0.18);
+        background: rgba(31, 143, 76, 0.08);
       }
 
       .btn--soft {
-        border-color: rgba(255, 183, 77, 0.26);
-        background: rgba(255, 183, 77, 0.08);
-        color: #ffe0c8;
+        border-color: rgba(31, 143, 76, 0.18);
+        background: rgba(31, 143, 76, 0.08);
+        color: #0f5f34;
       }
 
       .modal__body {
@@ -939,14 +939,14 @@
           <article class="player-card" data-player-side="opponent">
             <div class="player-card__top">
               <div class="player-card__identity">
-                <div class="player-card__label" id="morpionOpponentLabel">Joueur ID-......</div>
-                <div class="player-card__name" id="morpionOpponentName">En attente...</div>
+                <div class="player-card__label" id="morpionOpponentLabel">Advèsè</div>
+                <div class="player-card__name" id="morpionOpponentName">M ap tann...</div>
               </div>
               <span class="player-card__badge" id="morpionOpponentSymbol" data-symbol="X">X</span>
             </div>
             <div class="timer">
               <div class="timer__label">
-                <span>Temps</span>
+                <span>Tan</span>
                 <strong class="timer__value" id="morpionOpponentTimerLabel">30s</strong>
               </div>
               <div class="timer__track">
@@ -957,7 +957,7 @@
 
           <div class="quit-wrap">
             <div class="center-stack">
-              <button id="morpionQuitBtn" class="quit-btn" type="button">Quitter la salle</button>
+              <button id="morpionQuitBtn" class="quit-btn" type="button">Soti nan chanm nan</button>
               <div class="wallet-pill" aria-live="polite">
                 <div class="wallet-pill__label">Mes Does</div>
                 <div class="wallet-pill__value" id="morpionWalletValue">--</div>
@@ -968,14 +968,14 @@
           <article class="player-card" data-player-side="self">
             <div class="player-card__top">
               <div class="player-card__identity">
-                <div class="player-card__label">Moi</div>
-                <div class="player-card__name" id="morpionSelfName">Moi</div>
+                <div class="player-card__label">Ou</div>
+                <div class="player-card__name" id="morpionSelfName">Ou</div>
               </div>
               <span class="player-card__badge" id="morpionSelfSymbol" data-symbol="O">O</span>
             </div>
             <div class="timer">
               <div class="timer__label">
-                <span>Temps</span>
+                <span>Tan</span>
                 <strong class="timer__value" id="morpionSelfTimerLabel">30s</strong>
               </div>
               <div class="timer__track">
@@ -995,22 +995,22 @@
     <div id="morpionWaitingModal" class="modal" role="dialog" aria-modal="true" aria-labelledby="morpionWaitingTitle">
       <div class="modal__backdrop"></div>
       <div class="modal__card">
-        <div class="modal__eyebrow">Morpion 5</div>
-        <h2 class="modal__title" id="morpionWaitingTitle">Recherche d'un adversaire...</h2>
-        <p class="modal__copy" id="morpionWaitingCopy">La salle se prépare.</p>
+        <div class="modal__eyebrow">Mopyon</div>
+        <h2 class="modal__title" id="morpionWaitingTitle">M ap chèche yon advèsè...</h2>
+        <p class="modal__copy" id="morpionWaitingCopy">Chanm nan ap prepare.</p>
         <div class="modal__timer" id="morpionWaitingTimerWrap">
           <strong class="modal__timer-value" id="morpionWaitingTimerValue">15s</strong>
-          <span class="modal__timer-label">restantes</span>
+          <span class="modal__timer-label">ki rete</span>
         </div>
         <div class="modal__actions hidden" id="morpionWaitingActions">
-          <button class="btn btn--ghost" id="morpionWaitingHomeBtn" type="button">Accueil</button>
-          <button class="btn btn--primary" id="morpionWaitingRetryBtn" type="button">Attendre 15s</button>
-          <button class="btn btn--primary" id="morpionWaitingExtendBtn" type="button">Rester en attente</button>
-          <button class="btn btn--ghost hidden" id="morpionWaitingStopExtendBtn" type="button">Quitter l'attente prolongee</button>
-          <button class="btn btn--ghost" id="morpionWaitingNotifyBtn" type="button">Activer les notifications</button>
-          <button class="btn btn--soft" id="morpionWaitingGroupBtn" type="button">Rejoindre le groupe WhatsApp</button>
-          <button class="btn btn--soft" id="morpionWaitingWhatsappBtn" type="button">Laisser mon WhatsApp</button>
-          <button class="btn btn--soft" id="morpionWaitingContactsBtn" type="button">Voir les joueurs actifs</button>
+          <button class="btn btn--ghost" id="morpionWaitingHomeBtn" type="button">Kay</button>
+          <button class="btn btn--primary" id="morpionWaitingRetryBtn" type="button">Tann 15s</button>
+          <button class="btn btn--primary" id="morpionWaitingExtendBtn" type="button">Rete tann</button>
+          <button class="btn btn--ghost hidden" id="morpionWaitingStopExtendBtn" type="button">Soti nan tann pwolonje a</button>
+          <button class="btn btn--ghost" id="morpionWaitingNotifyBtn" type="button">Aktive notifikasyon yo</button>
+          <button class="btn btn--soft" id="morpionWaitingGroupBtn" type="button">Antre nan gwoup WhatsApp la</button>
+          <button class="btn btn--soft" id="morpionWaitingWhatsappBtn" type="button">Kite WhatsApp mwen</button>
+          <button class="btn btn--soft" id="morpionWaitingContactsBtn" type="button">Gade jwè aktif yo</button>
         </div>
       </div>
     </div>
@@ -1018,25 +1018,25 @@
     <div id="morpionWhatsappModal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="morpionWhatsappTitle">
       <div class="modal__backdrop" data-whatsapp-close></div>
       <div class="modal__card">
-        <div class="modal__eyebrow">Contact WhatsApp</div>
-        <h2 class="modal__title" id="morpionWhatsappTitle">Laisser ton numero</h2>
+        <div class="modal__eyebrow">Kontak WhatsApp</div>
+        <h2 class="modal__title" id="morpionWhatsappTitle">Kite nimewo ou</h2>
         <div class="modal__body">
-          <p class="modal__copy">Si tu acceptes, les joueurs du morpion pourront te contacter directement sur WhatsApp pour t'inviter a jouer.</p>
+          <p class="modal__copy">Si ou dakò, jwè Mopyon yo ka kontakte ou dirèkteman sou WhatsApp pou envite ou jwe.</p>
           <div class="field-stack__saved hidden" id="morpionWhatsappSavedWrap">
-            <div class="field-stack__saved-label">Numero enregistre</div>
+            <div class="field-stack__saved-label">Nimewo ki anrejistre</div>
             <div class="field-stack__saved-value" id="morpionWhatsappSavedValue">+509 ...</div>
           </div>
           <label class="field-stack" for="morpionWhatsappInput">
-            <span class="field-stack__label">Numero WhatsApp</span>
+            <span class="field-stack__label">Nimewo WhatsApp</span>
             <input id="morpionWhatsappInput" class="field-stack__input" type="tel" inputmode="tel" autocomplete="tel" placeholder="+509 4175 2992" />
-            <span class="field-stack__hint">Exemple: +509 4175 2992. Tu pourras retirer ton numero plus tard.</span>
+            <span class="field-stack__hint">Egzanp: +509 4175 2992. Ou ka retire nimewo a pi ta.</span>
           </label>
           <div class="field-stack__status" id="morpionWhatsappStatus" aria-live="polite"></div>
         </div>
         <div class="modal__actions modal__actions--stack">
-          <button class="btn btn--primary" id="morpionWhatsappSaveBtn" type="button">Enregistrer mon numero</button>
-          <button class="btn btn--ghost hidden" id="morpionWhatsappRemoveBtn" type="button">Retirer mon numero</button>
-          <button class="btn btn--ghost" id="morpionWhatsappCloseBtn" type="button">Fermer</button>
+          <button class="btn btn--primary" id="morpionWhatsappSaveBtn" type="button">Anrejistre nimewo mwen</button>
+          <button class="btn btn--ghost hidden" id="morpionWhatsappRemoveBtn" type="button">Retire nimewo mwen</button>
+          <button class="btn btn--ghost" id="morpionWhatsappCloseBtn" type="button">Fèmen</button>
         </div>
       </div>
     </div>
@@ -1044,14 +1044,14 @@
     <div id="morpionContactsModal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="morpionContactsTitle">
       <div class="modal__backdrop" data-contacts-close></div>
       <div class="modal__card">
-        <div class="modal__eyebrow">Joueurs recents</div>
-        <h2 class="modal__title" id="morpionContactsTitle">Numeros disponibles</h2>
-        <p class="modal__copy">Copie un numero ou ouvre WhatsApp pour contacter un joueur ayant partage volontairement son contact.</p>
+        <div class="modal__eyebrow">Jwè resan yo</div>
+        <h2 class="modal__title" id="morpionContactsTitle">Nimewo ki disponib</h2>
+        <p class="modal__copy">Kopye yon nimewo oswa ouvri WhatsApp pou kontakte yon jwè ki pataje kontak li volontèman.</p>
         <div class="contact-list" id="morpionContactsList">
-          <div class="contact-empty">Chargement de la liste...</div>
+          <div class="contact-empty">M ap chaje lis la...</div>
         </div>
         <div class="modal__actions modal__actions--stack">
-          <button class="btn btn--ghost" id="morpionContactsCloseBtn" type="button">Fermer</button>
+          <button class="btn btn--ghost" id="morpionContactsCloseBtn" type="button">Fèmen</button>
         </div>
       </div>
     </div>
@@ -1060,11 +1060,11 @@
       <div class="modal__backdrop"></div>
       <div class="modal__card">
         <div class="modal__eyebrow">Invitation</div>
-        <h2 class="modal__title" id="morpionInviteTitle">Des joueurs sont disponibles</h2>
-        <p class="modal__copy" id="morpionInviteCopy">Veux-tu rejoindre une partie maintenant ?</p>
+        <h2 class="modal__title" id="morpionInviteTitle">Gen jwè ki disponib</h2>
+        <p class="modal__copy" id="morpionInviteCopy">Ou vle antre nan yon pati kounye a ?</p>
         <div class="modal__actions">
-          <button class="btn btn--primary" id="morpionInviteAcceptBtn" type="button">Jouer</button>
-          <button class="btn btn--ghost" id="morpionInviteRefuseBtn" type="button">Plus tard</button>
+          <button class="btn btn--primary" id="morpionInviteAcceptBtn" type="button">Jwe</button>
+          <button class="btn btn--ghost" id="morpionInviteRefuseBtn" type="button">Plis ta</button>
         </div>
       </div>
     </div>
@@ -1072,11 +1072,11 @@
     <div id="morpionRuleModal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="morpionRuleTitle">
       <div class="modal__backdrop"></div>
       <div class="modal__card">
-        <div class="modal__eyebrow">Regle du match</div>
-        <h2 class="modal__title" id="morpionRuleTitle">30 secondes par coup</h2>
-        <p class="modal__copy">Tu as 30 secondes pour jouer un symbole a chaque tour. Si ton chrono atteint 0, tu perds automatiquement la partie.</p>
+        <div class="modal__eyebrow">Règ match la</div>
+        <h2 class="modal__title" id="morpionRuleTitle">30 segonn pa chak kou</h2>
+        <p class="modal__copy">Ou gen 30 segonn pou jwe yon senbòl chak won. Si tan an rive 0, ou pèdi pati a otomatikman.</p>
         <div class="modal__actions">
-          <button class="btn btn--primary" id="morpionRuleContinueBtn" type="button">J'ai compris</button>
+          <button class="btn btn--primary" id="morpionRuleContinueBtn" type="button">M konprann</button>
         </div>
       </div>
     </div>
@@ -1084,12 +1084,12 @@
     <div id="morpionResultModal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="morpionResultTitle">
       <div class="modal__backdrop"></div>
       <div class="modal__card">
-        <div class="modal__eyebrow" id="morpionResultEyebrow">Fin de partie</div>
-        <h2 class="modal__title" id="morpionResultTitle">Victoire</h2>
+        <div class="modal__eyebrow" id="morpionResultEyebrow">Fen pati</div>
+        <h2 class="modal__title" id="morpionResultTitle">Viktwa</h2>
         <p class="modal__copy" id="morpionResultCopy"></p>
         <div class="modal__actions">
-          <button class="btn btn--primary" id="morpionResultReplayBtn" type="button">Rejouer</button>
-          <button class="btn btn--ghost" id="morpionResultHomeBtn" type="button">Accueil</button>
+          <button class="btn btn--primary" id="morpionResultReplayBtn" type="button">Rejwe</button>
+          <button class="btn btn--ghost" id="morpionResultHomeBtn" type="button">Kay</button>
         </div>
       </div>
     </div>
@@ -1097,12 +1097,12 @@
     <div id="morpionQuitModal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="morpionQuitTitle">
       <div class="modal__backdrop" data-quit-close></div>
       <div class="modal__card">
-        <div class="modal__eyebrow">Morpion 5</div>
-        <h2 class="modal__title" id="morpionQuitTitle">Quitter la salle ?</h2>
-        <p class="modal__copy">Es-tu sur de vouloir quitter la salle maintenant ?</p>
+        <div class="modal__eyebrow">Mopyon</div>
+        <h2 class="modal__title" id="morpionQuitTitle">Vle kite chanm nan ?</h2>
+        <p class="modal__copy">Ou sèten ou vle soti nan chanm nan kounye a ?</p>
         <div class="modal__actions">
-          <button class="btn btn--ghost" id="morpionQuitReplayBtn" type="button">Rester</button>
-          <button class="btn btn--primary" id="morpionQuitHomeBtn" type="button">Quitter</button>
+          <button class="btn btn--ghost" id="morpionQuitReplayBtn" type="button">Rete</button>
+          <button class="btn btn--primary" id="morpionQuitHomeBtn" type="button">Soti</button>
         </div>
       </div>
     </div>

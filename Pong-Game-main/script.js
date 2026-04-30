@@ -100,7 +100,7 @@ const ball = {
 const AI_PROFILES = Object.freeze({
   soft: Object.freeze({
     key: "soft",
-    label: "Mode detendu",
+    label: "Mòd dous",
     maxSpeed: 5.1,
     reactionFrames: 1,
     deadZone: 12,
@@ -112,7 +112,7 @@ const AI_PROFILES = Object.freeze({
   }),
   normal: Object.freeze({
     key: "normal",
-    label: "Mode normal",
+    label: "Mòd nòmal",
     maxSpeed: 5.4,
     reactionFrames: 1,
     deadZone: 10,
@@ -124,7 +124,7 @@ const AI_PROFILES = Object.freeze({
   }),
   ultra: Object.freeze({
     key: "ultra",
-    label: "Mode ultra",
+    label: "Mòd rapid",
     maxSpeed: 9.5,
     reactionFrames: 0,
     deadZone: 3,
@@ -169,7 +169,7 @@ const aiProfile = parseAiProfile();
 const friendMode = parseFriendMode();
 const matchId = `pong_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 9)}`;
 function buildOpponentHandle() {
-  const baseName = (OPPONENT_NAMES[Math.floor(Math.random() * OPPONENT_NAMES.length)] || "Adversaire").toLowerCase();
+  const baseName = (OPPONENT_NAMES[Math.floor(Math.random() * OPPONENT_NAMES.length)] || "Advèsè").toLowerCase();
   const suffix = Math.floor(Math.random() * 90) + 10; // 10..99
   return `${baseName}${suffix}`;
 }
@@ -246,7 +246,7 @@ function startRoundCountdown() {
 
 function startRoundNow() {
   roundRunning = true;
-  updateMatchStatus(friendMode ? "Salle entre amis · Partie en cours" : "Partie en cours");
+  updateMatchStatus(friendMode ? "Chanm zanmi · pati a ap mache" : "Pati a ap mache");
 }
 
 function moveAiPaddle() {
@@ -305,8 +305,8 @@ function endMatch() {
   const winner = leftScore > rightScore ? "user" : "ai";
   updateMatchStatus(
     winner === "user"
-      ? `Victoire ${leftScore}-${rightScore} !`
-      : `Defaite ${leftScore}-${rightScore}.`
+      ? `Viktwa ${leftScore}-${rightScore} !`
+      : `Defèt ${leftScore}-${rightScore}.`
   );
   if (replayBtn) replayBtn.classList.remove("hidden");
 }
@@ -343,7 +343,7 @@ function scorePoint(side) {
     endMatch();
     return;
   }
-  updateMatchStatus(`Manche terminee (${leftScore}-${rightScore}). Nouvelle manche...`);
+  updateMatchStatus(`Wonn fini (${leftScore}-${rightScore}). Nouvo won...`);
   startRoundCountdown();
 }
 
@@ -351,44 +351,44 @@ function draw() {
   ctx.clearRect(0, 0, WIDTH, HEIGHT);
 
   const gradient = ctx.createLinearGradient(0, 0, WIDTH, HEIGHT);
-  gradient.addColorStop(0, "#0a1933");
-  gradient.addColorStop(1, "#121f3d");
+  gradient.addColorStop(0, "#f3fbf5");
+  gradient.addColorStop(1, "#e5f6ea");
   ctx.fillStyle = gradient;
   ctx.fillRect(0, 0, WIDTH, HEIGHT);
 
-  ctx.fillStyle = "rgba(148, 163, 184, 0.45)";
+  ctx.fillStyle = "rgba(31, 143, 76, 0.24)";
   for (let i = 0; i < HEIGHT; i += 30) {
     ctx.fillRect(WIDTH / 2 - 2, i, 4, 20);
   }
 
-  ctx.fillStyle = "#f57c00";
+  ctx.fillStyle = "#1f8f4c";
   ctx.fillRect(leftPaddle.x, leftPaddle.y, leftPaddle.width, leftPaddle.height);
 
-  ctx.fillStyle = "#2e8dff";
+  ctx.fillStyle = "#0f5f34";
   ctx.fillRect(rightPaddle.x, rightPaddle.y, rightPaddle.width, rightPaddle.height);
 
   ctx.beginPath();
   ctx.arc(ball.x + ball.size / 2, ball.y + ball.size / 2, ball.size / 2, 0, Math.PI * 2, false);
-  ctx.fillStyle = "#f8fafc";
+  ctx.fillStyle = "#ffffff";
   ctx.fill();
 
   if (!roundRunning && !matchOver) {
     const seconds = Math.max(1, Math.ceil(roundCountdownMs / 1000));
-    ctx.fillStyle = "rgba(4, 8, 18, 0.55)";
+    ctx.fillStyle = "rgba(16, 49, 31, 0.38)";
     ctx.fillRect(0, 0, WIDTH, HEIGHT);
-    ctx.fillStyle = "#f8fafc";
+    ctx.fillStyle = "#ffffff";
     ctx.font = "700 34px Poppins, sans-serif";
     ctx.textAlign = "center";
     ctx.fillText(String(seconds), WIDTH / 2, HEIGHT / 2);
   }
 
   if (matchOver) {
-    ctx.fillStyle = "rgba(4, 8, 18, 0.6)";
+    ctx.fillStyle = "rgba(16, 49, 31, 0.42)";
     ctx.fillRect(0, 0, WIDTH, HEIGHT);
-    ctx.fillStyle = "#f8fafc";
+    ctx.fillStyle = "#ffffff";
     ctx.font = "700 30px Poppins, sans-serif";
     ctx.textAlign = "center";
-    ctx.fillText(leftScore > rightScore ? "VICTOIRE" : "DEFAITE", WIDTH / 2, HEIGHT / 2 - 16);
+    ctx.fillText(leftScore > rightScore ? "VIKTWA" : "DEFÈT", WIDTH / 2, HEIGHT / 2 - 16);
     ctx.font = "600 20px Poppins, sans-serif";
     ctx.fillText(`${leftScore} - ${rightScore}`, WIDTH / 2, HEIGHT / 2 + 20);
   }
@@ -405,9 +405,9 @@ function update(deltaMs) {
 
   if (!roundRunning) {
     roundCountdownMs -= deltaMs;
-      updateMatchStatus(
-      `Debut dans ${Math.max(1, Math.ceil(roundCountdownMs / 1000))}s`
-      );
+    updateMatchStatus(
+      `Kòmanse nan ${Math.max(1, Math.ceil(roundCountdownMs / 1000))}s`
+    );
     if (roundCountdownMs <= 0) {
       startRoundNow();
     }
@@ -494,7 +494,7 @@ window.addEventListener("message", (event) => {
   const incoming = String(data.payload?.aiProfile || "").toLowerCase();
   const nextProfile = AI_PROFILES[incoming];
   if (!nextProfile || roundRunning || matchOver || leftScore !== 0 || rightScore !== 0) return;
-  updateMatchStatus("Debut dans 3s");
+  updateMatchStatus("Kòmanse nan 3s");
 });
 
 function gameLoop(ts) {
@@ -509,5 +509,5 @@ renderScore();
 resetBall();
 startRoundCountdown();
 renderOpponentLabel();
-updateMatchStatus("Debut dans 3s");
+updateMatchStatus("Kòmanse nan 3s");
 window.requestAnimationFrame(gameLoop);

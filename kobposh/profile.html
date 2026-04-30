@@ -1,0 +1,157 @@
+<!doctype html>
+<html lang="fr">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <meta name="theme-color" content="#f5f5f5" />
+    <meta
+      name="description"
+      content="Profil utilisateur Kobposh, avec menu, informations personnelles et monnaie du compte."
+    />
+    <title>Profil | Kobposh</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap"
+      rel="stylesheet"
+    />
+    <script src="https://unpkg.com/lucide@latest"></script>
+    <link rel="stylesheet" href="./profile.css" />
+  </head>
+  <body>
+    <header class="profile-header">
+      <a class="profile-header__back" href="./index.html" aria-label="Retounen lakay" data-profile-back>
+        <i data-lucide="arrow-left" class="icon"></i>
+      </a>
+      <a class="profile-header__brand" href="./index.html" aria-label="Kobposh akèy">
+        <img src="./logokobpash.png" alt="Kobposh" class="profile-header__logo" />
+      </a>
+      <div class="profile-header__balance" data-profile-header-balance>-- HTG</div>
+    </header>
+
+    <main class="profile-page">
+      <div class="profile-page__inner">
+        <aside class="profile-sidebar" aria-label="Menu utilisateur">
+          <div class="profile-sidebar__user">
+            <div class="profile-avatar" aria-hidden="true" data-profile-avatar>
+              <span data-profile-avatar-text>JD</span>
+            </div>
+            <div class="profile-sidebar__name" data-profile-sidebar-name>Username</div>
+            <div class="profile-sidebar__status" data-profile-sidebar-status>MEMBRE PLATINE</div>
+          </div>
+
+          <nav class="profile-menu" aria-label="Navigation du profil">
+            <a class="profile-menu__item is-active" href="#" aria-current="page" data-profile-nav="info">
+              <i data-lucide="user-round" class="icon"></i>
+              <span>INFORMATIONS</span>
+            </a>
+            <a class="profile-menu__item" href="#" data-profile-nav="history">
+              <i data-lucide="history" class="icon"></i>
+              <span>HISTORIQUE</span>
+            </a>
+            <a class="profile-menu__item" href="#" data-profile-nav="withdraw-agent">
+              <i data-lucide="arrow-down-to-line" class="icon"></i>
+              <span>RETRAIT AGENT</span>
+            </a>
+            <a class="profile-menu__item" href="#" data-profile-nav="deposit-agent">
+              <i data-lucide="wallet" class="icon"></i>
+              <span>DÉPÔT AGENT</span>
+            </a>
+            <a class="profile-menu__item" href="#" data-profile-nav="logout">
+              <i data-lucide="log-out" class="icon"></i>
+              <span>DÉCONNEXION</span>
+            </a>
+          </nav>
+        </aside>
+
+        <section class="profile-content profile-panel is-active" data-profile-panel="info" aria-label="Informations personnelles">
+          <h1 class="profile-content__title">INFORMATIONS PERSONNELLES</h1>
+
+          <form class="profile-form">
+            <div class="profile-field">
+              <label for="fullName">NOM COMPLET</label>
+              <input id="fullName" type="text" value="" placeholder="Jean Dupont" readonly />
+            </div>
+
+            <div class="profile-field">
+              <label for="identifier">IDENTIFIANT</label>
+              <input id="identifier" type="text" value="" placeholder="identifiant du compte" readonly />
+            </div>
+
+            <div class="profile-field">
+              <label for="phone">TÉLÉPHONE</label>
+              <input id="phone" type="tel" value="" placeholder="+33 X XX XX XX XX" readonly />
+            </div>
+          </form>
+
+          <section class="profile-wallet" aria-label="Monnaie du compte">
+            <div class="profile-wallet__head">
+              <h2>MONNAIE DU COMPTE</h2>
+              <div class="profile-wallet__amount" data-profile-wallet-amount>-- HTG</div>
+            </div>
+          </section>
+        </section>
+
+        <section class="profile-content profile-panel" data-profile-panel="history" aria-label="Historique du compte">
+          <h1 class="profile-content__title">HISTORIQUE DU COMPTE</h1>
+
+          <section class="profile-history-block" data-profile-history-section="pending">
+            <button class="profile-history-block__head profile-history-block__toggle" type="button" data-profile-history-toggle="pending" aria-expanded="false">
+              <h2>OPÉRATIONS EN COURS</h2>
+              <span class="profile-history-block__count" data-profile-history-pending-count>0</span>
+            </button>
+            <div class="profile-history-block__panel" data-profile-history-panel="pending" hidden>
+              <div class="profile-history-list" data-profile-history-pending-list>
+                <p class="profile-history-empty">Clique sur ce bloc pour charger les opérations en cours.</p>
+              </div>
+              <button class="profile-history-load-more" type="button" data-profile-history-more="pending" hidden>CHARGER PLUS</button>
+            </div>
+          </section>
+
+          <section class="profile-history-block" data-profile-history-section="deposit">
+            <button class="profile-history-block__head profile-history-block__toggle" type="button" data-profile-history-toggle="deposit" aria-expanded="false">
+              <h2>DÉPÔTS AGENTS</h2>
+              <span class="profile-history-block__count" data-profile-history-deposit-count>0</span>
+            </button>
+            <div class="profile-history-block__panel" data-profile-history-panel="deposit" hidden>
+              <div class="profile-history-list" data-profile-history-deposit-list>
+                <p class="profile-history-empty">Clique sur ce bloc pour charger les dépôts agents.</p>
+              </div>
+              <button class="profile-history-load-more" type="button" data-profile-history-more="deposit" hidden>CHARGER PLUS</button>
+            </div>
+          </section>
+
+          <section class="profile-history-block" data-profile-history-section="withdrawal">
+            <button class="profile-history-block__head profile-history-block__toggle" type="button" data-profile-history-toggle="withdrawal" aria-expanded="false">
+              <h2>RETRAITS</h2>
+              <span class="profile-history-block__count" data-profile-history-withdrawal-count>0</span>
+            </button>
+            <div class="profile-history-block__panel" data-profile-history-panel="withdrawal" hidden>
+              <div class="profile-history-list" data-profile-history-withdrawal-list>
+                <p class="profile-history-empty">Clique sur ce bloc pour charger les retraits.</p>
+              </div>
+              <button class="profile-history-load-more" type="button" data-profile-history-more="withdrawal" hidden>CHARGER PLUS</button>
+            </div>
+          </section>
+        </section>
+
+        <section class="profile-content profile-panel" data-profile-panel="agents" aria-label="Contacts agents">
+          <h1 class="profile-content__title" data-profile-agents-title>CONTACTER UN AGENT</h1>
+          <p class="profile-agents-copy" data-profile-agents-copy>
+            Chwazi yon ajan pou kontinye sou WhatsApp.
+          </p>
+
+          <div class="profile-agents-list" data-profile-agents-list>
+            <p class="profile-history-empty">Loading...</p>
+          </div>
+
+          <button type="button" class="profile-agent-cta" data-profile-become-agent>
+            DEVENIR UN AGENT
+          </button>
+        </section>
+      </div>
+    </main>
+
+    <script type="module" src="./profile.js"></script>
+  </body>
+</html>

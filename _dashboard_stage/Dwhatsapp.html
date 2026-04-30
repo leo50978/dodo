@@ -1,0 +1,163 @@
+<!doctype html>
+<html lang="fr">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Dashboard · WhatsApp Modal Contacts</title>
+    <style>
+      :root {
+        --bg: #060c18;
+        --panel: #101b33;
+        --line: rgba(153, 176, 227, 0.25);
+        --text: #eef3ff;
+        --muted: #9db1de;
+        --accent: #2bc48a;
+        --danger: #ff6a6a;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      body {
+        margin: 0;
+        min-height: 100vh;
+        background: radial-gradient(circle at top right, rgba(43, 196, 138, 0.12), transparent 30%), var(--bg);
+        color: var(--text);
+        font-family: "Space Grotesk", Arial, sans-serif;
+      }
+
+      .wrap {
+        width: min(980px, calc(100% - 32px));
+        margin: 0 auto;
+        padding: 28px 0 42px;
+      }
+
+      .card {
+        border: 1px solid var(--line);
+        background: var(--panel);
+        border-radius: 22px;
+        padding: 18px;
+      }
+
+      h1 {
+        margin: 0;
+        font-size: clamp(1.4rem, 3vw, 2rem);
+      }
+
+      p {
+        color: var(--muted);
+      }
+
+      .row {
+        display: grid;
+        grid-template-columns: 220px 1fr;
+        gap: 12px;
+        align-items: center;
+        margin-top: 10px;
+      }
+
+      .row label {
+        font-size: 0.92rem;
+        color: #d8e6ff;
+      }
+
+      .row input {
+        width: 100%;
+        border: 1px solid var(--line);
+        background: #081223;
+        color: var(--text);
+        border-radius: 12px;
+        padding: 11px 12px;
+      }
+
+      .actions {
+        display: flex;
+        gap: 10px;
+        margin-top: 18px;
+      }
+
+      button,
+      a.btn {
+        border: 1px solid var(--line);
+        border-radius: 12px;
+        padding: 10px 14px;
+        color: var(--text);
+        background: #132443;
+        font: inherit;
+        text-decoration: none;
+        cursor: pointer;
+      }
+
+      button.primary {
+        background: linear-gradient(135deg, #19a871 0%, #2bc48a 100%);
+        color: #042417;
+        font-weight: 700;
+      }
+
+      .status {
+        min-height: 22px;
+        margin-top: 12px;
+        font-size: 0.9rem;
+        color: var(--muted);
+      }
+
+      .status.error {
+        color: var(--danger);
+      }
+
+      .status.success {
+        color: var(--accent);
+      }
+
+      @media (max-width: 720px) {
+        .row {
+          grid-template-columns: 1fr;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <main class="wrap">
+      <section class="card">
+        <h1>Contacts WhatsApp des modales</h1>
+        <p>Modifie ici les numéros utilisés par les boutons “Contacter un agent” dans les modales du site.</p>
+
+        <form id="whatsappConfigForm" autocomplete="off">
+          <div class="row">
+            <label for="wa_support_default">Support par défaut</label>
+            <input id="wa_support_default" name="support_default" placeholder="50940507232" />
+          </div>
+          <div class="row">
+            <label for="wa_rejected_order">Commande rejetée</label>
+            <input id="wa_rejected_order" name="rejected_order" placeholder="50940507232" />
+          </div>
+          <div class="row">
+            <label for="wa_agent_deposit">Dépôt via agent</label>
+            <input id="wa_agent_deposit" name="agent_deposit" placeholder="50940507232" />
+          </div>
+          <div class="row">
+            <label for="wa_withdrawal_assistance">Assistance retrait</label>
+            <input id="wa_withdrawal_assistance" name="withdrawal_assistance" placeholder="50940507232" />
+          </div>
+          <div class="row">
+            <label for="wa_welcome_deposit_modal">Modal dépôt bienvenue</label>
+            <input id="wa_welcome_deposit_modal" name="welcome_deposit_modal" placeholder="50940507232" />
+          </div>
+          <div class="row">
+            <label for="wa_recruitment_modal">Modal recrutement</label>
+            <input id="wa_recruitment_modal" name="recruitment_modal" placeholder="50940507232" />
+          </div>
+
+          <div class="actions">
+            <button type="submit" class="primary" id="whatsappSaveBtn">Enregistrer</button>
+            <button type="button" id="whatsappReloadBtn">Recharger</button>
+            <a class="btn" href="./index.html">Retour dashboard</a>
+          </div>
+          <div id="whatsappStatus" class="status"></div>
+        </form>
+      </section>
+    </main>
+    <script type="module" src="./Dwhatsapp.js"></script>
+  </body>
+</html>

@@ -1,20 +1,20 @@
 <!doctype html>
-<html lang="fr">
+<html lang="ht">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Jeu de dame | Does</title>
+    <title>Dame | Does</title>
     <link rel="icon" href="/favicon.ico" />
     <link rel="stylesheet" href="/draughtsjs-master/draughts.css" />
     <style>
       :root {
-        --bg-1: #0f1b34;
-        --bg-2: #20365f;
-        --card: rgba(14, 29, 57, 0.82);
-        --line: rgba(255, 255, 255, 0.12);
-        --text: #f5f8ff;
-        --muted: rgba(235, 242, 255, 0.72);
-        --accent: #64d4ff;
+        --bg-1: #eefaf1;
+        --bg-2: #dff5e4;
+        --card: rgba(255, 255, 255, 0.92);
+        --line: rgba(19, 110, 57, 0.14);
+        --text: #10351f;
+        --muted: rgba(16, 53, 31, 0.7);
+        --accent: #1f8f4a;
       }
 
       html {
@@ -33,8 +33,8 @@
         color: var(--text);
         font-family: "Segoe UI", Tahoma, Geneva, Verdana, sans-serif !important;
         background:
-          radial-gradient(1200px 680px at 10% 0%, rgba(91, 161, 255, 0.3), transparent 58%),
-          radial-gradient(1000px 560px at 100% 100%, rgba(78, 216, 255, 0.26), transparent 62%),
+          radial-gradient(1200px 680px at 10% 0%, rgba(59, 181, 98, 0.16), transparent 58%),
+          radial-gradient(1000px 560px at 100% 100%, rgba(30, 141, 73, 0.12), transparent 62%),
           linear-gradient(150deg, var(--bg-1), var(--bg-2));
         padding: 18px;
       }
@@ -70,7 +70,7 @@
 
       .back-btn {
         border: 1px solid var(--line);
-        background: rgba(255, 255, 255, 0.12);
+        background: rgba(255, 255, 255, 0.92);
         color: var(--text);
         border-radius: 999px;
         padding: 9px 14px;
@@ -82,8 +82,8 @@
       .status-pill,
       .opponent-pill,
       .search-opponent {
-        border: 1px solid rgba(255, 255, 255, 0.14);
-        background: rgba(255, 255, 255, 0.08);
+        border: 1px solid rgba(19, 110, 57, 0.14);
+        background: rgba(255, 255, 255, 0.82);
         border-radius: 16px;
       }
 
@@ -92,7 +92,7 @@
         align-items: center;
         min-height: 44px;
         padding: 10px 14px;
-        color: #edf6ff;
+        color: #10351f;
         font-size: 13px;
         font-weight: 700;
         line-height: 1.45;
@@ -115,22 +115,22 @@
         font-weight: 700;
         letter-spacing: 0.12em;
         text-transform: uppercase;
-        color: rgba(225, 240, 255, 0.68);
+        color: rgba(16, 53, 31, 0.62);
       }
 
       .room-value {
         font-size: 14px;
         font-weight: 800;
-        color: #f4fbff;
+        color: #10351f;
         overflow: hidden;
         text-overflow: ellipsis;
         white-space: nowrap;
       }
 
       .balance-badge {
-        border: 1px solid rgba(100, 212, 255, 0.5);
-        background: rgba(100, 212, 255, 0.12);
-        color: #d8f5ff;
+        border: 1px solid rgba(31, 143, 74, 0.22);
+        background: rgba(31, 143, 74, 0.1);
+        color: #175a31;
         padding: 7px 12px;
         border-radius: 999px;
         font-size: 13px;
@@ -138,8 +138,8 @@
       }
 
       .leave-btn {
-        border: 1px solid rgba(255, 126, 126, 0.35);
-        background: linear-gradient(135deg, rgba(235, 92, 92, 0.24), rgba(108, 24, 24, 0.88));
+        border: 1px solid rgba(31, 143, 74, 0.22);
+        background: linear-gradient(135deg, rgba(31, 143, 74, 0.18), rgba(15, 71, 38, 0.94));
         color: #fff;
         border-radius: 999px;
         padding: 9px 14px;
@@ -158,10 +158,22 @@
         height: min(94vw, 560px);
         max-height: calc(100dvh - 124px);
         margin: 0 auto;
-        border: 2px solid rgba(255, 255, 255, 0.18);
+        border: 2px solid rgba(31, 143, 74, 0.18);
         border-radius: 18px;
         overflow: hidden;
-        box-shadow: 0 22px 42px rgba(4, 11, 26, 0.45);
+        box-shadow: 0 22px 42px rgba(17, 70, 38, 0.16);
+      }
+
+      #board.dame-board-flipped {
+        transform: rotate(180deg);
+        transform-origin: center center;
+      }
+
+      #board.dame-board-flipped a,
+      #board.dame-board-flipped .move,
+      #board.dame-board-flipped .focus {
+        transform: rotate(180deg);
+        transform-origin: center center;
       }
 
       .search-modal {
@@ -171,8 +183,8 @@
         align-items: center;
         justify-content: center;
         padding: 18px;
-        background: rgba(8, 14, 28, 0.68);
-        backdrop-filter: blur(12px);
+        background: rgba(9, 35, 18, 0.46);
+        backdrop-filter: blur(10px);
         z-index: 20;
       }
 
@@ -182,11 +194,11 @@
 
       .search-card {
         width: min(100%, 420px);
-        border: 1px solid rgba(255, 255, 255, 0.15);
+        border: 1px solid rgba(31, 143, 74, 0.14);
         border-radius: 26px;
         padding: 22px;
-        background: linear-gradient(180deg, rgba(33, 50, 90, 0.98), rgba(17, 28, 54, 0.98));
-        box-shadow: 0 24px 44px rgba(4, 11, 26, 0.48);
+        background: linear-gradient(180deg, rgba(255, 255, 255, 0.98), rgba(236, 250, 240, 0.98));
+        box-shadow: 0 24px 44px rgba(17, 70, 38, 0.15);
         text-align: center;
         max-height: calc(100dvh - 36px);
         overflow-y: auto;
@@ -199,7 +211,7 @@
         font-weight: 700;
         letter-spacing: 0.18em;
         text-transform: uppercase;
-        color: rgba(225, 240, 255, 0.7);
+        color: rgba(31, 143, 74, 0.75);
       }
 
       .search-title {
@@ -213,16 +225,16 @@
         margin: 10px 0 0;
         font-size: 14px;
         line-height: 1.7;
-        color: rgba(235, 242, 255, 0.82);
+        color: rgba(16, 53, 31, 0.82);
       }
 
       .search-countdown {
         margin-top: 18px;
-        border: 1px solid rgba(100, 212, 255, 0.25);
+        border: 1px solid rgba(31, 143, 74, 0.18);
         border-radius: 18px;
         padding: 14px 16px;
-        background: rgba(100, 212, 255, 0.08);
-        color: #dff7ff;
+        background: rgba(31, 143, 74, 0.08);
+        color: #175a31;
         font-size: 16px;
         font-weight: 800;
       }
@@ -238,7 +250,7 @@
         font-size: 17px;
         line-height: 1.35;
         font-weight: 800;
-        color: #f4fbff;
+        color: #10351f;
       }
 
       .expired-modal {
@@ -248,8 +260,8 @@
         align-items: center;
         justify-content: center;
         padding: 18px;
-        background: rgba(5, 11, 24, 0.74);
-        backdrop-filter: blur(14px);
+        background: rgba(9, 35, 18, 0.46);
+        backdrop-filter: blur(10px);
         z-index: 30;
       }
 
@@ -260,11 +272,11 @@
       .expired-card {
         width: min(100%, 460px);
         border-radius: 28px;
-        border: 1px solid rgba(159, 232, 255, 0.18);
-        background: linear-gradient(180deg, rgba(28, 41, 74, 0.98), rgba(12, 22, 44, 0.98));
+        border: 1px solid rgba(31, 143, 74, 0.14);
+        background: linear-gradient(180deg, rgba(255, 255, 255, 0.98), rgba(236, 250, 240, 0.98));
         padding: 22px;
         color: var(--text);
-        box-shadow: 0 24px 48px rgba(4, 11, 26, 0.5);
+        box-shadow: 0 24px 48px rgba(17, 70, 38, 0.16);
         max-height: calc(100dvh - 36px);
         overflow-y: auto;
         -webkit-overflow-scrolling: touch;
@@ -277,9 +289,9 @@
         min-height: 32px;
         padding: 0 12px;
         border-radius: 999px;
-        border: 1px solid rgba(159, 232, 255, 0.26);
-        background: rgba(159, 232, 255, 0.1);
-        color: #dcfbff;
+        border: 1px solid rgba(31, 143, 74, 0.18);
+        background: rgba(31, 143, 74, 0.08);
+        color: #175a31;
         font-size: 12px;
         font-weight: 800;
         letter-spacing: 0.08em;
@@ -295,7 +307,7 @@
 
       .expired-text {
         margin: 12px 0 0;
-        color: rgba(235, 242, 255, 0.84);
+        color: rgba(16, 53, 31, 0.82);
         line-height: 1.65;
         font-size: 14px;
       }
@@ -309,21 +321,23 @@
       .expired-btn {
         min-height: 48px;
         border-radius: 16px;
-        border: 1px solid rgba(255, 255, 255, 0.16);
-        background: rgba(255, 255, 255, 0.08);
-        color: #f5f8ff;
+        border: 1px solid rgba(31, 143, 74, 0.16);
+        background: rgba(255, 255, 255, 0.9);
+        color: var(--text);
         font-weight: 700;
         cursor: pointer;
       }
 
       .expired-btn.primary {
-        border: 1px solid #9ef5c9;
-        background: linear-gradient(135deg, rgba(72, 174, 120, 0.26), rgba(13, 45, 39, 0.92));
+        border: 1px solid #71d197;
+        background: linear-gradient(135deg, rgba(31, 143, 74, 0.16), rgba(15, 71, 38, 0.94));
+        color: #fff;
       }
 
       .expired-btn.accent {
-        border: 1px solid #ffb26e;
-        background: #f57c00;
+        border: 1px solid #71d197;
+        background: linear-gradient(135deg, #25a05b, #167640);
+        color: #fff;
       }
 
       .expired-phone-box {
@@ -527,17 +541,17 @@
   <body>
     <main class="game-shell">
       <header class="game-topbar">
-        <button class="back-btn" type="button" onclick="window.location.href='./index.html'">Retour accueil</button>
+        <button class="back-btn" type="button" onclick="window.location.href='./index.html'">Tounen akèy</button>
         <div class="game-topbar-center">
-          <div id="dameStatusBadge" class="status-pill">Connexion en cours...</div>
+          <div id="dameStatusBadge" class="status-pill">Koneksyon an kou...</div>
           <div id="dameOpponentBadge" class="opponent-pill hidden">
-            <span class="room-label">Adversaire</span>
+            <span class="room-label">Advèsè</span>
             <strong id="dameOpponentName" class="room-value">-</strong>
           </div>
         </div>
         <div class="game-topbar-actions">
           <span id="dameBalanceBadge" class="balance-badge">Does: --</span>
-          <button id="dameLeaveBtn" class="leave-btn" type="button">Quitter la partie</button>
+          <button id="dameLeaveBtn" class="leave-btn" type="button">Kite pati a</button>
         </div>
       </header>
 
@@ -549,13 +563,13 @@
     <div id="dameSearchOverlay" class="search-modal hidden" aria-live="polite" aria-atomic="true">
       <div class="search-card">
         <p class="search-eyebrow">Dame</p>
-        <h2 class="search-title">Recherche d'un joueur</h2>
+        <h2 class="search-title">N ap chèche yon jwè</h2>
         <p id="dameSearchCopy" class="search-copy">
-          Nous préparons ta partie et cherchons ton adversaire.
+          N ap prepare pati a epi n ap chèche advèsè w la.
         </p>
-        <div id="dameSearchCountdown" class="search-countdown">15 s restantes</div>
+        <div id="dameSearchCountdown" class="search-countdown">15 s ki rete</div>
         <div id="dameSearchOpponentBadge" class="search-opponent hidden">
-          <span class="room-label">Adversaire dans la salle</span>
+          <span class="room-label">Advèsè nan sal la</span>
           <div id="dameSearchOpponentName" class="search-opponent-value">-</div>
         </div>
       </div>
@@ -563,24 +577,24 @@
 
     <div id="dameSearchExpiredOverlay" class="expired-modal hidden" aria-live="polite" aria-atomic="true">
       <div class="expired-card">
-        <span class="expired-flag">Aucun joueur trouvé</span>
-        <h2 class="expired-title">On n’a pas encore trouvé d’adversaire</h2>
+        <span class="expired-flag">Pa gen jwè ankò</span>
+        <h2 class="expired-title">Nou poko jwenn yon advèsè</h2>
         <p class="expired-text">
-          Tu peux relancer la recherche, rester dans l’attente, rejoindre le groupe WhatsApp ou laisser ton numéro pour être recontacté quand un joueur de dame sera disponible.
+          Ou ka relanse rechèch la, rete an atant, antre nan gwoup WhatsApp la, oswa kite nimewo w pou nou ka kontakte w lè gen yon jwè dama ki disponib.
         </p>
         <div id="dameExpiredAgentValue" class="expired-text" style="margin-top:14px;"></div>
         <div class="expired-actions">
-          <button id="dameExpiredRetryBtn" type="button" class="expired-btn accent">Attendre 15 s encore</button>
-          <button id="dameExpiredStayBtn" type="button" class="expired-btn primary">Rester en attente</button>
-          <a id="dameExpiredGroupBtn" href="https://chat.whatsapp.com/I8VfW1Tdv6nF1d7ZkMfOg0" target="_blank" rel="noopener noreferrer" class="expired-btn" style="display:flex;align-items:center;justify-content:center;text-decoration:none;">Intègre le groupe WhatsApp</a>
-          <button id="dameExpiredPhoneRevealBtn" type="button" class="expired-btn">Laisser son numéro WhatsApp</button>
-          <button id="dameExpiredViewNumberBtn" type="button" class="expired-btn">Voir le numéro WhatsApp</button>
-          <button id="dameExpiredNotifyBtn" type="button" class="expired-btn primary">Me notifier quand il y a un joueur de dame</button>
+          <button id="dameExpiredRetryBtn" type="button" class="expired-btn accent">Tann 15 s ankò</button>
+          <button id="dameExpiredStayBtn" type="button" class="expired-btn primary">Rete an atant</button>
+          <a id="dameExpiredGroupBtn" href="https://chat.whatsapp.com/I8VfW1Tdv6nF1d7ZkMfOg0" target="_blank" rel="noopener noreferrer" class="expired-btn" style="display:flex;align-items:center;justify-content:center;text-decoration:none;">Antre nan gwoup WhatsApp la</a>
+          <button id="dameExpiredPhoneRevealBtn" type="button" class="expired-btn">Kite nimewo WhatsApp ou</button>
+          <button id="dameExpiredViewNumberBtn" type="button" class="expired-btn">Wè nimewo WhatsApp la</button>
+          <button id="dameExpiredNotifyBtn" type="button" class="expired-btn primary">Fè m konnen lè gen yon jwè dama</button>
         </div>
         <div id="dameExpiredPhoneBox" class="expired-phone-box">
-          <input id="dameExpiredPhoneInput" class="expired-input" type="tel" inputmode="tel" placeholder="Ton numéro WhatsApp" />
-          <button id="dameExpiredPhoneSaveBtn" type="button" class="expired-btn accent">Enregistrer mon numéro</button>
-          <p class="expired-note">Ton numéro sera utilisé pour te recontacter au sujet du jeu de dame.</p>
+          <input id="dameExpiredPhoneInput" class="expired-input" type="tel" inputmode="tel" placeholder="Nimewo WhatsApp ou" />
+          <button id="dameExpiredPhoneSaveBtn" type="button" class="expired-btn accent">Anrejistre nimewo m</button>
+          <p class="expired-note">Nimewo w ap sèvi pou nou ka kontakte w sou jwèt dama a.</p>
         </div>
       </div>
     </div>

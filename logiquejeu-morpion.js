@@ -341,12 +341,12 @@ function makePlayerId(seed = "") {
   }
   const normalizedHash = Math.max(0, Math.abs(hash));
   const safeCode = ((normalizedHash % 900000) + 100000);
-  return `Joueur ID-${String(safeCode).padStart(6, "0")}`;
+  return `Jwè ID-${String(safeCode).padStart(6, "0")}`;
 }
 
 function randomPlayerIdLabel() {
   const value = Math.floor(Math.random() * 900000) + 100000;
-  return `Joueur ID-${String(value)}`;
+  return `Jwè ID-${String(value)}`;
 }
 
 function pickBotNumericId() {
@@ -407,7 +407,7 @@ function getOpponentSeat() {
 }
 
 function getSelfName() {
-  const fallback = currentUser?.displayName || currentUser?.email || "Moi";
+  const fallback = currentUser?.displayName || currentUser?.email || "Ou";
   const roomName = Array.isArray(currentRoomData?.playerNames) ? String(currentRoomData.playerNames[currentSeatIndex] || "").trim() : "";
   return roomName || fallback;
 }
@@ -417,9 +417,9 @@ function getOpponentName() {
   const roomName = Array.isArray(currentRoomData?.playerNames) ? String(currentRoomData.playerNames[opponentSeat] || "").trim() : "";
   const opponentUid = Array.isArray(currentRoomData?.playerUids) ? String(currentRoomData.playerUids[opponentSeat] || "").trim() : "";
   if (!opponentUid && safeInt(currentRoomData?.botCount, 0) > 0 && safeInt(currentRoomData?.humanCount, 0) <= 1) {
-    return `Joueur ${pickBotNumericId()}`;
+    return `Jwè ${pickBotNumericId()}`;
   }
-  return roomName || "En attente...";
+  return roomName || "M ap tann...";
 }
 
 function getOpponentLabel() {
@@ -427,7 +427,7 @@ function getOpponentLabel() {
   const opponentUid = Array.isArray(currentRoomData?.playerUids) ? String(currentRoomData.playerUids[opponentSeat] || "").trim() : "";
   if (!opponentUid) {
     if (safeInt(currentRoomData?.botCount, 0) > 0 && safeInt(currentRoomData?.humanCount, 0) <= 1) {
-      return `Joueur ID-${pickBotNumericId()}`;
+      return `Jwè ID-${pickBotNumericId()}`;
     }
     const roomKey = String(currentRoomId || "").trim();
     if (!fallbackOpponentAlias || fallbackOpponentAliasRoomId !== roomKey) {
@@ -506,9 +506,9 @@ function openWhatsappModal() {
   dom.whatsappModal?.classList.remove("hidden");
   renderWhatsappPreference();
   if (whatsappPreferenceLoaded && myWhatsappContact) {
-    setWhatsappStatus("Ton numero est deja partage. Tu peux le mettre a jour ou le retirer.", "success");
+    setWhatsappStatus("Nimewo ou deja pataje. Ou ka mete li ajou oswa retire li.", "success");
   } else if (whatsappPreferenceLoaded && !myWhatsappContact) {
-    setWhatsappStatus("Ton numero n'est pas encore partage. Tu peux l'ajouter ici.", "");
+    setWhatsappStatus("Nimewo ou poko pataje. Ou ka ajoute li la a.", "");
   }
 }
 
@@ -525,18 +525,18 @@ function renderRecentWhatsappContacts() {
   if (!Array.isArray(recentWhatsappContacts) || recentWhatsappContacts.length === 0) {
     dom.contactsList.innerHTML = `
       <div class="contact-empty">
-        Aucun numero recent n'est disponible pour le moment. Laisse ton WhatsApp pour aider les prochains joueurs a te retrouver.
+        Pa gen okenn nimewo resan ki disponib pou kounye a. Kite WhatsApp ou pou ede pwochen jwè yo jwenn ou.
       </div>
     `;
     return;
   }
 
   dom.contactsList.innerHTML = recentWhatsappContacts.map((contact, index) => {
-    const label = String(contact?.label || `Joueur ${index + 1}`);
+    const label = String(contact?.label || `Jwè ${index + 1}`);
     const whatsappNumber = String(contact?.whatsappNumber || "").trim();
     const whatsappDigits = extractDigits(contact?.whatsappDigits || whatsappNumber);
     const online = contact?.online === true;
-    const presenceLabel = online ? "En ligne" : "Hors ligne";
+    const presenceLabel = online ? "Sou liy" : "Dekonekte";
     const lastSeen = formatRecentContactTime(contact?.lastInterestAtMs || contact?.lastSeenAtMs);
     const whatsappLink = buildWhatsappDeepLink(whatsappDigits);
     return `
@@ -545,7 +545,7 @@ function renderRecentWhatsappContacts() {
           <div class="contact-card__identity">
             <div class="contact-card__label">${label}</div>
             <div class="contact-card__value">${whatsappNumber}</div>
-            <div class="contact-card__meta">${lastSeen ? `Actif le ${lastSeen}` : "Activite recente"}<\/div>
+            <div class="contact-card__meta">${lastSeen ? `Aktif depi ${lastSeen}` : "Aktivite resan"}<\/div>
           </div>
           <span class="presence-pill ${online ? "is-online" : ""}">
             <span class="presence-pill__dot"><\/span>
@@ -554,7 +554,7 @@ function renderRecentWhatsappContacts() {
         </div>
         <div class="contact-card__actions">
           <button class="btn btn--primary" type="button" data-contact-action="copy" data-contact-number="${whatsappNumber}">
-            Copier
+            Kopye
           <\/button>
           <a class="btn btn--ghost" href="${whatsappLink || "#"}" ${whatsappLink ? `target="_blank" rel="noopener noreferrer"` : `aria-disabled="true"`}>
             WhatsApp
@@ -592,20 +592,20 @@ async function loadWhatsappPreference(force = false) {
 async function saveWhatsappPreference() {
   const rawValue = normalizeWhatsappInput(dom.whatsappInput?.value || "");
   if (!extractDigits(rawValue)) {
-    setWhatsappStatus("Entre un numero WhatsApp valide pour continuer.", "error");
+    setWhatsappStatus("Antre yon nimewo WhatsApp ki valab pou kontinye.", "error");
     return;
   }
 
   if (dom.whatsappSaveBtn) dom.whatsappSaveBtn.disabled = true;
-  setWhatsappStatus("Enregistrement du numero...", "");
+  setWhatsappStatus("M ap anrejistre nimewo a...", "");
   try {
     const result = await saveMorpionWhatsappPreferenceSecure({ whatsappNumber: rawValue });
     myWhatsappContact = result?.contact && typeof result.contact === "object" ? result.contact : null;
     whatsappPreferenceLoaded = true;
     renderWhatsappPreference();
-    setWhatsappStatus("Ton numero WhatsApp est maintenant visible dans la liste des joueurs recents.", "success");
+    setWhatsappStatus("Nimewo WhatsApp ou a kounye a vizib nan lis jwè resan yo.", "success");
   } catch (error) {
-    setWhatsappStatus(error?.message || "Impossible d'enregistrer ton numero pour le moment.", "error");
+    setWhatsappStatus(error?.message || "M pa ka anrejistre nimewo ou a pou kounye a.", "error");
   } finally {
     if (dom.whatsappSaveBtn) dom.whatsappSaveBtn.disabled = false;
   }
@@ -613,16 +613,16 @@ async function saveWhatsappPreference() {
 
 async function removeWhatsappPreference() {
   if (dom.whatsappRemoveBtn) dom.whatsappRemoveBtn.disabled = true;
-  setWhatsappStatus("Retrait du numero...", "");
+  setWhatsappStatus("M ap retire nimewo a...", "");
   try {
     await removeMorpionWhatsappPreferenceSecure({});
     myWhatsappContact = null;
     whatsappPreferenceLoaded = true;
     if (dom.whatsappInput) dom.whatsappInput.value = "";
     renderWhatsappPreference();
-    setWhatsappStatus("Ton numero a ete retire de la liste des joueurs recents.", "success");
+    setWhatsappStatus("Nimewo ou a retire nan lis jwè resan yo.", "success");
   } catch (error) {
-    setWhatsappStatus(error?.message || "Impossible de retirer ton numero pour le moment.", "error");
+    setWhatsappStatus(error?.message || "M pa ka retire nimewo ou a pou kounye a.", "error");
   } finally {
     if (dom.whatsappRemoveBtn) dom.whatsappRemoveBtn.disabled = false;
   }
@@ -630,7 +630,7 @@ async function removeWhatsappPreference() {
 
 async function loadRecentWhatsappContacts() {
   if (!dom.contactsList) return;
-  dom.contactsList.innerHTML = `<div class="contact-empty">Chargement des joueurs recents...<\/div>`;
+  dom.contactsList.innerHTML = `<div class="contact-empty">M ap chaje jwè resan yo...<\/div>`;
   try {
     const result = await listRecentMorpionWhatsappContactsSecure({});
     recentWhatsappContacts = Array.isArray(result?.contacts) ? result.contacts : [];
@@ -786,7 +786,7 @@ function isMyTurn() {
 }
 
 function openWaitingModal(title = "", copy = "") {
-  if (dom.waitingTitle) dom.waitingTitle.textContent = String(title || "Recherche d'un adversaire...");
+  if (dom.waitingTitle) dom.waitingTitle.textContent = String(title || "M ap chèche yon advèsè...");
   if (dom.waitingCopy) dom.waitingCopy.textContent = String(copy || "");
   dom.waitingModal?.classList.remove("hidden");
 }
@@ -870,11 +870,11 @@ function renderMatchmakingWaitingModal() {
   if (isFriendMorpionRoomFlow()) {
     const humans = safeInt(currentRoomData?.humanCount, 0);
     if (humans >= 2) {
-      openWaitingModal("Adversaire trouve", "La partie privee demarre...");
+      openWaitingModal("Advèsè jwenn", "Pati prive a ap kòmanse...");
     } else {
       openWaitingModal(
-        "En attente de ton ami...",
-        "La salle privee reste ouverte sans limite de temps tant que vous n'avez pas quitte la salle."
+        "M ap tann zanmi ou...",
+        "Chanm prive a rete ouvè san limit tan jouk nou kite chanm nan."
       );
     }
     if (dom.waitingTimerWrap) dom.waitingTimerWrap.classList.add("hidden");
@@ -884,7 +884,7 @@ function renderMatchmakingWaitingModal() {
 
   const humans = safeInt(currentRoomData?.humanCount, 0);
   if (humans >= 2) {
-    openWaitingModal("Adversaire trouve", "La partie demarre...");
+    openWaitingModal("Advèsè jwenn", "Pati a ap kòmanse...");
     if (dom.waitingTimerWrap) dom.waitingTimerWrap.classList.add("hidden");
     if (dom.waitingActions) dom.waitingActions.classList.add("hidden");
     return;
@@ -905,8 +905,8 @@ function renderMatchmakingWaitingModal() {
 
   if (remainingMs > 0) {
     openWaitingModal(
-      "Recherche d'un joueur...",
-      "Nous cherchons un joueur reel. Si personne ne rejoint dans 15 secondes, il n'y aura pas de partie."
+      "M ap chèche yon jwè...",
+      "Nou ap chèche yon jwè reyèl. Si pèsonn pa antre nan 15 segonn, pa gen pati."
     );
     if (dom.waitingTimerWrap) dom.waitingTimerWrap.classList.remove("hidden");
     if (dom.waitingTimerValue) dom.waitingTimerValue.textContent = `${Math.max(1, remainingSeconds)}s`;
@@ -929,12 +929,12 @@ function renderMatchmakingWaitingModal() {
 
   if (matchmakingExtendedWaiting) {
     openWaitingModal(
-      "Attente prolongee active",
+      "Tan tann pwolonje aktive",
       oddPlayingHint
         ? matchmakingHintMessage
         : (notificationsGranted
-          ? "Tu restes en attente sans limite. Les notifications sont deja actives: on te previendra des qu'un joueur est disponible."
-          : "Tu restes en attente sans limite. Tu peux quitter l'attente a tout moment.")
+          ? "Ou rete ap tann san limit. Notifikasyon yo deja aktive: n ap avèti ou le pli vit yon jwè disponib."
+          : "Ou rete ap tann san limit. Ou ka soti nan tann nan nenpòt ki lè.")
     );
     if (dom.waitingTimerWrap) dom.waitingTimerWrap.classList.add("hidden");
     if (dom.waitingActions) dom.waitingActions.classList.remove("hidden");
@@ -952,12 +952,12 @@ function renderMatchmakingWaitingModal() {
   }
 
   openWaitingModal(
-    "Aucun joueur disponible",
+    "Pa gen jwè disponib",
     oddPlayingHint
       ? matchmakingHintMessage
       : (notificationsGranted
-        ? "Aucun joueur n'a rejoint dans les 15 secondes. Rejoins aussi le groupe WhatsApp pour trouver rapidement des joueurs."
-        : "Aucun joueur n'a rejoint dans les 15 secondes. Active les notifications ou rejoins le groupe WhatsApp pour trouver des joueurs.")
+        ? "Pa gen jwè ki antre nan 15 segonn yo. Antre tou nan gwoup WhatsApp la pou jwenn jwè rapid."
+        : "Pa gen jwè ki antre nan 15 segonn yo. Aktive notifikasyon yo oswa antre nan gwoup WhatsApp la pou jwenn jwè.")
   );
   if (dom.waitingTimerWrap) dom.waitingTimerWrap.classList.add("hidden");
   if (dom.waitingActions) dom.waitingActions.classList.remove("hidden");
@@ -976,23 +976,23 @@ function renderMatchmakingWaitingModal() {
 async function requestMatchmakingNotifications() {
   if (!dom.waitingCopy) return;
   if (typeof window === "undefined" || !("Notification" in window)) {
-    dom.waitingCopy.textContent = "Les notifications ne sont pas supportees sur cet appareil.";
+    dom.waitingCopy.textContent = "Aparèy sa a pa sipòte notifikasyon yo.";
     if (dom.waitingNotifyBtn) dom.waitingNotifyBtn.classList.add("hidden");
     return;
   }
   try {
     if (Notification.permission === "granted") {
-      dom.waitingCopy.textContent = "Notifications deja actives. Nous te prevenirons quand des joueurs sont disponibles.";
+      dom.waitingCopy.textContent = "Notifikasyon yo deja aktif. N ap avèti ou lè jwè yo disponib.";
       if (dom.waitingNotifyBtn) dom.waitingNotifyBtn.classList.add("hidden");
       return;
     }
     const permission = await Notification.requestPermission();
     if (permission === "granted") {
-      dom.waitingCopy.textContent = "Notifications activees. Tu seras alerte quand des joueurs seront disponibles.";
+      dom.waitingCopy.textContent = "Notifikasyon yo aktive. Ou va resevwa avètisman lè jwè yo disponib.";
       if (dom.waitingNotifyBtn) dom.waitingNotifyBtn.classList.add("hidden");
       try {
         const note = new Notification("Morpion", {
-          body: "Notifications activees. Nous te prevenirons quand des joueurs arrivent.",
+          body: "Notifikasyon yo aktive. N ap avèti ou lè jwè yo rive.",
           tag: "morpion-notify-enabled",
           icon: "./favicon.ico",
         });
@@ -1001,16 +1001,16 @@ async function requestMatchmakingNotifications() {
       }
       return;
     }
-    dom.waitingCopy.textContent = "Notifications bloquees. Autorise-les dans les reglages du navigateur.";
+    dom.waitingCopy.textContent = "Notifikasyon yo bloke. Otorize yo nan paramèt navigatè a.";
     if (dom.waitingNotifyBtn) dom.waitingNotifyBtn.classList.remove("hidden");
   } catch (_) {
-    dom.waitingCopy.textContent = "Impossible d'activer les notifications pour le moment.";
+    dom.waitingCopy.textContent = "M pa ka aktive notifikasyon yo pou kounye a.";
     if (dom.waitingNotifyBtn) dom.waitingNotifyBtn.classList.remove("hidden");
   }
 }
 
 function openInviteModal(title = "", copy = "") {
-  if (dom.inviteTitle) dom.inviteTitle.textContent = String(title || "Invitation disponible");
+  if (dom.inviteTitle) dom.inviteTitle.textContent = String(title || "Envitasyon disponib");
   if (dom.inviteCopy) dom.inviteCopy.textContent = String(copy || "");
   dom.inviteModal?.classList.remove("hidden");
 }
@@ -1028,8 +1028,8 @@ function closeRuleModal() {
 }
 
 function openResultModal(eyebrow = "", title = "", copy = "") {
-  if (dom.resultEyebrow) dom.resultEyebrow.textContent = String(eyebrow || "Fin de partie");
-  if (dom.resultTitle) dom.resultTitle.textContent = String(title || "Fin de partie");
+  if (dom.resultEyebrow) dom.resultEyebrow.textContent = String(eyebrow || "Fen pati");
+  if (dom.resultTitle) dom.resultTitle.textContent = String(title || "Fen pati");
   if (dom.resultCopy) dom.resultCopy.textContent = String(copy || "");
   syncReplayActionLabels();
   dom.resultModal?.classList.remove("hidden");
@@ -1135,7 +1135,7 @@ function closeQuitModal() {
   dom.quitModal?.classList.add("hidden");
 }
 
-function formatResultErrorCopy(error, fallback = "Reessaie dans un instant.") {
+function formatResultErrorCopy(error, fallback = "Eseye ankò nan yon ti moman.") {
   const message = String(error?.message || fallback || "").trim();
   const code = String(error?.code || "").trim();
   if (!code) return message;
@@ -1263,8 +1263,8 @@ function buildEndModalPayload() {
   const requestedByOpponent = rematchRequestUids.length > 0 && requestedByMe !== true;
   const rematchLine = isFriendRoom
     ? (requestedByMe
-      ? " Revanche demandee. En attente de l'autre joueur."
-      : (requestedByOpponent ? " L'autre joueur veut rejouer. Clique sur Rejouer pour accepter." : ""))
+      ? " Revanj mande. M ap tann lòt jwè a."
+      : (requestedByOpponent ? " Lòt jwè a vle rejwe. Klike sou Rejwe pou aksepte." : ""))
     : "";
   if (endedReason === "no_play_refund") {
     const placedCountBySeat = Array.isArray(currentGameState?.placedCountBySeat)
@@ -1276,54 +1276,54 @@ function buildEndModalPayload() {
     if (iTimedOutWithoutPlaying) {
       return {
         eyebrow: "Partie annulee",
-        title: "Ou pa t pedi",
-        copy: `Ou pa t mete okenn senbol avan tan an fini. Kont ou ap ranbouse pou ou ka rekomanse jwe.${rematchLine}`,
+        title: "Ou pa t pèdi",
+        copy: `Ou pa t mete okenn senbòl anvan tan an fini. Kont ou ap ranbouse pou ou ka rekòmanse jwe.${rematchLine}`,
       };
     }
     return {
       eyebrow: "Partie annulee",
       title: "Kont ou ap ranbouse",
-      copy: `Advese w la pa t pedi, li te deside pa jwe. Kont ou ap ranbouse pou ou ka kontinye jwe.${rematchLine}`,
+      copy: `Advèsè w la pa t pèdi, li te deside pa jwe. Kont ou ap ranbouse pou ou ka kontinye jwe.${rematchLine}`,
     };
   }
   if (endedReason === "quit_refund_before_opening") {
     return {
       eyebrow: "Partie annulee",
       title: "Kont ou ap ranbouse",
-      copy: `Parti a te kanpe avan 2 jwe yo te antre toutbon nan match la. Kont ou ap ranbouse pou ou ka rekomanse jwe.${rematchLine}`,
+      copy: `Pati a te kanpe anvan 2 jwè yo te antre vrèman nan match la. Kont ou ap ranbouse pou ou ka rekòmanse jwe.${rematchLine}`,
     };
   }
   if (endedReason === "draw") {
     return {
       eyebrow: "Match nul",
-      title: "Partie nulle",
-      copy: `Le plateau est complet et aucun alignement de 5 n'a ete forme.${rematchLine}`,
+      title: "Pati nil",
+      copy: `Planch la plen e pa gen okenn aliman 5 ki fòme.${rematchLine}`,
     };
   }
   if (endedReason === "opponent_left") {
     return {
-      eyebrow: "Fin de partie",
-      title: "Lot jwe a kouri li fe lach",
-      copy: "Lot jwe a kouri li fe lach.",
+      eyebrow: "Fen pati",
+      title: "Lòt jwè a kouri li fè lach",
+      copy: "Lòt jwè a kouri li fè lach.",
     };
   }
   if (winnerSeat === currentSeatIndex) {
     const rewardDoes = safeInt(currentRoomData?.rewardAmountDoes, 0);
     const rewardLine = rewardDoes > 0 ? ` Tu remportes ${rewardDoes} Does.` : "";
     return {
-      eyebrow: endedReason === "timeout" ? "Temps ecoule" : "Victoire",
-      title: "Tu as gagne",
+      eyebrow: endedReason === "timeout" ? "Tan fini" : "Viktwa",
+      title: "Ou genyen",
       copy: endedReason === "timeout"
-        ? `Ton adversaire a laisse son chrono tomber a zero.${rewardLine}${rematchLine}`
-        : `Tu as aligne 5 symboles.${rewardLine}${rematchLine}`,
+        ? `Advèsè ou a kite tan an desann rive 0.${rewardLine}${rematchLine}`
+        : `Ou aliman 5 senbòl.${rewardLine}${rematchLine}`,
     };
   }
   return {
-    eyebrow: endedReason === "timeout" ? "Temps ecoule" : "Defaite",
-    title: endedReason === "timeout" ? "Tu as perdu au temps" : "Tu as perdu",
+    eyebrow: endedReason === "timeout" ? "Tan fini" : "Defèt",
+    title: endedReason === "timeout" ? "Ou pèdi pa tan" : "Ou pèdi",
     copy: endedReason === "timeout"
-      ? `Ton chrono est arrive a zero.${rematchLine}`
-      : `L'adversaire a aligne 5 symboles.${rematchLine}`,
+      ? `Tan ou a rive 0.${rematchLine}`
+      : `Advèsè a aliman 5 senbòl.${rematchLine}`,
   };
 }
 
@@ -1607,8 +1607,8 @@ async function pollActiveInvite() {
     }
     activeInviteId = invitationId;
     const gameLabel = String(invite?.gameLabel || "domino").toUpperCase();
-    const copy = String(invite?.message || "Il y a actuellement des joueurs disponibles. Veux-tu jouer maintenant ?");
-    openInviteModal(`Des joueurs sont disponibles sur ${gameLabel}`, copy);
+    const copy = String(invite?.message || "Gen jwè ki disponib kounye a. Ou vle jwe kounye a ?");
+    openInviteModal(`Gen jwè ki disponib sou ${gameLabel}`, copy);
   } catch (error) {
     console.warn("[MORPION] invite poll failed", error);
   } finally {
@@ -2020,7 +2020,7 @@ async function joinOrResumeRoom() {
   clearEndStateDecorations();
   closeResultModal();
   closeQuitModal();
-  openWaitingModal("Connexion en cours...", "Nous cherchons une salle de morpion disponible.");
+  openWaitingModal("Koneksyon an ap fèt...", "Nou ap chèche yon chanm Mopyon ki disponib.");
 
   try {
     const result = await joinMatchmakingMorpionSecure({
@@ -2042,13 +2042,13 @@ async function joinOrResumeRoom() {
     const reasonCode = String(error?.reason || error?.code || "").trim().toLowerCase();
     if (reasonCode === "morpion-skilled-wait-human-only") {
       openResultModal(
-        "Aucun joueur disponible",
-        "Aucune salle humaine disponible",
-        "Il n'y a personne qui joue au morpion actuellement. Reviens plus tard ou essaie un autre jeu."
+        "Pa gen jwè disponib",
+        "Pa gen chanm moun",
+        "Pa gen moun k ap jwe Mopyon kounye a. Retounen pi ta oswa eseye yon lòt jwèt."
       );
       return;
     }
-    openResultModal("Connexion impossible", "Impossible de rejoindre une salle", error?.message || "Reessaie dans un instant.");
+    openResultModal("Koneksyon pa mache", "M pa ka antre nan yon chanm", error?.message || "Eseye ankò nan yon ti moman.");
   } finally {
     joining = false;
   }
@@ -2064,7 +2064,7 @@ async function resumeFriendMorpionFromUrl() {
   clearEndStateDecorations();
   closeResultModal();
   closeQuitModal();
-  openWaitingModal("Connexion en cours...", "Nous rejoignons la salle privee de morpion.");
+  openWaitingModal("Koneksyon an ap fèt...", "Nou ap antre nan chanm prive Mopyon an.");
 
   try {
     const result = await resumeFriendMorpionRoomSecure({ roomId: friendRoomId });
@@ -2078,7 +2078,7 @@ async function resumeFriendMorpionFromUrl() {
     void pingPresence();
   } catch (error) {
     console.error("[MORPION] resumeFriendMorpionFromUrl failed", error);
-    openResultModal("Connexion impossible", "Impossible de rejoindre cette salle privee", error?.message || "Reessaie dans un instant.");
+    openResultModal("Koneksyon pa mache", "M pa ka antre nan chanm prive sa a", error?.message || "Eseye ankò nan yon ti moman.");
   } finally {
     joining = false;
   }
@@ -2092,24 +2092,24 @@ async function requestFriendMorpionRematch() {
     const result = await requestFriendMorpionRematchSecure({ roomId: currentRoomId });
     if (result?.started === true) {
       closeResultModal();
-      openWaitingModal("Nouvelle manche", "Les deux joueurs ont accepte. Redemarrage de la partie...");
+      openWaitingModal("Nouvo won", "Tou de jwè yo dakò. Nou relanse pati a...");
       if (dom.waitingTimerWrap) dom.waitingTimerWrap.classList.add("hidden");
       if (dom.waitingActions) dom.waitingActions.classList.add("hidden");
       startFriendRematchSync();
       return;
     }
     closeResultModal();
-    openWaitingModal("Revanche demandee", "En attente de l'autre joueur pour recommencer la partie.");
+    openWaitingModal("Nou mande revanj", "M ap tann lòt jwè a pou nou rekòmanse pati a.");
     if (dom.waitingTimerWrap) dom.waitingTimerWrap.classList.add("hidden");
     if (dom.waitingActions) dom.waitingActions.classList.add("hidden");
     startFriendRematchSync();
   } catch (error) {
     const errorMessage = String(error?.message || "").trim().toLowerCase();
     if (errorMessage.includes("lot jwe a fe lach li kouri")) {
-      openResultModal("Fin de partie", "Lot jwe a fe lach li kouri", "Lot jwe a fe lach li kouri.");
+      openResultModal("Fen pati", "Lòt jwè a pran kouri", "Lòt jwè a pran kouri.");
       return;
     }
-    openResultModal("Connexion impossible", "Impossible de demander la revanche", formatResultErrorCopy(error, "Reessaie dans un instant."));
+    openResultModal("Koneksyon pa mache", "M pa ka mande revanj", formatResultErrorCopy(error, "Eseye ankò nan yon ti moman."));
   } finally {
     rematchRequestInFlight = false;
     syncReplayActionLabels();
@@ -2126,7 +2126,7 @@ async function resumeMorpionBotTestFromUrl() {
   clearEndStateDecorations();
   closeResultModal();
   closeQuitModal();
-  openWaitingModal("Connexion en cours...", "Nous preparons ta salle de test contre le bot.");
+  openWaitingModal("Koneksyon an ap fèt...", "Nou ap prepare chanm tès ou kont bot la.");
 
   try {
     const result = await resumeMorpionBotTestRoomSecure({ roomId: botTestRoomId });
@@ -2140,7 +2140,7 @@ async function resumeMorpionBotTestFromUrl() {
     void pingPresence();
   } catch (error) {
     console.error("[MORPION] resumeMorpionBotTestFromUrl failed", error);
-    openResultModal("Connexion impossible", "Impossible de rejoindre cette salle de test", formatResultErrorCopy(error, "Reessaie dans un instant."));
+    openResultModal("Koneksyon pa mache", "M pa ka antre nan chanm tès sa a", formatResultErrorCopy(error, "Eseye ankò nan yon ti moman."));
   } finally {
     joining = false;
   }
@@ -2155,7 +2155,7 @@ async function startMorpionBotTestFromUrl() {
   clearEndStateDecorations();
   closeResultModal();
   closeQuitModal();
-  openWaitingModal("Connexion en cours...", "Nous preparons ta salle de test contre le bot.");
+  openWaitingModal("Koneksyon an ap fèt...", "Nou ap prepare chanm tès ou kont bot la.");
 
   let didForceLeave = false;
   try {
@@ -2205,7 +2205,7 @@ async function startMorpionBotTestFromUrl() {
       }
     }
     console.error("[MORPION] startMorpionBotTestFromUrl failed", error);
-    openResultModal("Connexion impossible", "Impossible de creer la salle de test", formatResultErrorCopy(error, "Reessaie dans un instant."));
+    openResultModal("Koneksyon pa mache", "M pa ka kreye chanm tès la", formatResultErrorCopy(error, "Eseye ankò nan yon ti moman."));
   } finally {
     joining = false;
   }
@@ -2217,12 +2217,12 @@ function syncReplayActionLabels() {
     && String(currentRoomData?.status || "") === "ended"
     && hasCurrentUserRequestedFriendRematch();
   const replayLabel = isFriendReplayWaiting
-    ? "En attente..."
+    ? "M ap tann..."
     : (isBotTestMorpionFlowFromUrl() || roomMode === "morpion_bot_test"
-    ? "Nouveau test bot"
+    ? "Nouvo tès bot"
     : ((isFriendMorpionFlowFromUrl() || roomMode === "morpion_friends")
-      ? "Nouvelle salle privee"
-      : "Rejouer"));
+      ? "Nouvo chanm prive"
+      : "Rejwe"));
   if (dom.resultReplayBtn) dom.resultReplayBtn.textContent = replayLabel;
   if (dom.quitReplayBtn) dom.quitReplayBtn.textContent = replayLabel;
   syncFriendRematchActionState();
@@ -2317,9 +2317,9 @@ function bindEvents() {
     const number = String(target.dataset.contactNumber || "").trim();
     void copyToClipboard(number).then((copied) => {
       if (copied) {
-        target.textContent = "Copie !";
-        window.setTimeout(() => {
-          target.textContent = "Copier";
+      target.textContent = "Kopye!";
+      window.setTimeout(() => {
+          target.textContent = "Kopye";
         }, 1200);
       }
     });

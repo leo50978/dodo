@@ -1407,11 +1407,19 @@ window.addEventListener('load', function () {
         // When gameover display the banner-msg
         board.element.addEventListener('gameover', function (event) {
             var banner = draughts.querySelector('#banner-msg');
-            
+
+            if (!banner) {
+                return;
+            }
+
             var player = banner.querySelector('h2');
+            if (!player) {
+                return;
+            }
+
             // Using innerHTML because IE8 doesn't have textContent
             player.innerHTML = 'Player' + (event.detail.winner + 1);
-            
+
             banner.style.display = 'block';
         });
         

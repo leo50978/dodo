@@ -132,6 +132,22 @@ export async function createWithdrawalSecure(payload = {}) {
   return invokeCallable("createWithdrawalSecure", payload, "Impossible de créer le retrait.");
 }
 
+export async function searchTransferRecipientsSecure(payload = {}) {
+  return invokeCallable("searchTransferRecipientsSecure", payload, "Impossible de rechercher un destinataire.");
+}
+
+export async function createTransferSecure(payload = {}) {
+  return invokeCallable("createTransferSecure", payload, "Impossible d'envoyer le transfert.");
+}
+
+export async function listTransferHistorySecure(payload = {}) {
+  return invokeCallable("listTransferHistorySecure", payload, "Impossible de charger l'historique des transferts.");
+}
+
+export async function getTransferAnalyticsSecure(payload = {}) {
+  return invokeCallable("getTransferAnalyticsSecure", payload, "Impossible de charger les statistiques de transfert.");
+}
+
 export async function cancelWithdrawalSecure(payload = {}) {
   return invokeCallable("cancelWithdrawalSecure", payload, "Impossible d'annuler le retrait.");
 }
@@ -146,6 +162,10 @@ export async function ackClientFinanceNoticeSecure(payload = {}) {
 
 export async function getPublicPaymentOptionsSecure(payload = {}) {
   return invokeCallable("getPublicPaymentOptionsSecure", payload, "Impossible de charger les options de paiement.");
+}
+
+export async function getMyGameHistorySecure(payload = {}) {
+  return invokeCallable("getMyGameHistorySecure", payload, "Impossible de charger l'historique de jeu.");
 }
 
 export async function getPublicGameStakeOptionsSecure(payload = {}) {

@@ -168,13 +168,13 @@ function sanitizeAsset(value) {
 
 function getPaymentFriendlyErrorMessage(error) {
   if (error?.code === 'account-frozen') {
-    return error?.message || "Ton compte a été temporairement gelé après plusieurs dépôts refusés. Contacte l'assistance.";
+    return error?.message || "Kont ou a te bloke tanporèman apre plizyè depo yo te refize. Kontakte sipò a.";
   }
   const message = String(error?.message || '').trim();
   if (message) {
     return message;
   }
-  return 'Une erreur est survenue. Veuillez réessayer.';
+  return 'Yon erè rive. Tanpri eseye ankò.';
 }
 
 function isDepositProofSecurityError(error) {
@@ -226,6 +226,83 @@ class PaymentModal {
     this.proofSubmitAttemptDurationMs = 0;
     
     this.init();
+  }
+
+  isKobposhTheme() {
+    return String(this.options?.theme || "").trim().toLowerCase() === "kobposh";
+  }
+
+  getImageBasePathForFile(filename, kind = "generic") {
+    const cleanName = String(filename || "").trim().toLowerCase();
+    if (!cleanName) {
+      return this.options.imageBasePath || "./";
+    }
+
+    if (this.isKobposhTheme()) {
+      const localKobposhAssets = new Set(["logokobpash.png"]);
+      const sharedRootAssets = new Set([
+        "moncash.png",
+        "natcash.png",
+        "jui.png",
+        "qr.jpeg",
+        "qrmoncash.jpeg",
+        "qrnatcash.jpeg",
+      ]);
+
+      if (localKobposhAssets.has(cleanName)) {
+        return "./";
+      }
+
+      if (kind === "payment" || kind === "qr" || sharedRootAssets.has(cleanName)) {
+        return "../";
+      }
+    }
+
+    return this.options.imageBasePath || "./";
+  }
+
+  getThemePalette() {
+    if (this.isKobposhTheme()) {
+      return {
+        overlayBg: "rgba(245,245,245,0.96)",
+        panelBg: "linear-gradient(180deg, #f7fff9 0%, #ffffff 100%)",
+        panelBorder: "1px solid rgba(31,174,91,0.12)",
+        text: "#0e5c34",
+        muted: "rgba(14,92,52,0.68)",
+        accent: "#1fae5b",
+        accentDeep: "#0e5c34",
+        chipBg: "#ffffff",
+        chipBorder: "rgba(31,174,91,0.16)",
+        cardBg: "#ffffff",
+        cardBorder: "rgba(31,174,91,0.14)",
+        selectedBg: "#eefaf2",
+        selectedBorder: "rgba(31,174,91,0.35)",
+        buttonBg: "linear-gradient(180deg, #25c46b 0%, #1fae5b 100%)",
+        buttonText: "#ffffff",
+        topBarBg: "rgba(255,255,255,0.94)",
+        topBarBorder: "rgba(31,174,91,0.12)",
+      };
+    }
+
+    return {
+      overlayBg: "rgba(0,0,0,0.5)",
+      panelBg: "rgba(63, 71, 102, 0.58)",
+      panelBorder: "1px solid rgba(255,255,255,0.18)",
+      text: "#ffffff",
+      muted: "#8B7E6B",
+      accent: "#F57C00",
+      accentDeep: "#C6A75E",
+      chipBg: "rgba(255,255,255,0.10)",
+      chipBorder: "rgba(255,255,255,0.2)",
+      cardBg: "rgba(255,255,255,0.10)",
+      cardBorder: "rgba(255,255,255,0.2)",
+      selectedBg: "rgba(245,124,0,0.18)",
+      selectedBorder: "#ffb26e",
+      buttonBg: "#F57C00",
+      buttonText: "#ffffff",
+      topBarBg: "rgba(63, 71, 102, 0.52)",
+      topBarBorder: "rgba(255,255,255,0.14)",
+    };
   }
 
   getClientUid() {
@@ -369,6 +446,7 @@ class PaymentModal {
   }
 
   async confirmRapidDepositSubmission() {
+    const isKobposh = this.isKobposhTheme();
     return new Promise((resolve) => {
       const overlay = document.createElement('div');
       overlay.style.cssText = `
@@ -386,12 +464,12 @@ class PaymentModal {
       const modal = document.createElement('div');
       modal.style.cssText = `
         width: min(100%, 460px);
-        background: linear-gradient(180deg, #FFF9E8 0%, #F6E7B8 100%);
-        border: 1px solid rgba(127, 29, 29, 0.18);
+        background: ${isKobposh ? "linear-gradient(180deg, #f7fff9 0%, #ffffff 100%)" : "linear-gradient(180deg, #FFF9E8 0%, #F6E7B8 100%)"};
+        border: 1px solid ${isKobposh ? "rgba(31,174,91,0.14)" : "rgba(127, 29, 29, 0.18)"};
         border-radius: 24px;
-        box-shadow: 0 28px 80px rgba(15, 23, 42, 0.28);
+        box-shadow: 0 28px 80px rgba(15, 23, 42, 0.18);
         padding: 1.35rem;
-        color: #3F2D14;
+        color: ${isKobposh ? "#0e5c34" : "#3F2D14"};
       `;
 
       const supportUrl = buildWhatsappUrlForKey("support_default", "", SUPPORT_WHATSAPP_DIGITS) || buildSupportWhatsAppUrl();
@@ -403,8 +481,8 @@ class PaymentModal {
             width:42px;
             height:42px;
             border-radius:999px;
-            background: rgba(180, 83, 9, 0.12);
-            color:#9A3412;
+            background: ${isKobposh ? "rgba(31,174,91,0.10)" : "rgba(180, 83, 9, 0.12)"};
+            color:${isKobposh ? "#1fae5b" : "#9A3412"};
             display:flex;
             align-items:center;
             justify-content:center;
@@ -412,13 +490,13 @@ class PaymentModal {
             flex-shrink:0;
           ">!</div>
           <div style="min-width:0;">
-            <div style="font-size:1.08rem; font-weight:800; margin-bottom:0.35rem;">
+            <div style="font-size:1.08rem; font-weight:800; margin-bottom:0.35rem; color:${isKobposh ? "#0e5c34" : "#3F2D14"};">
               Avez-vous effectue ce depot ?
             </div>
-            <div style="font-size:0.95rem; line-height:1.55; color:#6B4F2A;">
+            <div style="font-size:0.95rem; line-height:1.55; color:${isKobposh ? "rgba(14,92,52,0.72)" : "#6B4F2A"};">
               Si vous ne l'avez pas effectue, le systeme le remarquera automatiquement et votre solde ne sera pas credite.
             </div>
-            <div style="font-size:0.92rem; line-height:1.5; color:#7C2D12; margin-top:0.65rem; font-weight:700;">
+            <div style="font-size:0.92rem; line-height:1.5; color:${isKobposh ? "#0e5c34" : "#7C2D12"}; margin-top:0.65rem; font-weight:700;">
               En cas de probleme, veuillez contacter l'assistance.
             </div>
           </div>
@@ -429,8 +507,8 @@ class PaymentModal {
             min-height:46px;
             border:none;
             border-radius:14px;
-            background:#E5E7EB;
-            color:#374151;
+            background:${isKobposh ? "#f3fbf6" : "#E5E7EB"};
+            color:${isKobposh ? "#0e5c34" : "#374151"};
             font-weight:700;
             cursor:pointer;
             padding:0.85rem 1rem;
@@ -439,7 +517,7 @@ class PaymentModal {
             flex:1 1 160px;
             min-height:46px;
             border-radius:14px;
-            background:#16A34A;
+            background:${isKobposh ? "linear-gradient(180deg, #25c46b 0%, #1fae5b 100%)" : "#16A34A"};
             color:white;
             font-weight:800;
             text-decoration:none;
@@ -447,21 +525,21 @@ class PaymentModal {
             align-items:center;
             justify-content:center;
             padding:0.85rem 1rem;
-          ">Contacter l'assistance</a>
+          ">Kontakte sipò a</a>
           <button type="button" data-rapid-confirm="continue" style="
             flex:1 1 180px;
             min-height:46px;
             border:none;
             border-radius:14px;
-            background:linear-gradient(135deg, #B45309 0%, #D97706 100%);
+            background:${isKobposh ? "linear-gradient(180deg, #0e5c34 0%, #1fae5b 100%)" : "linear-gradient(135deg, #B45309 0%, #D97706 100%)"};
             color:white;
             font-weight:800;
             cursor:pointer;
             padding:0.85rem 1rem;
-          ">Oui, j'ai effectue ce depot</button>
+          ">Wi, mwen fè depo sa a</button>
         </div>
-        <div style="margin-top:0.75rem; font-size:0.82rem; color:#6B7280; text-align:center;">
-          Assistance WhatsApp: ${supportLabel}
+        <div style="margin-top:0.75rem; font-size:0.82rem; color:${isKobposh ? "rgba(14,92,52,0.62)" : "#6B7280"}; text-align:center;">
+          Sipò WhatsApp: ${supportLabel}
         </div>
       `;
 
@@ -485,6 +563,7 @@ class PaymentModal {
   }
 
   async openAgentDepositSupportModal() {
+    const isKobposh = this.isKobposhTheme();
     return new Promise((resolve) => {
       const overlay = document.createElement('div');
       overlay.style.cssText = `
@@ -502,12 +581,12 @@ class PaymentModal {
       const modal = document.createElement('div');
       modal.style.cssText = `
         width: min(100%, 470px);
-        background: linear-gradient(180deg, #f7f4ff 0%, #ebe4ff 100%);
-        border: 1px solid rgba(76, 29, 149, 0.14);
+        background: ${isKobposh ? "linear-gradient(180deg, #f7fff9 0%, #ffffff 100%)" : "linear-gradient(180deg, #f7f4ff 0%, #ebe4ff 100%)"};
+        border: 1px solid ${isKobposh ? "rgba(31,174,91,0.14)" : "rgba(76, 29, 149, 0.14)"};
         border-radius: 24px;
         box-shadow: 0 28px 80px rgba(15, 23, 42, 0.28);
         padding: 1.4rem;
-        color: #2e1065;
+        color: ${isKobposh ? "#0e5c34" : "#2e1065"};
       `;
 
       const agentDepositDigits = getWhatsappContactDigits("agent_deposit", AGENT_DEPOSIT_WHATSAPP_DIGITS) || AGENT_DEPOSIT_WHATSAPP_DIGITS;
@@ -519,8 +598,8 @@ class PaymentModal {
             width:44px;
             height:44px;
             border-radius:999px;
-            background: rgba(124, 58, 237, 0.12);
-            color:#6d28d9;
+            background: ${isKobposh ? "rgba(31,174,91,0.10)" : "rgba(124, 58, 237, 0.12)"};
+            color:${isKobposh ? "#1fae5b" : "#6d28d9"};
             display:flex;
             align-items:center;
             justify-content:center;
@@ -528,14 +607,14 @@ class PaymentModal {
             flex-shrink:0;
           "><i class="fas fa-user-tie"></i></div>
           <div style="min-width:0;">
-            <div style="font-size:1.08rem;font-weight:800;margin-bottom:0.35rem;">
-              Dépôt via agent
+            <div style="font-size:1.08rem;font-weight:800;margin-bottom:0.35rem;color:${isKobposh ? "#0e5c34" : "#2e1065"};">
+              Depo atravè ajan
             </div>
-            <div style="font-size:0.95rem;line-height:1.55;color:#4c1d95;">
-              Contacte un agent pour faire ton dépôt. Cette méthode n'est pas automatique, elle dépend de l'agent.
+            <div style="font-size:0.95rem;line-height:1.55;color:${isKobposh ? "rgba(14,92,52,0.72)" : "#4c1d95"};">
+              Kontakte yon ajan pou fè depo ou a. Metòd sa a pa otomatik; li depann de ajan an.
             </div>
-            <div style="margin-top:0.7rem;font-size:0.9rem;line-height:1.55;color:#5b21b6;">
-              Envoie ta capture et les informations nécessaires sur WhatsApp. L'agent pourra ensuite créditer ton compte à distance.
+            <div style="margin-top:0.7rem;font-size:0.9rem;line-height:1.55;color:${isKobposh ? "#0e5c34" : "#5b21b6"};">
+              Voye kaptire ou a ak enfòmasyon nesesè yo sou WhatsApp. Ajan an ka kredite kont ou a distans apre sa.
             </div>
           </div>
         </div>
@@ -545,17 +624,17 @@ class PaymentModal {
             min-height:46px;
             border:none;
             border-radius:14px;
-            background:#e5e7eb;
-            color:#374151;
+            background:${isKobposh ? "#f3fbf6" : "#e5e7eb"};
+            color:${isKobposh ? "#0e5c34" : "#374151"};
             font-weight:700;
             cursor:pointer;
             padding:0.85rem 1rem;
-          ">Fermer</button>
+          ">Fèmen</button>
           <a href="https://wa.me/${agentDepositDigits}" target="_blank" rel="noopener noreferrer" data-agent-deposit="continue" style="
             flex:1 1 200px;
             min-height:46px;
             border-radius:14px;
-            background:#16A34A;
+            background:${isKobposh ? "linear-gradient(180deg, #25c46b 0%, #1fae5b 100%)" : "#16A34A"};
             color:white;
             font-weight:800;
             text-decoration:none;
@@ -563,10 +642,10 @@ class PaymentModal {
             align-items:center;
             justify-content:center;
             padding:0.85rem 1rem;
-          ">Continuer sur WhatsApp</a>
+          ">Kontinye sou WhatsApp</a>
         </div>
-        <div style="margin-top:0.75rem;font-size:0.82rem;color:#6b7280;text-align:center;">
-          Agent WhatsApp : ${agentDepositLabel}
+        <div style="margin-top:0.75rem;font-size:0.82rem;color:${isKobposh ? "rgba(14,92,52,0.62)" : "#6b7280"};text-align:center;">
+          Ajan WhatsApp: ${agentDepositLabel}
         </div>
       `;
 
@@ -590,6 +669,7 @@ class PaymentModal {
   }
 
   async openMissingDepositIdSupportModal() {
+    const isKobposh = this.isKobposhTheme();
     return new Promise((resolve) => {
       const overlay = document.createElement('div');
       overlay.style.cssText = `
@@ -607,12 +687,12 @@ class PaymentModal {
       const modal = document.createElement('div');
       modal.style.cssText = `
         width: min(100%, 480px);
-        background: linear-gradient(180deg, #FFF7ED 0%, #FFEDD5 100%);
-        border: 1px solid rgba(194, 65, 12, 0.16);
+        background: ${isKobposh ? "linear-gradient(180deg, #f7fff9 0%, #ffffff 100%)" : "linear-gradient(180deg, #FFF7ED 0%, #FFEDD5 100%)"};
+        border: 1px solid ${isKobposh ? "rgba(31,174,91,0.14)" : "rgba(194, 65, 12, 0.16)"};
         border-radius: 24px;
         box-shadow: 0 28px 80px rgba(15, 23, 42, 0.28);
         padding: 1.4rem;
-        color: #7C2D12;
+        color: ${isKobposh ? "#0e5c34" : "#7C2D12"};
       `;
 
       const supportUrl = buildWhatsappUrlForKey("support_default", "", SUPPORT_WHATSAPP_DIGITS) || buildSupportWhatsAppUrl();
@@ -624,8 +704,8 @@ class PaymentModal {
             width:44px;
             height:44px;
             border-radius:999px;
-            background: rgba(194, 65, 12, 0.12);
-            color:#C2410C;
+            background: ${isKobposh ? "rgba(31,174,91,0.10)" : "rgba(194, 65, 12, 0.12)"};
+            color:${isKobposh ? "#1fae5b" : "#C2410C"};
             display:flex;
             align-items:center;
             justify-content:center;
@@ -633,14 +713,14 @@ class PaymentModal {
             flex-shrink:0;
           "><i class="fas fa-headset"></i></div>
           <div style="min-width:0;">
-            <div style="font-size:1.08rem;font-weight:800;margin-bottom:0.35rem;">
-              Verification de securite requise
+            <div style="font-size:1.08rem;font-weight:800;margin-bottom:0.35rem;color:${isKobposh ? "#0e5c34" : "#7C2D12"};">
+              Verifikasyon sekirite obligatwa
             </div>
-            <div style="font-size:0.95rem;line-height:1.55;color:#9A3412;">
-              L'image envoyee ne passe pas nos mesures de securite pour cette demande de depot.
+            <div style="font-size:0.95rem;line-height:1.55;color:${isKobposh ? "rgba(14,92,52,0.72)" : "#9A3412"};">
+              Imaj ou voye a pa pase verifikasyon sekirite nou yo pou demann depo sa a.
             </div>
-            <div style="margin-top:0.7rem;font-size:0.9rem;line-height:1.55;color:#7C2D12;font-weight:700;">
-              Veuillez contacter un agent pour continuer.
+            <div style="margin-top:0.7rem;font-size:0.9rem;line-height:1.55;color:${isKobposh ? "#0e5c34" : "#7C2D12"};font-weight:700;">
+              Tanpri kontakte yon ajan pou kontinye.
             </div>
           </div>
         </div>
@@ -650,17 +730,17 @@ class PaymentModal {
             min-height:46px;
             border:none;
             border-radius:14px;
-            background:#E5E7EB;
-            color:#374151;
+            background:${isKobposh ? "#f3fbf6" : "#E5E7EB"};
+            color:${isKobposh ? "#0e5c34" : "#374151"};
             font-weight:700;
             cursor:pointer;
             padding:0.85rem 1rem;
-          ">Fermer</button>
+          ">Fèmen</button>
           <a href="${supportUrl}" target="_blank" rel="noopener noreferrer" data-missing-id="support" style="
             flex:1 1 200px;
             min-height:46px;
             border-radius:14px;
-            background:#16A34A;
+            background:${isKobposh ? "linear-gradient(180deg, #25c46b 0%, #1fae5b 100%)" : "#16A34A"};
             color:white;
             font-weight:800;
             text-decoration:none;
@@ -668,9 +748,9 @@ class PaymentModal {
             align-items:center;
             justify-content:center;
             padding:0.85rem 1rem;
-          ">Contacter un agent</a>
+          ">Kontakte yon ajan</a>
         </div>
-        <div style="margin-top:0.75rem;font-size:0.82rem;color:#6B7280;text-align:center;">
+        <div style="margin-top:0.75rem;font-size:0.82rem;color:${isKobposh ? "rgba(14,92,52,0.62)" : "#6B7280"};text-align:center;">
           Agent WhatsApp: ${supportLabel}
         </div>
       `;
@@ -697,26 +777,26 @@ class PaymentModal {
     return [
       {
         type: 'custom',
-        title: 'Vérification avant paiement',
-        content: 'Vérifiez que votre compte de paiement sélectionné contient le montant du dépôt plus les taxes, puis continuez.',
-        buttonText: 'Suivant'
+        title: 'Verifikasyon anvan peman',
+        content: 'Verifye kont peman ou chwazi a gen montan depo a ak frè yo ladan l, epi kontinye.',
+        buttonText: 'Swivan'
       },
       {
         type: 'payment',
-        title: 'Informations de paiement',
-        instruction: 'Utilisez les données ci-dessous pour faire un dépôt ou transfert. Si vous utilisez le code QR, vous ne paierez pas de frais.',
-        buttonText: 'Suivant'
+        title: 'Enfòmasyon peman',
+        instruction: 'Sèvi ak enfòmasyon ki anba yo pou fè yon depo oswa yon transfè. Si w sèvi ak kòd QR la, ou pap peye frè.',
+        buttonText: 'Swivan'
       },
       {
         type: 'proof',
-        title: 'Preuve de paiement',
-        description: 'Ajoutez votre capture ou référence de transaction.',
-        buttonText: 'Soumettre ma demande'
+        title: 'Prèv peman',
+        description: 'Ajoute kaptire ekran ou oswa referans tranzaksyon an.',
+        buttonText: 'Voye demann mwen'
       },
       {
         type: 'confirmation',
-        title: 'Confirmation',
-        message: 'Votre demande est en cours de vérification. Le délai est de 12 heures.'
+        title: 'Konfimasyon',
+        message: 'Demann ou a sou verifikasyon. Delè a se 12 èdtan.'
       }
     ];
   }
@@ -742,7 +822,7 @@ class PaymentModal {
       const payload = await getPublicPaymentOptionsSecure({});
       this.settings = payload?.settings || {
         verificationHours: 12,
-        expiredMessage: 'Le délai de vérification est dépassé. Contactez le support.'
+        expiredMessage: 'Tan verifikasyon an pase. Kontakte sipò a.'
       };
       this.methods = Array.isArray(payload?.methods)
         ? payload.methods
@@ -793,12 +873,27 @@ class PaymentModal {
     }
   }
   
-  getImagePath(filename) {
+  getImagePath(filename, kind = "generic") {
     const safeFilename = sanitizeAsset(filename);
     if (!safeFilename) return '';
     if (safeFilename.startsWith('http')) return safeFilename;
     const cleanName = safeFilename.split('/').pop();
-    return `${this.options.imageBasePath}${cleanName}`;
+    return `${this.getImageBasePathForFile(cleanName, kind)}${cleanName}`;
+  }
+
+  getDefaultMethodImage(method) {
+    const key = String(method?.id || method?.name || '').toLowerCase();
+    if (key.includes('moncash')) return 'moncash.png';
+    if (key.includes('natcash')) return 'natcash.png';
+    if (key.includes('jui')) return 'jui.png';
+    return '';
+  }
+
+  getDefaultQrCodeImage(method) {
+    const key = String(method?.id || method?.name || '').toLowerCase();
+    if (key.includes('moncash')) return 'qrmoncash.jpeg';
+    if (key.includes('natcash')) return 'qrnatcash.jpeg';
+    return 'qr.jpeg';
   }
   
   formatPrice(price) {
@@ -883,6 +978,7 @@ class PaymentModal {
   }
   
   render() {
+    const palette = this.getThemePalette();
     this.modal = document.createElement('div');
     this.modal.className = `payment-modal-${this.uniqueId}`;
     this.modal.style.cssText = `
@@ -893,8 +989,8 @@ class PaymentModal {
       bottom: 0;
       width: 100vw;
       height: 100vh;
-      background: rgba(0, 0, 0, 0.5);
-      backdrop-filter: blur(8px);
+      background: ${palette.overlayBg};
+      backdrop-filter: blur(${this.isKobposhTheme() ? "10px" : "8px"});
       z-index: 1000000;
       display: flex;
       align-items: center;
@@ -906,16 +1002,18 @@ class PaymentModal {
     
     this.modal.innerHTML = `
       <div class="payment-container-${this.uniqueId} payment-theme-${this.uniqueId}" style="
-        background: rgba(63, 71, 102, 0.58);
+        background: ${palette.panelBg};
         border-radius: 1.5rem;
         width: 100%;
-        max-width: 600px;
-        max-height: 90vh;
+        max-width: ${this.isKobposhTheme() ? "560px" : "600px"};
+        max-height: ${this.isKobposhTheme() ? "100dvh" : "90vh"};
         overflow-y: auto;
-        border: 1px solid rgba(255,255,255,0.18);
-        box-shadow: 14px 14px 34px rgba(17, 24, 39, 0.48), -10px -10px 24px rgba(113, 128, 168, 0.2);
-        backdrop-filter: blur(14px);
-        transform: scale(0.95);
+        border: ${palette.panelBorder};
+        box-shadow: ${this.isKobposhTheme()
+          ? "0 18px 40px rgba(31,174,91,0.10)"
+          : "14px 14px 34px rgba(17, 24, 39, 0.48), -10px -10px 24px rgba(113, 128, 168, 0.2)"};
+        backdrop-filter: blur(${this.isKobposhTheme() ? "12px" : "14px"});
+        transform: scale(${this.isKobposhTheme() ? "1" : "0.95"});
         transition: transform 0.3s ease;
         position: relative;
       ">
@@ -923,8 +1021,8 @@ class PaymentModal {
         <div style="
           position: sticky;
           top: 0;
-          background: rgba(63, 71, 102, 0.52);
-          border-bottom: 1px solid rgba(255,255,255,0.14);
+          background: ${palette.topBarBg};
+          border-bottom: 1px solid ${palette.topBarBorder};
           padding: 1.5rem;
           z-index: 10;
           border-radius: 1.5rem 1.5rem 0 0;
@@ -937,7 +1035,7 @@ class PaymentModal {
                   border: none;
                   font-size: 1.2rem;
                   cursor: pointer;
-                  color: rgba(255,255,255,0.82);
+                  color: ${this.isKobposhTheme() ? "rgba(14,92,52,0.78)" : "rgba(255,255,255,0.82)"};
                   padding: 0.5rem;
                   width: 40px;
                   height: 40px;
@@ -951,9 +1049,9 @@ class PaymentModal {
                 </button>
               ` : ''}
               <h2 style="
-                font-family: 'Cormorant Garamond', serif;
                 font-size: 1.5rem;
-                color: #ffffff;
+                font-weight: 800;
+                color: ${palette.text};
                 margin: 0;
               ">
                 Paiement sécurisé
@@ -964,7 +1062,7 @@ class PaymentModal {
               border: none;
               font-size: 1.5rem;
               cursor: pointer;
-              color: rgba(255,255,255,0.82);
+              color: ${this.isKobposhTheme() ? "rgba(14,92,52,0.78)" : "rgba(255,255,255,0.82)"};
               transition: all 0.2s;
               padding: 0.5rem;
               width: 40px;
@@ -998,12 +1096,12 @@ class PaymentModal {
         .payment-theme-${this.uniqueId} h3,
         .payment-theme-${this.uniqueId} h4,
         .payment-theme-${this.uniqueId} label {
-          color: #ffffff !important;
+          color: ${palette.text} !important;
         }
 
         .payment-theme-${this.uniqueId} .payment-icon-btn:hover {
-          background: rgba(198, 167, 94, 0.1) !important;
-          color: #C6A75E !important;
+          background: ${this.isKobposhTheme() ? "rgba(31,174,91,0.10)" : "rgba(198, 167, 94, 0.1)"} !important;
+          color: ${palette.accentDeep} !important;
         }
         
         @keyframes paymentSlideIn {
@@ -1022,41 +1120,47 @@ class PaymentModal {
         }
         
         .payment-container-${this.uniqueId}::-webkit-scrollbar-track {
-          background: rgba(255,255,255,0.14);
+          background: ${this.isKobposhTheme() ? "rgba(31,174,91,0.10)" : "rgba(255,255,255,0.14)"};
           border-radius: 3px;
         }
 
         .payment-container-${this.uniqueId}::-webkit-scrollbar-thumb {
-          background: rgba(245,124,0,0.85);
+          background: ${this.isKobposhTheme() ? "rgba(31,174,91,0.85)" : "rgba(245,124,0,0.85)"};
           border-radius: 3px;
         }
         
         .method-card {
           transition: all 0.25s ease;
           cursor: pointer;
-          border: 1px solid rgba(255,255,255,0.2) !important;
-          background: rgba(255,255,255,0.10) !important;
+          border: 1px solid ${this.isKobposhTheme() ? "rgba(31,174,91,0.16)" : "rgba(255,255,255,0.2)"} !important;
+          background: ${this.isKobposhTheme() ? "#ffffff" : "rgba(255,255,255,0.10)"} !important;
           backdrop-filter: blur(8px);
-          box-shadow: 10px 10px 22px rgba(18,25,42,0.38), -8px -8px 18px rgba(121,135,173,0.18), inset 5px 5px 10px rgba(255,255,255,0.05), inset -5px -5px 10px rgba(8,13,24,0.18);
+          box-shadow: ${this.isKobposhTheme()
+            ? "0 10px 24px rgba(31,174,91,0.08)"
+            : "10px 10px 22px rgba(18,25,42,0.38), -8px -8px 18px rgba(121,135,173,0.18), inset 5px 5px 10px rgba(255,255,255,0.05), inset -5px -5px 10px rgba(8,13,24,0.18)"};
         }
         
         .method-card:hover {
           transform: translateY(-2px);
-          background: rgba(255,255,255,0.14) !important;
-          box-shadow: 12px 12px 24px rgba(16,22,38,0.42), -8px -8px 18px rgba(132,147,188,0.20), inset 5px 5px 10px rgba(255,255,255,0.06), inset -5px -5px 10px rgba(8,13,24,0.22);
+          background: ${this.isKobposhTheme() ? "#f7fff9" : "rgba(255,255,255,0.14)"} !important;
+          box-shadow: ${this.isKobposhTheme()
+            ? "0 14px 28px rgba(31,174,91,0.10)"
+            : "12px 12px 24px rgba(16,22,38,0.42), -8px -8px 18px rgba(132,147,188,0.20), inset 5px 5px 10px rgba(255,255,255,0.06), inset -5px -5px 10px rgba(8,13,24,0.22)"};
         }
         
         .method-card.selected {
-          border-color: #ffb26e !important;
-          background: rgba(245,124,0,0.18) !important;
-          box-shadow: 12px 12px 26px rgba(120,61,23,0.45), -8px -8px 18px rgba(255,174,98,0.14), inset 5px 5px 10px rgba(255,255,255,0.06), inset -5px -5px 10px rgba(8,13,24,0.22);
+          border-color: ${palette.selectedBorder} !important;
+          background: ${palette.selectedBg} !important;
+          box-shadow: ${this.isKobposhTheme()
+            ? "0 14px 28px rgba(31,174,91,0.12)"
+            : "12px 12px 26px rgba(120,61,23,0.45), -8px -8px 18px rgba(255,174,98,0.14), inset 5px 5px 10px rgba(255,255,255,0.06), inset -5px -5px 10px rgba(8,13,24,0.22)"};
         }
         
         .countdown-timer {
           font-family: monospace;
           font-size: 1.5rem;
           font-weight: bold;
-          color: #F57C00;
+          color: ${palette.accent};
         }
         
         .form-group {
@@ -1067,7 +1171,7 @@ class PaymentModal {
           display: block;
           margin-bottom: 0.25rem;
           font-size: 0.9rem;
-          color: rgba(255,255,255,0.82);
+          color: ${this.isKobposhTheme() ? "rgba(14,92,52,0.78)" : "rgba(255,255,255,0.82)"};
         }
         
         .form-group input,
@@ -1075,11 +1179,13 @@ class PaymentModal {
         .form-group select {
           width: 100%;
           padding: 0.75rem;
-          border: 1px solid rgba(255,255,255,0.24);
+          border: 1px solid ${this.isKobposhTheme() ? "rgba(31,174,91,0.18)" : "rgba(255,255,255,0.24)"};
           border-radius: 0.9rem;
-          background: rgba(255,255,255,0.12);
-          color: #ffffff;
-          box-shadow: inset 6px 6px 12px rgba(19, 26, 43, 0.42), inset -6px -6px 12px rgba(120, 134, 172, 0.22);
+          background: ${this.isKobposhTheme() ? "#ffffff" : "rgba(255,255,255,0.12)"};
+          color: ${palette.text};
+          box-shadow: ${this.isKobposhTheme()
+            ? "0 8px 18px rgba(31,174,91,0.06)"
+            : "inset 6px 6px 12px rgba(19, 26, 43, 0.42), inset -6px -6px 12px rgba(120, 134, 172, 0.22)"};
           font-size: 0.95rem;
         }
         
@@ -1087,14 +1193,14 @@ class PaymentModal {
         .form-group textarea:focus,
         .form-group select:focus {
           outline: none;
-          border-color: #F57C00;
+          border-color: ${palette.accent};
         }
         
         .next-step-btn {
           width: 100%;
-          background: #F57C00;
-          color: #ffffff;
-          border: 1px solid #ffb26e;
+          background: ${palette.buttonBg};
+          color: ${palette.buttonText};
+          border: 1px solid ${this.isKobposhTheme() ? "rgba(31,174,91,0.22)" : "#ffb26e"};
           padding: 1rem;
           border-radius: 0.9rem;
           font-size: 1rem;
@@ -1102,11 +1208,13 @@ class PaymentModal {
           cursor: pointer;
           transition: all 0.3s;
           margin-top: 1.5rem;
-          box-shadow: 8px 8px 18px rgba(17, 24, 39, 0.42), -6px -6px 14px rgba(123, 137, 180, 0.2);
+          box-shadow: ${this.isKobposhTheme()
+            ? "0 12px 24px rgba(31,174,91,0.18)"
+            : "8px 8px 18px rgba(17, 24, 39, 0.42), -6px -6px 14px rgba(123, 137, 180, 0.2)"};
         }
 
         .next-step-btn:hover {
-          background: #ff8b1f;
+          background: ${this.isKobposhTheme() ? "#25c46b" : "#ff8b1f"};
           color: #ffffff;
         }
         
@@ -1116,8 +1224,8 @@ class PaymentModal {
         }
         
         .warning-message {
-          background: rgba(255,255,255,0.12);
-          border-left: 4px solid #F57C00;
+          background: ${this.isKobposhTheme() ? "rgba(31,174,91,0.08)" : "rgba(255,255,255,0.12)"};
+          border-left: 4px solid ${palette.accent};
           padding: 1rem;
           border-radius: 0.5rem;
           margin-bottom: 1.5rem;
@@ -1128,9 +1236,9 @@ class PaymentModal {
           display: inline-block;
           width: 20px;
           height: 20px;
-          border: 2px solid rgba(255,255,255,0.3);
+          border: 2px solid ${this.isKobposhTheme() ? "rgba(31,174,91,0.22)" : "rgba(255,255,255,0.3)"};
           border-radius: 50%;
-          border-top-color: white;
+          border-top-color: ${palette.accent};
           animation: spin 0.8s linear infinite;
         }
         
@@ -1152,7 +1260,7 @@ class PaymentModal {
     return `
       <div style="margin-top: 0.5rem;">
         <div style="display: flex; justify-content: space-between; margin-bottom: 0.5rem;">
-          <span style="font-size: 0.85rem; color: #8B7E6B;">Étape ${currentStepDisplay}/${totalSteps}</span>
+          <span style="font-size: 0.85rem; color: #8B7E6B;">Etap ${currentStepDisplay}/${totalSteps}</span>
           <span style="font-size: 0.85rem; color: #8B7E6B;">${Math.round(progress)}%</span>
         </div>
         <div style="
@@ -1207,21 +1315,24 @@ class PaymentModal {
     if (this.options.flowType === 'welcome_bonus' && this.getWelcomeBonusStatus().eligible && !this.welcomeBonusCaptureReady) {
       return this.renderCustomStep(this.buildWelcomeBonusCaptureStep());
     }
+    const isKobposh = this.isKobposhTheme();
+    const stepTextColor = isKobposh ? "#0e5c34" : "#ffffff";
+    const mutedColor = isKobposh ? "rgba(14,92,52,0.68)" : "#8B7E6B";
 
     if (this.methods.length === 0) {
       return `
         <div style="text-align: center; padding: 2rem;">
-          <i class="fas fa-exclamation-triangle" style="font-size: 3rem; color: #B76E2E; margin-bottom: 1rem;"></i>
-          <h3 style="font-size: 1.2rem; margin-bottom: 1rem;">Aucune méthode disponible</h3>
-          <p style="color: #8B7E6B;">Veuillez réessayer plus tard.</p>
+          <i class="fas fa-exclamation-triangle" style="font-size: 3rem; color: ${this.isKobposhTheme() ? "#1fae5b" : "#B76E2E"}; margin-bottom: 1rem;"></i>
+          <h3 style="font-size: 1.2rem; margin-bottom: 1rem; color: ${stepTextColor};">Pa gen metòd ki disponib</h3>
+          <p style="color: ${mutedColor};">Tanpri eseye ankò pita.</p>
         </div>
       `;
     }
     
     return `
       <div>
-        <h3 style="font-size: 1.3rem; margin-bottom: 1rem;">Choisissez votre méthode de paiement</h3>
-        <p style="color: #8B7E6B; margin-bottom: 1.5rem;">Sélectionnez parmi nos options disponibles</p>
+        <h3 style="font-size: 1.3rem; margin-bottom: 1rem; color: ${stepTextColor};">Chwazi metòd peman ou</h3>
+        <p style="color: ${mutedColor}; margin-bottom: 1.5rem;">Chwazi youn nan opsyon ki disponib yo</p>
         
         <div id="methodsList" style="display: flex; flex-direction: column; gap: 1rem;">
           ${this.methods.map(method => this.renderMethodCard(method)).join('')}
@@ -1232,9 +1343,9 @@ class PaymentModal {
           margin-top: 1rem;
           min-height: 54px;
           border-radius: 1rem;
-          border: 1px dashed rgba(255,255,255,0.28);
-          background: rgba(124,58,237,0.12);
-          color: #ffffff;
+          border: 1px dashed ${this.isKobposhTheme() ? "rgba(31,174,91,0.24)" : "rgba(255,255,255,0.28)"};
+          background: ${this.isKobposhTheme() ? "#f7fff9" : "rgba(124,58,237,0.12)"};
+          color: ${stepTextColor};
           display: flex;
           align-items: center;
           justify-content: space-between;
@@ -1248,18 +1359,18 @@ class PaymentModal {
               width: 42px;
               height: 42px;
               border-radius: 999px;
-              background: rgba(255,255,255,0.12);
+              background: ${this.isKobposhTheme() ? "rgba(31,174,91,0.10)" : "rgba(255,255,255,0.12)"};
               display:flex;
               align-items:center;
               justify-content:center;
               flex-shrink:0;
-            "><i class="fas fa-user-headset" style="color:#d8b4fe;"></i></span>
+            "><i class="fas fa-user-headset" style="color:${this.isKobposhTheme() ? "#1fae5b" : "#d8b4fe"};"></i></span>
             <span>
-              <strong style="display:block;font-size:0.98rem;color:#fff;">Dépôt via agent</strong>
-              <span style="display:block;font-size:0.84rem;color:rgba(255,255,255,0.76);margin-top:0.18rem;">Besoin d'aide ? Un agent peut t'accompagner et créditer ton compte à distance.</span>
+              <strong style="display:block;font-size:0.98rem;color:${stepTextColor};">Depo atravè ajan</strong>
+              <span style="display:block;font-size:0.84rem;color:${mutedColor};margin-top:0.18rem;">Bezwen èd? Yon ajan ka ede w epi kredite kont ou a distans.</span>
             </span>
           </span>
-          <i class="fas fa-chevron-right" style="color:#e9d5ff;"></i>
+          <i class="fas fa-chevron-right" style="color:${this.isKobposhTheme() ? "#1fae5b" : "#e9d5ff"};"></i>
         </button>
       </div>
     `;
@@ -1267,10 +1378,12 @@ class PaymentModal {
   
   renderMethodCard(method) {
     const isSelected = this.selectedMethod?.id === method.id;
+    const isKobposh = this.isKobposhTheme();
     const safeMethodId = escapeAttr(method?.id || '');
-    const safeMethodName = escapeHtml(method?.name || 'Méthode');
+    const safeMethodName = escapeHtml(method?.name || 'Metòd');
     const safeInstructions = escapeHtml(method?.instructions || '');
-    const safeImagePath = escapeAttr(this.getImagePath(method?.image));
+    const methodImageName = method?.image || this.getDefaultMethodImage(method);
+    const safeImagePath = escapeAttr(this.getImagePath(methodImageName, 'payment'));
     
     return `
       <div class="method-card" data-method-id="${safeMethodId}" data-welcome-coach="payment-method" style="
@@ -1278,10 +1391,10 @@ class PaymentModal {
         align-items: center;
         gap: 1rem;
         padding: 1rem;
-        border: 1px solid ${isSelected ? '#ffb26e' : 'rgba(255,255,255,0.2)'};
+        border: 1px solid ${isSelected ? (isKobposh ? '#1fae5b' : '#ffb26e') : (isKobposh ? 'rgba(31,174,91,0.16)' : 'rgba(255,255,255,0.2)')};
         border-radius: 1rem;
-        background: ${isSelected ? 'rgba(245,124,0,0.18)' : 'rgba(255,255,255,0.10)'};
-        color: #ffffff;
+        background: ${isSelected ? (isKobposh ? 'rgba(31,174,91,0.10)' : 'rgba(245,124,0,0.18)') : (isKobposh ? '#ffffff' : 'rgba(255,255,255,0.10)')};
+        color: ${isKobposh ? '#0e5c34' : '#ffffff'};
         cursor: pointer;
       ">
         <div style="
@@ -1291,34 +1404,34 @@ class PaymentModal {
           min-height: 60px;
           flex-shrink: 0;
           background: rgba(255,255,255,0.14);
-          border: 1px solid rgba(255,255,255,0.18);
+          border: 1px solid ${isKobposh ? 'rgba(31,174,91,0.14)' : 'rgba(255,255,255,0.18)'};
           border-radius: 0.9rem;
           display: flex;
           align-items: center;
           justify-content: center;
           overflow: hidden;
-          box-shadow: inset 4px 4px 9px rgba(255,255,255,0.05), inset -4px -4px 9px rgba(8,13,24,0.2);
+          box-shadow: ${isKobposh ? '0 8px 18px rgba(31,174,91,0.08)' : 'inset 4px 4px 9px rgba(255,255,255,0.05), inset -4px -4px 9px rgba(8,13,24,0.2)'};
         ">
-          ${method.image ? 
+          ${methodImageName ?
             `<img src="${safeImagePath}" data-fallback-icon="fa-money-bill-wave" style="width: 100%; height: 100%; object-fit: cover;">` :
-            `<i class="fas fa-money-bill-wave" style="font-size: 1.5rem; color: #C6A75E;"></i>`
+            `<i class="fas fa-money-bill-wave" style="font-size: 1.5rem; color: ${isKobposh ? '#1fae5b' : '#C6A75E'};"></i>`
           }
         </div>
         <div style="flex: 1;">
-          <h4 style="font-weight: 600; margin-bottom: 0.25rem; color: #ffffff;">${safeMethodName}</h4>
-          <p style="font-size: 0.85rem; color: rgba(255,255,255,0.75);">${safeInstructions}</p>
+          <h4 style="font-weight: 700; margin-bottom: 0.25rem; color: ${isKobposh ? '#0e5c34' : '#ffffff'};">${safeMethodName}</h4>
+          <p style="font-size: 0.85rem; color: ${isKobposh ? 'rgba(14,92,52,0.68)' : 'rgba(255,255,255,0.75)'};">${safeInstructions}</p>
         </div>
-        <div style="width: 24px; height: 24px; min-width: 24px; min-height: 24px; flex-shrink: 0; border-radius: 999px; border: 2px solid #ffb26e; display: flex; align-items: center; justify-content: center;">
-          ${isSelected ? '<div style="width: 12px; height: 12px; border-radius: 999px; background: #ffb26e;"></div>' : ''}
+        <div style="width: 24px; height: 24px; min-width: 24px; min-height: 24px; flex-shrink: 0; border-radius: 999px; border: 2px solid ${isKobposh ? '#1fae5b' : '#ffb26e'}; display: flex; align-items: center; justify-content: center;">
+          ${isSelected ? `<div style="width: 12px; height: 12px; border-radius: 999px; background: ${isKobposh ? '#1fae5b' : '#ffb26e'};"></div>` : ''}
         </div>
       </div>
     `;
   }
   
   renderFormStep(step) {
-    const safeTitle = escapeHtml(step?.title || 'Vos informations');
+    const safeTitle = escapeHtml(step?.title || 'Enfòmasyon ou yo');
     const safeDescription = escapeHtml(step?.description || '');
-    const safeButtonText = escapeHtml(step?.buttonText || 'Continuer');
+    const safeButtonText = escapeHtml(step?.buttonText || 'Kontinye');
     return `
       <div>
         <h3 style="font-size: 1.3rem; margin-bottom: 0.5rem;">${safeTitle}</h3>
@@ -1355,7 +1468,7 @@ class PaymentModal {
           <div class="form-group">
             <label>${safeLabel}${field.required ? ' *' : ''}</label>
             <select name="${safeName}" ${required}>
-              <option value="">Sélectionnez...</option>
+              <option value="">Chwazi...</option>
               ${field.options?.map(opt => `
                 <option value="${escapeAttr(opt)}" ${value === opt ? 'selected' : ''}>${escapeHtml(opt)}</option>
               `).join('') || ''}
@@ -1381,20 +1494,20 @@ class PaymentModal {
   
   renderPaymentStep(step) {
     if (!this.selectedMethod) {
-      return '<p class="text-accent">Veuillez d\'abord sélectionner une méthode</p>';
+      return '<p class="text-accent">Tanpri chwazi yon metòd an premye</p>';
     }
 
-    const accountName = this.selectedMethod.accountName || 'Jean Pierre';
+    const accountName = this.selectedMethod.accountName || 'Jean Pè';
     const phoneNumber = this.selectedMethod.phoneNumber || '45678909';
-    const qrCodePath = this.getImagePath(this.selectedMethod.qrCode || 'qr.png');
-    const safeTitle = escapeHtml(step?.title || 'Effectuez le paiement');
-    const safeInstruction = escapeHtml(step?.instruction || 'Payez aux coordonnées suivantes :');
-    const safeMethodName = escapeHtml(this.selectedMethod?.name || 'Méthode');
+    const qrCodePath = this.getImagePath(this.selectedMethod.qrCode || this.getDefaultQrCodeImage(this.selectedMethod), 'qr');
+    const safeTitle = escapeHtml(step?.title || 'Fè peman an');
+    const safeInstruction = escapeHtml(step?.instruction || 'Peye sou enfòmasyon sa yo:');
+    const safeMethodName = escapeHtml(this.selectedMethod?.name || 'Metòd');
     const safeAccountName = escapeHtml(accountName);
     const safePhoneNumber = escapeHtml(phoneNumber);
-    const safeMethodImage = escapeAttr(this.getImagePath(this.selectedMethod?.image));
+    const safeMethodImage = escapeAttr(this.getImagePath(this.selectedMethod?.image || this.getDefaultMethodImage(this.selectedMethod), 'payment'));
     const safeQrCodePath = escapeAttr(qrCodePath);
-    const safeButtonText = escapeHtml(step?.buttonText || "J'ai payé");
+    const safeButtonText = escapeHtml(step?.buttonText || "Mwen peye");
     
     return `
       <div>
@@ -1420,14 +1533,14 @@ class PaymentModal {
               justify-content: center;
               overflow: hidden;
             ">
-              ${this.selectedMethod.image ? 
+              ${this.selectedMethod?.image || this.getDefaultMethodImage(this.selectedMethod) ?
                 `<img src="${safeMethodImage}" data-fallback-icon="fa-university" style="width: 100%; height: 100%; object-fit: cover;">` :
                 `<i class="fas fa-university" style="font-size: 1.5rem; color: #C6A75E;"></i>`
               }
             </div>
             <div>
               <h4 style="font-weight: 600;">${safeMethodName}</h4>
-              <p style="font-size: 0.85rem; color: #8B7E6B;">Compte: ${safeAccountName}</p>
+              <p style="font-size: 0.85rem; color: #8B7E6B;">Kont: ${safeAccountName}</p>
             </div>
           </div>
           
@@ -1439,7 +1552,7 @@ class PaymentModal {
             border-top: 1px solid rgba(198,167,94,0.2);
             border-bottom: 1px solid rgba(198,167,94,0.2);
           ">
-            <span style="color: #8B7E6B;">Numéro</span>
+            <span style="color: #8B7E6B;">Nimewo</span>
             <span style="font-weight: 500;">${safePhoneNumber}</span>
           </div>
           
@@ -1449,7 +1562,7 @@ class PaymentModal {
             align-items: center;
             padding: 1rem 0;
           ">
-            <span style="color: #8B7E6B;">Montant</span>
+            <span style="color: #8B7E6B;">Montan</span>
             <span style="font-weight: bold; font-size: 1.2rem;">${this.formatPrice(this.options.amount || 0)}</span>
           </div>
           
@@ -1462,7 +1575,7 @@ class PaymentModal {
               background: rgba(255,255,255,0.15);
               border-radius: 0.5rem;
             ">
-              <p style="font-size: 0.85rem; color: #8B7E6B; margin-bottom: 0.5rem;">Scannez le QR code</p>
+              <p style="font-size: 0.85rem; color: #8B7E6B; margin-bottom: 0.5rem;">Eskane kòd QR la</p>
               <img src="${safeQrCodePath}" data-hide-on-error="1" style="width: 150px; height: 150px; object-fit: contain;">
             </div>
           ` : ''}
@@ -1484,12 +1597,12 @@ class PaymentModal {
       || this.options.client?.phone
       || ''
     );
-    const safeTitle = escapeHtml(step?.title || 'Confirmez votre paiement');
-    const safeDescription = escapeHtml(step?.description || "Téléchargez une capture d'écran de votre transaction");
+    const safeTitle = escapeHtml(step?.title || 'Konfime peman ou');
+    const safeDescription = escapeHtml(step?.description || "Voye yon kaptire ekran tranzaksyon ou a");
     const safeExpectedName = escapeHtml(expectedName);
     const safeExpectedAttr = escapeAttr(expectedName);
     const safeDepositorPhoneAttr = escapeAttr(expectedDepositorPhone);
-    const safeButtonText = escapeHtml(step?.buttonText || 'Soumettre ma demande');
+    const safeButtonText = escapeHtml(step?.buttonText || 'Voye demann mwen');
     const welcomeBonus = this.getWelcomeBonusStatus();
     const allowWelcomeChoice = this.options.allowWelcomeBonusChoice === true && welcomeBonus.eligible;
     const selectedProofMode = this.isWelcomeBonusSelected() ? 'welcome_bonus' : 'deposit';
@@ -1501,7 +1614,7 @@ class PaymentModal {
         ${expectedName ? `
           <div class="warning-message">
             <i class="fas fa-exclamation-triangle" style="color: #B76E2E; margin-right: 0.5rem;"></i>
-            <strong>Important :</strong> Le nom que vous saisissez doit correspondre exactement à celui de l'étape précédente : 
+            <strong>Enpòtan :</strong> Non ou antre a dwe matche egzakteman ak non nan etap anvan an:
             <strong style="color: #1F1E1C;">${safeExpectedName}</strong>
           </div>
         ` : ''}
@@ -1530,9 +1643,9 @@ class PaymentModal {
             >
               <input type="radio" name="depositMode" value="deposit" ${selectedProofMode === 'deposit' ? 'checked' : ''} style="margin-top: 0.2rem;">
               <div>
-                <p style="margin: 0; font-size: 0.75rem; letter-spacing: 0.14em; text-transform: uppercase; color: #CBD5E1;">Demande normale</p>
-                <h4 style="margin: 0.35rem 0 0; font-size: 1rem; color: #FFFFFF;">J'envoie une vraie preuve de depot</h4>
-                <p style="margin: 0.45rem 0 0; font-size: 0.9rem; color: #D7DFEF;">Ta demande sera revue par l'administration comme d'habitude.</p>
+                <p style="margin: 0; font-size: 0.75rem; letter-spacing: 0.14em; text-transform: uppercase; color: #CBD5E1;">Demann nòmal</p>
+                <h4 style="margin: 0.35rem 0 0; font-size: 1rem; color: #FFFFFF;">M ap voye yon vrè prèv depo</h4>
+                <p style="margin: 0.45rem 0 0; font-size: 0.9rem; color: #D7DFEF;">Administrasyon an ap revize demann ou a tankou dabitid.</p>
               </div>
             </label>
 
@@ -1552,9 +1665,9 @@ class PaymentModal {
             >
               <input type="radio" name="depositMode" value="welcome_bonus" ${selectedProofMode === 'welcome_bonus' ? 'checked' : ''} style="margin-top: 0.2rem;">
               <div>
-                <p style="margin: 0; font-size: 0.75rem; letter-spacing: 0.14em; text-transform: uppercase; color: #FCD34D;">Bonus bienvenue</p>
-                <h4 style="margin: 0.35rem 0 0; font-size: 1rem; color: #FFFFFF;">Prendre mon bonus ${escapeHtml(this.formatInlineNumber(welcomeBonus.grantedHtg, 0))} HTG</h4>
-                <p style="margin: 0.45rem 0 0; font-size: 0.9rem; color: #F8FAFC;">Tu suis les memes etapes pour te familiariser avec le depot, puis le bonus est credite automatiquement si ton compte est eligible.</p>
+                <p style="margin: 0; font-size: 0.75rem; letter-spacing: 0.14em; text-transform: uppercase; color: #FCD34D;">Bonus byenveni</p>
+                <h4 style="margin: 0.35rem 0 0; font-size: 1rem; color: #FFFFFF;">Pran bonus mwen ${escapeHtml(this.formatInlineNumber(welcomeBonus.grantedHtg, 0))} HTG</h4>
+                <p style="margin: 0.45rem 0 0; font-size: 0.9rem; color: #F8FAFC;">Ou suiv menm etap yo pou w familyarize w ak depo a, epi bonus la kredite otomatikman si kont ou kalifye.</p>
               </div>
             </label>
           </div>
@@ -1562,28 +1675,28 @@ class PaymentModal {
         
         <form id="proofForm" class="space-y-4">
           <div class="form-group">
-            <label>Confirmez votre nom *</label>
-            <input type="text" id="proofName" required placeholder="Votre nom exact" value="${safeExpectedAttr}">
+          <label>Konfime non ou *</label>
+          <input type="text" id="proofName" required placeholder="Non egzak ou" value="${safeExpectedAttr}">
           </div>
 
           <div class="form-group">
-            <label>Numero qui a effectue le depot *</label>
+            <label>Nimewo ki te fè depo a *</label>
             <input type="tel" id="proofDepositorPhone" data-welcome-coach="proof-phone" required inputmode="tel" autocomplete="tel" placeholder="Ex: 50940507232" value="${safeDepositorPhoneAttr}">
             <p style="font-size: 0.8rem; color: #8B7E6B; margin-top: 0.25rem;">
-              Cette information doit etre exacte. Une erreur peut entrainer le rejet de la demande.
+              Enfòmasyon sa a dwe egzak. Yon erè ka lakòz demann nan rejte.
             </p>
           </div>
           
           <div class="form-group">
-            <label id="proofImageLabel">${selectedProofMode === 'welcome_bonus' ? "Image demandee pour le bonus *" : "Capture d'écran de la transaction *"}</label>
+            <label id="proofImageLabel">${selectedProofMode === 'welcome_bonus' ? "Imaj yo mande pou bonus la *" : "Kaptire ekran tranzaksyon an *"}</label>
             <input type="file" id="proofImage" data-welcome-coach="proof-upload" accept="image/*" required>
             <p
               id="proofImageHelp"
               data-proof-mode-target="image-help"
               style="font-size: 0.8rem; color: #8B7E6B; margin-top: 0.25rem;"
             >${selectedProofMode === 'welcome_bonus'
-              ? 'Charge l image recue pour activer ton bonus de bienvenue. Format accepte : JPG, PNG (max 5 Mo).'
-              : "Format accepte : JPG, PNG (max 5 Mo)"}</p>
+              ? 'Telechaje imaj ou resevwa a pou aktive bonus byenveni ou a. Fòma aksepte: JPG, PNG (maksimòm 5 Mo).'
+              : "Fòma aksepte: JPG, PNG (maksimòm 5 Mo)"}</p>
           </div>
           
           <div id="imagePreview" style="display: none; margin-top: 1rem; text-align: center;">
@@ -1604,7 +1717,7 @@ class PaymentModal {
     } else {
       this.startCountdown();
     }
-    const safeMessage = escapeHtml(this.confirmationMessage || step?.message || 'Votre demande est en cours de vérification. Elle sera traitée sous 12 heures.');
+    const safeMessage = escapeHtml(this.confirmationMessage || step?.message || 'Demann ou a sou verifikasyon. Li ap trete nan 12 èdtan.');
     const bonusPreview = this.getDepositBonusPreview();
     const timingPanel = this.completedFlowType === 'welcome_bonus'
       ? `
@@ -1615,8 +1728,8 @@ class PaymentModal {
           margin-bottom: 1.5rem;
           border: 1px solid rgba(255,255,255,0.1);
         ">
-          <p style="font-size: 0.9rem; color: #CBD5E1; margin-bottom: 0.45rem;">Statut</p>
-          <div style="font-size: 1.25rem; font-weight: 800; color: #FBBF24;">Activation immediate</div>
+          <p style="font-size: 0.9rem; color: #CBD5E1; margin-bottom: 0.45rem;">Estati</p>
+          <div style="font-size: 1.25rem; font-weight: 800; color: #FBBF24;">Aktivasyon imedya</div>
         </div>
       `
       : `
@@ -1626,7 +1739,7 @@ class PaymentModal {
           padding: 1.5rem;
           margin-bottom: 1.5rem;
         ">
-          <p style="font-size: 0.9rem; color: #8B7E6B; margin-bottom: 0.5rem;">Temps restant avant vérification</p>
+          <p style="font-size: 0.9rem; color: #8B7E6B; margin-bottom: 0.5rem;">Tan ki rete anvan verifikasyon</p>
           <div class="countdown-timer" id="countdownTimer">12:00:00</div>
         </div>
       `;
@@ -1642,8 +1755,8 @@ class PaymentModal {
           color: #F8FAFC;
           box-shadow: 0 16px 34px rgba(15,23,42,0.24), inset 0 1px 0 rgba(255,255,255,0.06);
         ">
-          <p style="margin: 0; font-size: 0.72rem; letter-spacing: 0.16em; text-transform: uppercase; color: #FBBF24; font-weight: 800;">Bonus bienvenue</p>
-          <h4 style="margin: 0.55rem 0 0; font-size: 1.05rem; color: #FFFFFF;">Ton bonus ${escapeHtml(this.formatInlineNumber(WELCOME_BONUS_HTG, 0))} HTG a ete ajoute</h4>
+          <p style="margin: 0; font-size: 0.72rem; letter-spacing: 0.16em; text-transform: uppercase; color: #FBBF24; font-weight: 800;">Bonus byenveni</p>
+          <h4 style="margin: 0.55rem 0 0; font-size: 1.05rem; color: #FFFFFF;">Bonus ou a ${escapeHtml(this.formatInlineNumber(WELCOME_BONUS_HTG, 0))} HTG te ajoute</h4>
           <div style="
             margin-top: 0.9rem;
             display: grid;
@@ -1651,12 +1764,12 @@ class PaymentModal {
             gap: 0.75rem;
           ">
             <div style="border-radius: 0.95rem; background: rgba(255,255,255,0.08); padding: 0.9rem; border: 1px solid rgba(255,255,255,0.08);">
-              <p style="margin: 0; font-size: 0.75rem; color: #CBD5E1; font-weight: 700;">Bonus credite</p>
+              <p style="margin: 0; font-size: 0.75rem; color: #CBD5E1; font-weight: 700;">Bonus kredite</p>
               <p style="margin: 0.4rem 0 0; font-size: 1.05rem; color: #FFFFFF; font-weight: 900;">${escapeHtml(this.formatInlineNumber(WELCOME_BONUS_HTG, 0))} HTG</p>
             </div>
             <div style="border-radius: 0.95rem; background: rgba(251,191,36,0.12); padding: 0.9rem; border: 1px solid rgba(251,191,36,0.18);">
-              <p style="margin: 0; font-size: 0.75rem; color: #FCD34D; font-weight: 700;">Type</p>
-              <p style="margin: 0.4rem 0 0; font-size: 1.05rem; color: #FFFFFF; font-weight: 900;">Bienvenue</p>
+              <p style="margin: 0; font-size: 0.75rem; color: #FCD34D; font-weight: 700;">Tip</p>
+              <p style="margin: 0.4rem 0 0; font-size: 1.05rem; color: #FFFFFF; font-weight: 900;">Byenveni</p>
             </div>
           </div>
           <div style="
@@ -1669,8 +1782,8 @@ class PaymentModal {
             font-size: 0.92rem;
             border: 1px solid rgba(255,255,255,0.08);
           ">
-            <p style="margin: 0;"><strong>Important :</strong> ce bonus de bienvenue est bien reel, mais il suit des regles bonus distinctes d un depot classique.</p>
-            <p style="margin: 0.65rem 0 0;">Tu peux maintenant explorer le systeme, jouer et te familiariser avec les etapes de depot avant ton premier vrai depot approuve.</p>
+            <p style="margin: 0;"><strong>Enpòtan :</strong> bonus byenveni sa a se yon bagay reyèl, men li suiv règ bonus ki diferan de yon depo nòmal.</p>
+            <p style="margin: 0.65rem 0 0;">Ou ka kounye a eksplore sistèm nan, jwe, epi familyarize w ak etap depo yo anvan premye vrè depo ou ki apwouve.</p>
           </div>
         </div>
       `
@@ -1686,8 +1799,8 @@ class PaymentModal {
           color: #F8FAFC;
           box-shadow: 0 16px 34px rgba(15,23,42,0.24), inset 0 1px 0 rgba(255,255,255,0.06);
         ">
-          <p style="margin: 0; font-size: 0.72rem; letter-spacing: 0.16em; text-transform: uppercase; color: #FBBF24; font-weight: 800;">Bonus depot</p>
-          <h4 style="margin: 0.55rem 0 0; font-size: 1.05rem; color: #FFFFFF;">Ton depot peut recevoir un bonus apres approbation</h4>
+          <p style="margin: 0; font-size: 0.72rem; letter-spacing: 0.16em; text-transform: uppercase; color: #FBBF24; font-weight: 800;">Bonus depo</p>
+          <h4 style="margin: 0.55rem 0 0; font-size: 1.05rem; color: #FFFFFF;">Depo ou a ka resevwa yon bonus apre apwobasyon</h4>
           <div style="
             margin-top: 0.9rem;
             display: grid;
@@ -1695,11 +1808,11 @@ class PaymentModal {
             gap: 0.75rem;
           ">
             <div style="border-radius: 0.95rem; background: rgba(255,255,255,0.08); padding: 0.9rem; border: 1px solid rgba(255,255,255,0.08);">
-              <p style="margin: 0; font-size: 0.75rem; color: #CBD5E1; font-weight: 700;">Depot soumis</p>
+              <p style="margin: 0; font-size: 0.75rem; color: #CBD5E1; font-weight: 700;">Depo soumèt</p>
               <p style="margin: 0.4rem 0 0; font-size: 1.05rem; color: #FFFFFF; font-weight: 900;">${escapeHtml(this.formatInlineNumber(bonusPreview.amountHtg, 0))} HTG</p>
             </div>
             <div style="border-radius: 0.95rem; background: rgba(251,191,36,0.12); padding: 0.9rem; border: 1px solid rgba(251,191,36,0.18);">
-              <p style="margin: 0; font-size: 0.75rem; color: #FCD34D; font-weight: 700;">Bonus promo</p>
+              <p style="margin: 0; font-size: 0.75rem; color: #FCD34D; font-weight: 700;">Bonus pwomosyon</p>
               <p style="margin: 0.4rem 0 0; font-size: 1.05rem; color: #FFFFFF; font-weight: 900;">+${escapeHtml(this.formatInlineNumber(bonusPreview.bonusDoes, 0))} Does</p>
             </div>
           </div>
@@ -1713,9 +1826,9 @@ class PaymentModal {
             font-size: 0.92rem;
             border: 1px solid rgba(255,255,255,0.08);
           ">
-            <p style="margin: 0;"><strong>Comment ca marche:</strong> ton depot monte d'abord en <strong>HTG en examen</strong>. Si l'administration approuve la demande, le systeme calcule automatiquement <strong>${escapeHtml(this.formatInlineNumber(bonusPreview.bonusPercent, 0))}%</strong> du depot, puis convertit ce bonus en Does.</p>
-            <p style="margin: 0.65rem 0 0;">Pour ce depot, cela represente environ <strong>${escapeHtml(this.formatInlineNumber(bonusPreview.bonusHtgRaw))} HTG</strong> de bonus, soit <strong>${escapeHtml(this.formatInlineNumber(bonusPreview.bonusDoes, 0))} Does</strong> au taux actuel de <strong>${escapeHtml(this.formatInlineNumber(bonusPreview.rateHtgToDoes, 0))} Does</strong> par HTG.</p>
-            <p style="margin: 0.65rem 0 0;">Le bonus n'apparait pas avant l'approbation. S'il y a rejet, aucun bonus n'est ajoute.</p>
+            <p style="margin: 0;"><strong>Ki jan sa mache:</strong> depo ou a ale an premye nan <strong>HTG sou verifikasyon</strong>. Si administrasyon an apwouve demann nan, sistèm nan kalkile otomatikman <strong>${escapeHtml(this.formatInlineNumber(bonusPreview.bonusPercent, 0))}%</strong> nan depo a, apre sa li konvèti bonus sa a an Does.</p>
+            <p style="margin: 0.65rem 0 0;">Pou depo sa a, sa reprezante anviwon <strong>${escapeHtml(this.formatInlineNumber(bonusPreview.bonusHtgRaw))} HTG</strong> bonus, sètadi <strong>${escapeHtml(this.formatInlineNumber(bonusPreview.bonusDoes, 0))} Does</strong> selon to aktyèl la ki se <strong>${escapeHtml(this.formatInlineNumber(bonusPreview.rateHtgToDoes, 0))} Does</strong> pou chak HTG.</p>
+            <p style="margin: 0.65rem 0 0;">Bonus la pa parèt avan apwobasyon. Si yo rejte l, pa gen okenn bonus ki ajoute.</p>
           </div>
         </div>
       `
@@ -1732,9 +1845,9 @@ class PaymentModal {
           font-size: 0.92rem;
           box-shadow: 0 16px 34px rgba(15,23,42,0.24), inset 0 1px 0 rgba(255,255,255,0.06);
         ">
-          <p style="margin: 0; font-size: 0.72rem; letter-spacing: 0.16em; text-transform: uppercase; color: #FBBF24; font-weight: 800;">Bonus depot</p>
-          <p style="margin: 0.6rem 0 0; color: #F8FAFC;"><strong>Info importante:</strong> le bonus promo commence a partir de <strong>${escapeHtml(this.formatInlineNumber(bonusPreview.thresholdHtg, 0))} HTG</strong> approuves.</p>
-          <p style="margin: 0.55rem 0 0; color: #CBD5E1;">Ce depot sera donc traite normalement: il monte en <strong>HTG en examen</strong>, puis sera valide ou rejete par l'administration.</p>
+          <p style="margin: 0; font-size: 0.72rem; letter-spacing: 0.16em; text-transform: uppercase; color: #FBBF24; font-weight: 800;">Bonus depo</p>
+          <p style="margin: 0.6rem 0 0; color: #F8FAFC;"><strong>Enfòmasyon enpòtan :</strong> bonus pwomosyon an kòmanse apati de <strong>${escapeHtml(this.formatInlineNumber(bonusPreview.thresholdHtg, 0))} HTG</strong> ki apwouve.</p>
+          <p style="margin: 0.55rem 0 0; color: #CBD5E1;">Depo sa a ap trete nòmalman: li monte an <strong>HTG sou verifikasyon</strong>, epi administrasyon an ap valide l oswa rejte l.</p>
         </div>
       `;
     
@@ -1753,7 +1866,7 @@ class PaymentModal {
           <i class="fas fa-check" style="font-size: 3rem; color: white;"></i>
         </div>
         
-        <h3 style="font-size: 1.5rem; margin-bottom: 1rem;">Demande soumise avec succès !</h3>
+        <h3 style="font-size: 1.5rem; margin-bottom: 1rem;">Demann nan soumèt ak siksè !</h3>
         
         <p style="color: #8B7E6B; margin-bottom: 2rem;">
           ${safeMessage}
@@ -1765,11 +1878,11 @@ class PaymentModal {
         
         <p style="font-size: 0.9rem; color: #8B7E6B;">
           <i class="fas fa-clock" style="margin-right: 0.3rem;"></i>
-          Vous pouvez suivre le statut de votre demande dans le module solde.
+          Ou ka suiv estati demann ou a nan modil balans lan.
         </p>
         
         <button class="next-step-btn" id="closeAfterConfirmation" style="margin-top: 2rem;">
-          Fermer
+          Fèmen
         </button>
       </div>
     `;
@@ -1780,8 +1893,8 @@ class PaymentModal {
       const proofCode = escapeHtml(this.getWelcomeBonusProofCode());
       return `
         <div>
-          <h3 style="font-size: 1.3rem; margin-bottom: 1rem;">Capture la preuve du bonus</h3>
-          <p style="color: #8B7E6B; margin-bottom: 1rem;">Fais une capture d'écran de cette carte. Elle sera utilisée comme preuve dans la dernière étape.</p>
+          <h3 style="font-size: 1.3rem; margin-bottom: 1rem;">Pran prèv bonus la</h3>
+          <p style="color: #8B7E6B; margin-bottom: 1rem;">Fè yon kaptire ekran kat sa a. Yo pral sèvi avè l kòm prèv nan dènye etap la.</p>
 
           <div data-welcome-coach="proof-card" style="
             border: 1px solid rgba(251,191,36,0.24);
@@ -1791,8 +1904,8 @@ class PaymentModal {
             color: #F8FAFC;
             box-shadow: 0 18px 36px rgba(15,23,42,0.25), inset 0 1px 0 rgba(255,255,255,0.06);
           ">
-            <p style="margin: 0; font-size: 0.74rem; letter-spacing: 0.16em; text-transform: uppercase; color: #FBBF24; font-weight: 800;">Bonus bienvenue</p>
-            <h4 style="margin: 0.7rem 0 0; font-size: 1.18rem; color: #FFFFFF;">Obtenir mon bonus de 25 Gdes</h4>
+            <p style="margin: 0; font-size: 0.74rem; letter-spacing: 0.16em; text-transform: uppercase; color: #FBBF24; font-weight: 800;">Bonus byenveni</p>
+            <h4 style="margin: 0.7rem 0 0; font-size: 1.18rem; color: #FFFFFF;">Ranmase bonus mwen an 25 Gdes</h4>
             <div style="
               margin-top: 1rem;
               border-radius: 1rem;
@@ -1800,7 +1913,7 @@ class PaymentModal {
               background: rgba(255,255,255,0.07);
               padding: 1rem;
             ">
-              <p style="margin: 0; font-size: 0.74rem; text-transform: uppercase; letter-spacing: 0.12em; color: #CBD5E1;">Client ID</p>
+              <p style="margin: 0; font-size: 0.74rem; text-transform: uppercase; letter-spacing: 0.12em; color: #CBD5E1;">ID kliyan</p>
               <p style="margin: 0.45rem 0 0; font-size: 1.1rem; font-weight: 900; color: #FFFFFF; letter-spacing: 0.08em;">${proofCode}</p>
             </div>
           </div>
@@ -1814,19 +1927,19 @@ class PaymentModal {
             color: #F8FAFC;
             line-height: 1.65;
           ">
-            Cette image doit apparaître dans ta capture. Garde-la bien, puis clique sur suivant pour continuer le processus.
+            Imaj sa a dwe parèt nan kaptire ou a. Kenbe l byen, epi klike sou swivan pou kontinye pwosesis la.
           </div>
 
           <button class="next-step-btn" id="nextStepBtn" data-welcome-coach="proof-card-next">
-            ${escapeHtml(step?.buttonText || 'Suivant')}
+            ${escapeHtml(step?.buttonText || 'Swivan')}
           </button>
         </div>
       `;
     }
 
-    const safeTitle = escapeHtml(step?.title || 'Étape personnalisée');
+    const safeTitle = escapeHtml(step?.title || 'Etap pèsonalize');
     const safeContent = escapeHtml(step?.content || '');
-    const safeButtonText = escapeHtml(step?.buttonText || 'Continuer');
+    const safeButtonText = escapeHtml(step?.buttonText || 'Kontinye');
     return `
       <div>
         <h3 style="font-size: 1.3rem; margin-bottom: 1rem;">${safeTitle}</h3>
@@ -1850,8 +1963,8 @@ class PaymentModal {
     return `
       <div style="text-align: center; padding: 2rem;">
         <i class="fas fa-exclamation-triangle" style="font-size: 3rem; color: #B76E2E; margin-bottom: 1rem;"></i>
-        <h3 style="font-size: 1.2rem; margin-bottom: 1rem;">Configuration incomplète</h3>
-        <p style="color: #8B7E6B;">Cette méthode de paiement n'est pas correctement configurée.</p>
+        <h3 style="font-size: 1.2rem; margin-bottom: 1rem;">Konfigirasyon an pa konplè</h3>
+        <p style="color: #8B7E6B;">Metòd peman sa a pa konfigire kòrèkteman.</p>
       </div>
     `;
   }
@@ -2035,15 +2148,15 @@ class PaymentModal {
     const labelEl = this.modal.querySelector('#proofImageLabel');
     if (labelEl) {
       labelEl.textContent = selectedMode === 'welcome_bonus'
-        ? "Image demandee pour le bonus *"
-        : "Capture d'écran de la transaction *";
+        ? "Imaj yo mande pou bonus la *"
+        : "Kaptire ekran tranzaksyon an *";
     }
 
     const nextBtn = this.modal.querySelector('#nextStepBtn');
     if (nextBtn) {
       nextBtn.textContent = selectedMode === 'welcome_bonus'
-        ? `Recevoir mon bonus ${this.formatInlineNumber(WELCOME_BONUS_HTG, 0)} HTG`
-        : 'Soumettre ma demande';
+        ? `Ranmase bonus mwen an ${this.formatInlineNumber(WELCOME_BONUS_HTG, 0)} HTG`
+        : 'Voye demann mwen';
     }
   }
   
@@ -2087,9 +2200,9 @@ class PaymentModal {
           nextBtn.disabled = false;
           nextBtn.innerHTML = step.type === 'proof'
             ? (this.isWelcomeBonusSelected()
-              ? `Recevoir mon bonus ${this.formatInlineNumber(WELCOME_BONUS_HTG, 0)} HTG`
-              : (step.buttonText || 'Soumettre ma demande'))
-            : (step.buttonText || 'Continuer');
+              ? `Ranmase bonus mwen an ${this.formatInlineNumber(WELCOME_BONUS_HTG, 0)} HTG`
+              : (step.buttonText || 'Voye demann mwen'))
+            : (step.buttonText || 'Kontinye');
         }
         return;
       }
@@ -2115,9 +2228,9 @@ class PaymentModal {
         nextBtn.disabled = false;
         nextBtn.innerHTML = step.type === 'proof'
           ? (this.isWelcomeBonusSelected()
-            ? `Recevoir mon bonus ${this.formatInlineNumber(WELCOME_BONUS_HTG, 0)} HTG`
-            : (step.buttonText || 'Soumettre ma demande'))
-          : (step.buttonText || 'Continuer');
+            ? `Ranmase bonus mwen an ${this.formatInlineNumber(WELCOME_BONUS_HTG, 0)} HTG`
+            : (step.buttonText || 'Voye demann mwen'))
+          : (step.buttonText || 'Kontinye');
       }
       if (step.type === 'proof' && isDepositProofSecurityError(error)) {
         await this.openMissingDepositIdSupportModal();
@@ -2147,7 +2260,7 @@ class PaymentModal {
     
     if (!isValid && firstInvalid) {
       firstInvalid.focus();
-      alert('Veuillez remplir tous les champs obligatoires');
+      alert('Tanpri ranpli tout chan obligatwa yo');
       return false;
     }
     
@@ -2187,25 +2300,25 @@ class PaymentModal {
     const proofImage = this.modal.querySelector('#proofImage')?.files[0];
     
     if (!proofName) {
-      alert('Veuillez confirmer votre nom');
+      alert('Tanpri konfime non ou');
       return false;
     }
     
     const expectedName = this.clientData.fullName || this.clientData.name || this.options.client?.name || '';
     if (expectedName && proofName !== expectedName) {
-      alert(`Le nom "${proofName}" ne correspond pas à "${expectedName}". Veuillez saisir le même nom.`);
+      alert(`Non "${proofName}" lan pa koresponn ak "${expectedName}". Tanpri antre menm non an.`);
       return false;
     }
 
     const depositorPhoneDigits = extractPhoneDigits(proofDepositorPhone);
     if (!proofDepositorPhone || depositorPhoneDigits.length < 8) {
-      alert('Veuillez saisir le numero exact qui a effectue le depot.');
+      alert('Tanpri antre nimewo egzak ki te fè depo a.');
       proofDepositorPhoneInput?.focus();
       return false;
     }
     
     if (!proofImage && !this.proofImageFile) {
-      alert('Veuillez sélectionner une image');
+      alert('Tanpri chwazi yon imaj');
       return false;
     }
 

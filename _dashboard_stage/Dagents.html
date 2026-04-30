@@ -1,0 +1,511 @@
+<!doctype html>
+<html lang="fr">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <script src="./runtime-config.js"></script>
+    <link rel="icon" type="image/png" href="./favicon-96x96.png" sizes="96x96" />
+    <link rel="icon" type="image/svg+xml" href="./favicon.svg" />
+    <link rel="shortcut icon" href="./favicon.ico" />
+    <link rel="apple-touch-icon" sizes="180x180" href="./apple-touch-icon.png" />
+    <link rel="manifest" href="./site.webmanifest" />
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'self'; script-src 'self' 'unsafe-inline' https://www.gstatic.com https://apis.google.com https://cdn.jsdelivr.net https://www.google.com https://www.recaptcha.net; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com https://cdnjs.cloudflare.com https://www.gstatic.com; font-src 'self' https://fonts.gstatic.com https://cdnjs.cloudflare.com data:; img-src 'self' data: https: blob:; media-src 'self' data: https: blob:; connect-src 'self' data: blob: https://*.googleapis.com https://apis.google.com https://firestore.googleapis.com https://identitytoolkit.googleapis.com https://securetoken.googleapis.com https://firebaseinstallations.googleapis.com https://content-firebaseappcheck.googleapis.com https://www.gstatic.com https://www.google.com https://accounts.google.com https://does-2c234.firebaseapp.com https://does-2c234.web.app https://www.recaptcha.net https://us-central1-does-2c234.cloudfunctions.net https://*.cloudfunctions.net https://firebasestorage.googleapis.com https://storage.googleapis.com https://cdn.jsdelivr.net; frame-src https://www.google.com https://accounts.google.com https://apis.google.com https://www.gstatic.com https://does-2c234.firebaseapp.com https://does-2c234.web.app https://www.recaptcha.net; object-src 'none'; base-uri 'self'; form-action 'self'; upgrade-insecure-requests; block-all-mixed-content;"
+    />
+    <title>Dominoes Lakay - Agents</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;700&family=Sora:wght@400;600;700;800&display=swap"
+      rel="stylesheet"
+    />
+    <style>
+      :root {
+        --bg-0: #050816;
+        --bg-1: #0a1024;
+        --bg-2: #121a33;
+        --panel: rgba(13, 22, 44, 0.68);
+        --panel-strong: rgba(10, 18, 38, 0.84);
+        --panel-soft: rgba(255, 255, 255, 0.04);
+        --line: rgba(163, 184, 255, 0.14);
+        --line-strong: rgba(163, 184, 255, 0.24);
+        --text: #edf2ff;
+        --muted: #95a4cb;
+        --accent: #68d7ff;
+        --accent-2: #7c5cff;
+        --good: #4be7b8;
+        --warn: #ffbf69;
+        --shadow-hard: 16px 16px 40px rgba(2, 7, 22, 0.78);
+        --shadow-soft: -12px -12px 28px rgba(49, 67, 122, 0.14);
+      }
+
+      * { box-sizing: border-box; }
+
+      html,
+      body {
+        margin: 0;
+        min-height: 100%;
+        background:
+          radial-gradient(circle at top right, rgba(124, 92, 255, 0.14), transparent 28%),
+          radial-gradient(circle at 15% 20%, rgba(104, 215, 255, 0.12), transparent 32%),
+          linear-gradient(160deg, var(--bg-0) 0%, var(--bg-1) 46%, var(--bg-2) 100%);
+        color: var(--text);
+        font-family: "Space Grotesk", sans-serif;
+      }
+
+      .page {
+        position: relative;
+        min-height: 100vh;
+        padding: 20px;
+      }
+
+      .shell {
+        max-width: 1480px;
+        margin: 0 auto;
+      }
+
+      .glass,
+      .neo {
+        border: 1px solid var(--line);
+        background: var(--panel);
+        box-shadow: var(--shadow-hard), var(--shadow-soft);
+        backdrop-filter: blur(20px);
+        -webkit-backdrop-filter: blur(20px);
+      }
+
+      .neo {
+        background: linear-gradient(180deg, rgba(18, 28, 57, 0.82), rgba(8, 15, 34, 0.82));
+      }
+
+      .topbar {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) auto;
+        gap: 16px;
+        align-items: center;
+        padding: 20px 22px;
+        border-radius: 28px;
+      }
+
+      .eyebrow {
+        margin: 0;
+        font-size: 0.72rem;
+        letter-spacing: 0.24em;
+        text-transform: uppercase;
+        color: var(--accent);
+        font-weight: 700;
+      }
+
+      .hero-title {
+        margin: 10px 0 0;
+        font-family: "Sora", sans-serif;
+        font-size: clamp(1.8rem, 3vw, 3rem);
+        line-height: 1.02;
+        font-weight: 800;
+      }
+
+      .hero-copy {
+        margin: 10px 0 0;
+        max-width: 74ch;
+        color: var(--muted);
+        line-height: 1.55;
+        font-size: 0.98rem;
+      }
+
+      .nav-links {
+        display: flex;
+        gap: 10px;
+        flex-wrap: wrap;
+        justify-content: flex-end;
+      }
+
+      .link-chip,
+      .action-btn {
+        border: 1px solid var(--line);
+        border-radius: 16px;
+        text-decoration: none;
+        color: var(--text);
+        background: var(--panel-soft);
+        padding: 11px 14px;
+        font: inherit;
+        cursor: pointer;
+        transition: transform 140ms ease, border-color 140ms ease, background 140ms ease;
+      }
+
+      .action-btn.primary {
+        background: linear-gradient(135deg, rgba(104, 215, 255, 0.2), rgba(124, 92, 255, 0.22));
+      }
+
+      .status-pill {
+        min-height: 1.2rem;
+        font-size: 0.84rem;
+        color: var(--muted);
+      }
+
+      .status-pill[data-tone="error"] { color: #ff7d8d; }
+      .status-pill[data-tone="success"] { color: var(--good); }
+
+      .section {
+        margin-top: 18px;
+        border-radius: 26px;
+        padding: 18px;
+      }
+
+      .filters,
+      .search-results,
+      .stats-grid,
+      .content-grid {
+        display: grid;
+        gap: 12px;
+      }
+
+      .filters {
+        grid-template-columns: minmax(260px, 2fr) repeat(2, minmax(180px, 1fr)) auto auto;
+        align-items: end;
+      }
+
+      .stats-grid {
+        grid-template-columns: repeat(4, minmax(0, 1fr));
+      }
+
+      .content-grid {
+        grid-template-columns: minmax(0, 1fr) minmax(340px, 0.88fr);
+        align-items: start;
+      }
+
+      .field {
+        display: grid;
+        gap: 8px;
+      }
+
+      .field label {
+        font-size: 0.78rem;
+        text-transform: uppercase;
+        letter-spacing: 0.14em;
+        color: var(--muted);
+        font-weight: 700;
+      }
+
+      .field input,
+      .field select {
+        width: 100%;
+        border: 1px solid var(--line);
+        border-radius: 16px;
+        background: rgba(7, 14, 31, 0.78);
+        color: var(--text);
+        padding: 12px 14px;
+        font: inherit;
+      }
+
+      .stat-card,
+      .panel {
+        border-radius: 24px;
+        padding: 16px;
+      }
+
+      .stat-label {
+        font-size: 0.78rem;
+        letter-spacing: 0.14em;
+        text-transform: uppercase;
+        color: var(--muted);
+      }
+
+      .stat-value {
+        margin-top: 10px;
+        font-size: 2rem;
+        font-weight: 800;
+      }
+
+      .stat-note {
+        margin-top: 8px;
+        color: var(--muted);
+        font-size: 0.9rem;
+      }
+
+      .result-card,
+      .agent-card {
+        border: 1px solid var(--line);
+        border-radius: 20px;
+        padding: 14px;
+        background: rgba(255, 255, 255, 0.03);
+      }
+
+      .result-head,
+      .agent-head {
+        display: flex;
+        flex-wrap: wrap;
+        justify-content: space-between;
+        gap: 10px;
+        align-items: center;
+      }
+
+      .result-title,
+      .agent-title {
+        font-size: 1rem;
+        font-weight: 700;
+      }
+
+      .meta {
+        margin-top: 8px;
+        color: var(--muted);
+        font-size: 0.9rem;
+      }
+
+      .table-wrap {
+        margin-top: 14px;
+        overflow-x: auto;
+        border: 1px solid var(--line);
+        border-radius: 20px;
+        background: rgba(255, 255, 255, 0.03);
+      }
+
+      table {
+        width: 100%;
+        border-collapse: collapse;
+        min-width: 860px;
+      }
+
+      th,
+      td {
+        padding: 12px 14px;
+        text-align: left;
+        border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+        font-size: 0.9rem;
+      }
+
+      th {
+        font-size: 0.74rem;
+        letter-spacing: 0.12em;
+        text-transform: uppercase;
+        color: var(--muted);
+      }
+
+      .trend-box {
+        margin-top: 16px;
+        border-radius: 24px;
+        border: 1px solid var(--line);
+        background: rgba(255, 255, 255, 0.03);
+        padding: 16px;
+      }
+
+      .trend-legend {
+        display: flex;
+        justify-content: space-between;
+        gap: 12px;
+        align-items: baseline;
+      }
+
+      .trend-svg {
+        width: 100%;
+        height: 220px;
+        display: block;
+        margin-top: 14px;
+      }
+
+      .chips {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+        margin-top: 12px;
+      }
+
+      .chip {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        border-radius: 999px;
+        padding: 7px 11px;
+        font-size: 0.76rem;
+        font-weight: 700;
+        border: 1px solid var(--line);
+        background: rgba(255, 255, 255, 0.04);
+      }
+
+      .chip.active { color: var(--good); }
+      .chip.inactive { color: var(--warn); }
+
+      .actions-row {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+        margin-top: 14px;
+      }
+
+      .panel h2 {
+        margin: 0;
+        font-size: 1.05rem;
+      }
+
+      .empty {
+        margin-top: 12px;
+        padding: 14px;
+        border-radius: 18px;
+        border: 1px dashed var(--line);
+        color: var(--muted);
+      }
+
+      @media (max-width: 1080px) {
+        .filters,
+        .stats-grid,
+        .content-grid {
+          grid-template-columns: 1fr;
+        }
+
+        .topbar {
+          grid-template-columns: 1fr;
+        }
+
+        .nav-links {
+          justify-content: flex-start;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <main class="page">
+      <div class="shell">
+        <section class="glass topbar">
+          <div>
+            <p class="eyebrow">Programme agents</p>
+            <h1 class="hero-title">Déclarer, activer et suivre les agents</h1>
+            <p class="hero-copy">
+              Cette page sert à nommer des utilisateurs comme agents, à activer leur compte et à suivre rapidement leur budget, leur code promo et leur état opérationnel.
+            </p>
+            <div id="agentsStatus" class="status-pill"></div>
+          </div>
+          <div class="nav-links">
+            <a class="link-chip" href="./index.html">Hub</a>
+            <button id="agentsRefreshBtn" class="action-btn primary" type="button">Actualiser</button>
+          </div>
+        </section>
+
+        <section class="glass section">
+          <div class="filters">
+            <div class="field">
+              <label for="agentSearchInput">Rechercher un utilisateur</label>
+              <input id="agentSearchInput" type="text" placeholder="uid, email, username ou téléphone" />
+            </div>
+            <div class="field">
+              <label for="agentDesiredStatus">Statut à appliquer</label>
+              <select id="agentDesiredStatus">
+                <option value="active">Actif</option>
+                <option value="inactive">Inactif</option>
+              </select>
+            </div>
+            <div class="field">
+              <label for="agentManualPromoCode">Code promo</label>
+              <input id="agentManualPromoCode" type="text" maxlength="24" placeholder="Auto si vide" />
+            </div>
+            <button id="agentSearchBtn" class="action-btn" type="button">Rechercher</button>
+            <button id="agentReloadListBtn" class="action-btn" type="button">Recharger la liste</button>
+          </div>
+
+          <div class="search-results" id="agentSearchResults" style="margin-top:16px;"></div>
+          <div id="agentSearchEmpty" class="empty">Lance une recherche pour retrouver un utilisateur et le déclarer agent.</div>
+        </section>
+
+        <section class="stats-grid section">
+          <article class="neo stat-card">
+            <div class="stat-label">Agents listés</div>
+            <div id="agentsCount" class="stat-value">0</div>
+            <div class="stat-note">Tous statuts confondus</div>
+          </article>
+          <article class="neo stat-card">
+            <div class="stat-label">Actifs</div>
+            <div id="agentsActiveCount" class="stat-value">0</div>
+            <div class="stat-note">Peuvent accéder à leur dashboard</div>
+          </article>
+          <article class="neo stat-card">
+            <div class="stat-label">Inactifs</div>
+            <div id="agentsInactiveCount" class="stat-value">0</div>
+            <div class="stat-note">Déclarés mais non activés</div>
+          </article>
+          <article class="neo stat-card">
+            <div class="stat-label">Budget restant</div>
+            <div id="agentsBudgetRemaining" class="stat-value">0 HTG</div>
+            <div class="stat-note">Somme des budgets d’acquisition restants</div>
+          </article>
+        </section>
+
+        <section class="stats-grid section">
+          <article class="neo stat-card">
+            <div class="stat-label">Agents sur payroll</div>
+            <div id="agentPayrollAgentsCount" class="stat-value">0</div>
+            <div class="stat-note">Agents ayant une activité sur le mois ciblé</div>
+          </article>
+          <article class="neo stat-card">
+            <div class="stat-label">Gains du mois ciblé</div>
+            <div id="agentPayrollEarnedTotal" class="stat-value">0 Does</div>
+            <div class="stat-note">Somme des gains agent du mois</div>
+          </article>
+          <article class="neo stat-card">
+            <div class="stat-label">Déjà payé</div>
+            <div id="agentPayrollPaidTotal" class="stat-value">0 Does</div>
+            <div class="stat-note">Montants déjà clôturés sur ce mois</div>
+          </article>
+          <article class="neo stat-card">
+            <div class="stat-label">Reste à payer</div>
+            <div id="agentPayrollPendingTotal" class="stat-value">0 Does</div>
+            <div class="stat-note">Montant à clôturer maintenant</div>
+          </article>
+        </section>
+
+        <section class="content-grid section">
+          <article class="glass panel">
+            <h2>Liste des agents</h2>
+            <div id="agentsList" class="search-results" style="margin-top:14px;"></div>
+            <div id="agentsListEmpty" class="empty">Aucun agent déclaré pour l’instant.</div>
+          </article>
+
+          <aside class="glass panel">
+            <h2>Tendance du programme agent</h2>
+            <div class="trend-box">
+              <div class="trend-legend">
+                <div>
+                  <div class="stat-label">Vue mensuelle</div>
+                  <div class="meta" style="margin-top:6px;">Gains consolidés du programme agent</div>
+                </div>
+                <div id="agentOverviewHighlight" class="meta">Aucune tendance disponible</div>
+              </div>
+              <svg id="agentOverviewSvg" class="trend-svg" viewBox="0 0 720 220" preserveAspectRatio="none"></svg>
+              <div id="agentOverviewHint" class="meta">La courbe suivra les gains, paiements et volumes d’inscriptions des agents.</div>
+            </div>
+
+            <h2>Payroll agent</h2>
+            <div class="filters" style="grid-template-columns: minmax(180px, 1fr) auto auto; margin-top:14px;">
+              <div class="field">
+                <label for="agentPayrollMonthInput">Mois cible</label>
+                <input id="agentPayrollMonthInput" type="month" />
+              </div>
+              <button id="agentPayrollPreviewBtn" class="action-btn" type="button">Aperçu payroll</button>
+              <button id="agentPayrollCloseBtn" class="action-btn primary" type="button">Clôturer le mois</button>
+            </div>
+            <div class="meta">La clôture marque le mois comme payé, archive le total et remet le reliquat du mois à zéro pour les agents concernés.</div>
+            <div class="table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Agent</th>
+                    <th>Code</th>
+                    <th>Gains</th>
+                    <th>Payé</th>
+                    <th>À payer</th>
+                    <th>Signups</th>
+                    <th>Dépôts</th>
+                    <th>Victoires</th>
+                    <th>Statut</th>
+                  </tr>
+                </thead>
+                <tbody id="agentPayrollTableBody"></tbody>
+              </table>
+            </div>
+            <div id="agentPayrollEmpty" class="empty">Aucune activité agent pour le mois sélectionné.</div>
+          </aside>
+        </section>
+      </div>
+    </main>
+
+    <script src="./dashboard-nav-bubble.js"></script>
+    <script type="module" src="./Dagents.js"></script>
+  </body>
+</html>

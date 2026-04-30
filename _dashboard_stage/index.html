@@ -1,0 +1,453 @@
+<!doctype html>
+<html lang="fr">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <script src="./runtime-config.js"></script>
+    <link rel="icon" type="image/png" href="./favicon-96x96.png" sizes="96x96" />
+    <link rel="icon" type="image/svg+xml" href="./favicon.svg" />
+    <link rel="shortcut icon" href="./favicon.ico" />
+    <link rel="apple-touch-icon" sizes="180x180" href="./apple-touch-icon.png" />
+    <link rel="manifest" href="./site.webmanifest" />
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'self'; script-src 'self' 'unsafe-inline' https://cdn.tailwindcss.com https://www.gstatic.com https://www.google.com https://www.recaptcha.net; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com https://cdnjs.cloudflare.com https://www.gstatic.com; font-src 'self' https://fonts.gstatic.com https://cdnjs.cloudflare.com data:; img-src 'self' data: https: blob:; connect-src 'self' data: blob: https://*.googleapis.com https://firestore.googleapis.com https://identitytoolkit.googleapis.com https://securetoken.googleapis.com https://firebaseinstallations.googleapis.com https://content-firebaseappcheck.googleapis.com https://www.gstatic.com https://www.google.com https://www.recaptcha.net https://us-central1-does-2c234.cloudfunctions.net https://*.cloudfunctions.net https://firebasestorage.googleapis.com https://storage.googleapis.com; frame-src https://www.google.com https://www.gstatic.com https://www.recaptcha.net; object-src 'none'; base-uri 'self'; form-action 'self'; upgrade-insecure-requests; block-all-mixed-content;"
+    />
+    <title>Dashboard Hub · Dominoes Lakay</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;700&family=Sora:wght@400;600;700;800&display=swap" rel="stylesheet" />
+    <style>
+      :root {
+        --bg-0: #060a16;
+        --bg-1: #0c1325;
+        --bg-2: #15203c;
+        --panel: rgba(14, 24, 44, 0.7);
+        --line: rgba(148, 163, 184, 0.16);
+        --text: #eef4ff;
+        --muted: #9db0d5;
+        --accent: #40c4ff;
+        --accent-2: #8b5cf6;
+        --accent-3: #ff9f59;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      body {
+        margin: 0;
+        min-height: 100vh;
+        font-family: "Space Grotesk", "Sora", sans-serif;
+        color: var(--text);
+        background:
+          radial-gradient(circle at top left, rgba(64, 196, 255, 0.22), transparent 28%),
+          radial-gradient(circle at top right, rgba(139, 92, 246, 0.2), transparent 24%),
+          linear-gradient(160deg, var(--bg-0) 0%, var(--bg-1) 46%, var(--bg-2) 100%);
+      }
+
+      .shell {
+        width: min(1180px, calc(100% - 32px));
+        margin: 0 auto;
+        padding: 44px 0 56px;
+      }
+
+      .hero {
+        display: grid;
+        grid-template-columns: 1.2fr 0.8fr;
+        gap: 24px;
+        align-items: stretch;
+      }
+
+      .hero-card,
+      .info-card,
+      .card {
+        border: 1px solid var(--line);
+        border-radius: 28px;
+        background: var(--panel);
+        box-shadow: 0 28px 64px rgba(4, 10, 24, 0.34);
+        backdrop-filter: blur(18px);
+        -webkit-backdrop-filter: blur(18px);
+      }
+
+      .hero-card {
+        padding: 32px;
+      }
+
+      .eyebrow {
+        margin: 0 0 14px;
+        font-size: 0.78rem;
+        text-transform: uppercase;
+        letter-spacing: 0.18em;
+        color: #89d8ff;
+      }
+
+      h1 {
+        margin: 0;
+        font-size: clamp(2.2rem, 4vw, 4rem);
+        line-height: 0.98;
+        font-weight: 800;
+      }
+
+      .hero-copy {
+        margin: 18px 0 0;
+        max-width: 44rem;
+        font-size: 1rem;
+        line-height: 1.75;
+        color: var(--muted);
+      }
+
+      .hero-badges {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 10px;
+        margin-top: 24px;
+      }
+
+      .badge {
+        border-radius: 999px;
+        border: 1px solid rgba(148, 163, 184, 0.2);
+        background: rgba(255, 255, 255, 0.04);
+        padding: 10px 14px;
+        font-size: 0.84rem;
+        color: #dbeafe;
+      }
+
+      .info-card {
+        display: grid;
+        gap: 16px;
+        padding: 28px;
+      }
+
+      .info-card h2 {
+        margin: 0;
+        font-size: 1.1rem;
+      }
+
+      .info-card p {
+        margin: 0;
+        color: var(--muted);
+        line-height: 1.65;
+      }
+
+      .cta-stack {
+        display: grid;
+        gap: 12px;
+      }
+
+      .install-button {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        gap: 10px;
+        width: 100%;
+        border: none;
+        border-radius: 999px;
+        padding: 14px 18px;
+        font: inherit;
+        font-weight: 800;
+        color: #081120;
+        background: linear-gradient(135deg, #40c4ff 0%, #9ce4ff 100%);
+        cursor: pointer;
+        box-shadow: 0 18px 36px rgba(64, 196, 255, 0.22);
+      }
+
+      .install-button[disabled] {
+        cursor: default;
+        opacity: 0.72;
+      }
+
+      .install-note {
+        font-size: 0.9rem;
+        color: #d5e4ff;
+      }
+
+      .install-footnote {
+        font-size: 0.84rem;
+        color: var(--muted);
+      }
+
+      .stat-grid,
+      .card-grid {
+        display: grid;
+        gap: 18px;
+      }
+
+      .stat-grid {
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        margin-top: 22px;
+      }
+
+      .mini-stat {
+        border-radius: 22px;
+        padding: 18px;
+        background: rgba(255, 255, 255, 0.045);
+        border: 1px solid rgba(148, 163, 184, 0.12);
+      }
+
+      .mini-stat strong {
+        display: block;
+        font-size: 1.25rem;
+        margin-top: 10px;
+      }
+
+      .mini-stat span {
+        color: var(--muted);
+        font-size: 0.84rem;
+      }
+
+      .section-head {
+        margin: 30px 0 16px;
+        display: flex;
+        justify-content: space-between;
+        gap: 12px;
+        align-items: end;
+      }
+
+      .section-head h2 {
+        margin: 0;
+        font-size: 1.35rem;
+      }
+
+      .section-head p {
+        margin: 6px 0 0;
+        color: var(--muted);
+      }
+
+      .card-grid {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+      }
+
+      .card {
+        padding: 22px;
+      }
+
+      .card-tag {
+        display: inline-flex;
+        border-radius: 999px;
+        padding: 7px 11px;
+        font-size: 0.78rem;
+        font-weight: 700;
+        letter-spacing: 0.06em;
+        text-transform: uppercase;
+        background: rgba(255, 255, 255, 0.05);
+      }
+
+      .card h3 {
+        margin: 16px 0 10px;
+        font-size: 1.28rem;
+      }
+
+      .card p {
+        margin: 0;
+        color: var(--muted);
+        line-height: 1.7;
+      }
+
+      .card a {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        margin-top: 18px;
+        color: #ffffff;
+        text-decoration: none;
+        font-weight: 700;
+      }
+
+      .card a::after {
+        content: ">";
+      }
+
+      @media (max-width: 980px) {
+        .hero,
+        .card-grid,
+        .stat-grid {
+          grid-template-columns: 1fr;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <main class="shell">
+      <section class="hero">
+        <article class="hero-card">
+          <p class="eyebrow">Package autonome</p>
+          <h1>Dominoes Lakay Dashboard Hub</h1>
+          <p class="hero-copy">
+            Ce dossier regroupe tous les dashboards admin et ambassadeur avec leurs dépendances locales. Il peut être pris tel quel
+            et publié dans un autre dépôt sans dépendre des modules partagés de l’application principale.
+          </p>
+          <div class="hero-badges">
+            <span class="badge">Navigation commune</span>
+            <span class="badge">Dépendances locales</span>
+            <span class="badge">Prêt à extraire</span>
+          </div>
+
+          <div class="stat-grid">
+            <div class="mini-stat">
+              <span>Dashboards</span>
+              <strong>6+</strong>
+            </div>
+            <div class="mini-stat">
+              <span>Pages ambassadeur</span>
+              <strong>2</strong>
+            </div>
+            <div class="mini-stat">
+              <span>Modules locaux</span>
+              <strong>7+</strong>
+            </div>
+          </div>
+        </article>
+
+        <aside class="info-card">
+          <h2>Installer l’app</h2>
+          <p>
+            Installe le dashboard sur ton téléphone ou ton ordinateur pour l’ouvrir en plein écran et recevoir les notifications push
+            de nouvelles inscriptions et commandes.
+          </p>
+          <div class="cta-stack">
+            <button id="dashboardInstallAppBtn" class="install-button" type="button">Installer l’app</button>
+            <p id="dashboardInstallStatus" class="install-note">
+              Le navigateur prépare l’installation. Laisse le dashboard chargé quelques instants si le bouton n’est pas encore prêt.
+            </p>
+          </div>
+          <p class="install-footnote">
+            Sur iPhone, l’installation passe par le menu Partager de Safari. Sur Android et desktop, le navigateur peut proposer une
+            installation native en un clic.
+          </p>
+        </aside>
+      </section>
+
+      <div class="section-head">
+        <div>
+          <h2>Pages disponibles</h2>
+          <p>Choisis un dashboard et continue depuis ce hub.</p>
+        </div>
+      </div>
+
+      <section class="card-grid">
+        <article class="card">
+          <span class="card-tag">Finance</span>
+          <h3>Dashboard Paiements</h3>
+          <p>Commandes, retraits, méthodes de paiement, notifications et paramètres transactionnels.</p>
+          <a href="./Dpayment.html">Ouvrir</a>
+        </article>
+
+        <article class="card">
+          <span class="card-tag">Pilotage</span>
+          <h3>Dashboard Analytics</h3>
+          <p>Présence en ligne, visiteurs actifs, joueurs en cours, pics de trafic et courbes d’évolution avec filtres avancés.</p>
+          <a href="./Danalytics.html">Ouvrir</a>
+        </article>
+
+        <article class="card">
+          <span class="card-tag">Jeu duel</span>
+          <h3>Analytics Duel 2 joueurs</h3>
+          <p>Matchs joués, bots, victoires humain vs bot, filtres journaliers et vision globale dédiée au duel.</p>
+          <a href="./Dduel.html">Ouvrir</a>
+        </article>
+
+        <article class="card">
+          <span class="card-tag">Jeu morpion</span>
+          <h3>Analytics Morpion 5</h3>
+          <p>Salles jouees, rooms 2 humains vs humain + bot, issues des matchs contre le bot, filtres avances et courbes dediees.</p>
+          <a href="./Dmorpion.html">Ouvrir</a>
+        </article>
+
+        <article class="card">
+          <span class="card-tag">Tendance Morpion</span>
+          <h3>Courbe des matchs Morpion</h3>
+          <p>Vue type trading sur l’avancement des matchs joués, avec filtres avancés par période, composition, gagnant et mise.</p>
+          <a href="./Dmorpion-tendance.html">Ouvrir</a>
+        </article>
+
+        <article class="card">
+          <span class="card-tag">Pilotage Morpion</span>
+          <h3>Pilotage bot Morpion</h3>
+          <p>Controle auto du profit Morpion avec fermeture temporaire du 2 humains si la marge chute, sans toucher aux autres jeux.</p>
+          <a href="./pilotagebot-morpion.html">Ouvrir</a>
+        </article>
+
+        <article class="card">
+          <span class="card-tag">Recrutement</span>
+          <h3>Candidatures ambassadeurs</h3>
+          <p>Visites de la page, volume de candidatures, conversion simple et lecture des derniers dossiers envoyés.</p>
+          <a href="./Drecrutement.html">Ouvrir</a>
+        </article>
+
+        <article class="card">
+          <span class="card-tag">Bots</span>
+          <h3>Pilotage automatique</h3>
+          <p>Courbe du profit réel, bandes de marge, mode manuel ou automatique, et niveau appliqué aux bots.</p>
+          <a href="./pilotagebot.html">Ouvrir</a>
+        </article>
+
+        <article class="card">
+          <span class="card-tag">Acquisition</span>
+          <h3>Courbe des inscrits</h3>
+          <p>Suivi des nouvelles inscriptions, des comptes actifs, des vrais déposants et de la fidélisation sur une période donnée.</p>
+          <a href="./Dacquisition.html">Ouvrir</a>
+        </article>
+
+        <article class="card">
+          <span class="card-tag">Flux cash-in</span>
+          <h3>Dépôts MonCash / NatCash</h3>
+          <p>Courbes d’entrée HTG, comparaison des méthodes, taux d’approbation et lecture détaillée des dépôts approuvés ou rejetés.</p>
+          <a href="./Ddepositflow.html">Ouvrir</a>
+        </article>
+
+        <article class="card">
+          <span class="card-tag">Assistance</span>
+          <h3>Crédit dépôt agent</h3>
+          <p>Recherche client, vérification du contexte et crédit d’un dépôt approuvé réel via le canal agent, avec bonus dépôt conservé.</p>
+          <a href="./Dagentdeposit.html">Ouvrir</a>
+        </article>
+
+        <article class="card">
+          <span class="card-tag">Programme agent</span>
+          <h3>Gestion des agents</h3>
+          <p>Recherche des users, nomination agent, activation du compte et suivi rapide du budget promo et du code attribué.</p>
+          <a href="./Dagents.html">Ouvrir</a>
+        </article>
+
+        <article class="card">
+          <span class="card-tag">WhatsApp</span>
+          <h3>Numéros des modales</h3>
+          <p>Mise à jour centralisée des numéros WhatsApp utilisés par les boutons de contact des modales client.</p>
+          <a href="./Dwhatsapp.html">Ouvrir</a>
+        </article>
+
+        <article class="card">
+          <span class="card-tag">Support</span>
+          <h3>Dashboard Discussion</h3>
+          <p>Canal global, fils de support, historique des échanges et réponse agent.</p>
+          <a href="./Ddiscussion.html">Ouvrir</a>
+        </article>
+
+        <article class="card">
+          <span class="card-tag">Ambassadeur</span>
+          <h3>Dashboard Ambassadeur</h3>
+          <p>Connexion, statistiques, performances, liens et suivi des utilisateurs parrainés.</p>
+          <a href="./ambassader.html">Ouvrir</a>
+        </article>
+
+        <article class="card">
+          <span class="card-tag">Backoffice</span>
+          <h3>Créer un ambassadeur</h3>
+          <p>Génération et administration manuelle des comptes ambassadeur depuis le package dashboard.</p>
+          <a href="./createambassadeur.html">Ouvrir</a>
+        </article>
+      </section>
+    </main>
+
+    <script src="./dashboard-nav-bubble.js"></script>
+    <script type="module">
+      import { initDashboardPwaInstallPrompt, attachDashboardInstallButton } from "./pwa-install.js";
+      void initDashboardPwaInstallPrompt();
+      attachDashboardInstallButton(
+        document.getElementById("dashboardInstallAppBtn"),
+        document.getElementById("dashboardInstallStatus"),
+      );
+    </script>
+  </body>
+</html>
